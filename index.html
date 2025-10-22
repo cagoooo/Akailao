@@ -5757,114 +5757,123 @@ function showCelebrationEmoji(targetElement, emoji) {
             };
             reader.readAsDataURL(file);
         }
-// --- 新增：處理監控視圖抽籤 (已提交學生) ---
+// --- 修正：處理監控視圖抽籤 (已提交學生) ---
 async function handleMonitorLotteryDraw() {
-    const btn = document.getElementById('draw-lottery-btn');
-    if (btn.disabled) return; // 防止重複點擊
+        const btn = document.getElementById('draw-lottery-btn');
+        if (btn.disabled) return; // 防止重複點擊
 
-    const container = document.getElementById('student-responses-container');
-    const studentCards = Array.from(container.querySelectorAll('.student-response-item'));
-
-    if (studentCards.length === 0) {
-        return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
-    }
-
-    // 移除舊的獲勝者樣式
-    if (lastSelectedStudentCard) {
-        lastSelectedStudentCard.classList.remove('selected-student-border');
-    }
-    studentCards.forEach(card => card.classList.remove('selected-student-border'));
-
-    btn.disabled = true;
-    btn.classList.add('drawing');
-    btn.textContent = '抽籤中...';
-
-    // 1. 緊張感動畫：依序高亮
-    const highlightDuration = 100;
-    const highlightRounds = 3;
-
-    for (let round = 0; round < highlightRounds; round++) {
-        // 打亂順序
-        const shuffledCards = studentCards.sort(() => 0.5 - Math.random());
-
-        for (const card of shuffledCards) {
-            card.classList.add('highlight-animation');
-            await sleep(highlightDuration);
-            card.classList.remove('highlight-animation');
+        const container = document.getElementById('student-responses-container');
+        const studentCards = Array.from(container.querySelectorAll('.student-response-item'));
+        
+        if (studentCards.length === 0) {
+            return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
         }
+
+        // 移除舊的獲勝者樣式
+        if (lastSelectedStudentCard) {
+            lastSelectedStudentCard.classList.remove('selected-student-border');
+        }
+        studentCards.forEach(card => card.classList.remove('selected-student-border'));
+
+        btn.disabled = true;
+        btn.classList.add('drawing');
+        btn.textContent = '抽籤中...';
+
+        // 1. 緊張感動畫：依序高亮
+        const highlightDuration = 100;
+        const highlightRounds = 3;
+        
+        for (let round = 0; round < highlightRounds; round++) {
+            // 打亂順序 (修正：使用 ... 複製陣列，避免修改原陣列)
+            const shuffledCards = [...studentCards].sort(() => 0.5 - Math.random());
+            
+            for (const card of shuffledCards) {
+                card.classList.add('highlight-animation');
+                await sleep(highlightDuration);
+                card.classList.remove('highlight-animation');
+            }
+        }
+
+        // 2. 選出獲勝者 (現在 studentCards 仍是原始順序)
+        const winnerIndex = Math.floor(Math.random() * studentCards.length);
+        const winnerCard = studentCards[winnerIndex];
+        const winnerName = winnerCard.querySelector('.name-box').textContent;
+
+        // 修正：將獲勝者滾動到視圖中
+        winnerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await sleep(100); // 稍微等待滾動
+
+        // 3. 顯示獲勝動畫
+        winnerCard.classList.add('selected-student-border');
+        lastSelectedStudentCard = winnerCard;
+        showCelebrationEmoji(winnerCard, '🎉'); // 監控視圖用 🎉
+
+        showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
+
+        // 4. 恢復按鈕
+        btn.disabled = false;
+        btn.classList.remove('drawing');
+        btn.textContent = '抽籤 🎲';
     }
 
-    // 2. 選出獲勝者
-    const winnerIndex = Math.floor(Math.random() * studentCards.length);
-    const winnerCard = studentCards[winnerIndex];
-    const winnerName = winnerCard.querySelector('.name-box').textContent;
-
-    // 3. 顯示獲勝動畫
-    winnerCard.classList.add('selected-student-border');
-    lastSelectedStudentCard = winnerCard;
-    showCelebrationEmoji(winnerCard, '🎉'); // 監控視圖用 🎉
-
-    showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
-
-    // 4. 恢復按鈕
-    btn.disabled = false;
-    btn.classList.remove('drawing');
-    btn.textContent = '抽籤 🎲';
-}
-
-// --- 新增：處理學生列表抽籤 (所有在線學生) ---
+// --- 修正：處理學生列表抽籤 (所有在線學生) ---
 async function handleModalLotteryDraw() {
-    const btn = document.getElementById('modal-draw-lottery-btn');
-    if (btn.disabled) return;
+        const btn = document.getElementById('modal-draw-lottery-btn');
+        if (btn.disabled) return;
 
-    const container = document.getElementById('modal-student-names');
-    const studentElements = Array.from(container.querySelectorAll('p'));
+        const container = document.getElementById('modal-student-names');
+        const studentElements = Array.from(container.querySelectorAll('p'));
 
-    if (studentElements.length === 0 || (studentElements.length === 1 && studentElements[0].textContent.includes('沒有學生'))) {
-        return showMessage('目前沒有學生在線可供抽籤。', 'info');
-    }
-
-    // 移除舊的獲勝者樣式
-    if (lastSelectedModalStudent) {
-        lastSelectedModalStudent.classList.remove('modal-selected-student-border');
-    }
-    studentElements.forEach(el => el.classList.remove('modal-selected-student-border'));
-
-    btn.disabled = true;
-    btn.classList.add('drawing');
-    btn.textContent = '抽籤中...';
-
-    // 1. 緊張感動畫：依序高亮
-    const highlightDuration = 75;
-    const highlightRounds = 3;
-
-    for (let round = 0; round < highlightRounds; round++) {
-        const shuffledElements = studentElements.sort(() => 0.5 - Math.random());
-
-        for (const el of shuffledElements) {
-            el.classList.add('highlight-animation');
-            await sleep(highlightDuration);
-            el.classList.remove('highlight-animation');
+        if (studentElements.length === 0 || (studentElements.length === 1 && studentElements[0].textContent.includes('沒有學生'))) {
+            return showMessage('目前沒有學生在線可供抽籤。', 'info');
         }
+        
+        // 移除舊的獲勝者樣式
+        if (lastSelectedModalStudent) {
+            lastSelectedModalStudent.classList.remove('modal-selected-student-border');
+        }
+        studentElements.forEach(el => el.classList.remove('modal-selected-student-border'));
+
+        btn.disabled = true;
+        btn.classList.add('drawing');
+        btn.textContent = '抽籤中...';
+        
+        // 1. 緊張感動畫：依序高亮
+        const highlightDuration = 75;
+        const highlightRounds = 3;
+
+        for (let round = 0; round < highlightRounds; round++) {
+            // 打亂順序 (修正：使用 ... 複製陣列，避免修改原陣列)
+            const shuffledElements = [...studentElements].sort(() => 0.5 - Math.random());
+            
+            for (const el of shuffledElements) {
+                el.classList.add('highlight-animation');
+                await sleep(highlightDuration);
+                el.classList.remove('highlight-animation');
+            }
+        }
+
+        // 2. 選出獲勝者 (現在 studentElements 仍是原始順序)
+        const winnerIndex = Math.floor(Math.random() * studentElements.length);
+        const winnerElement = studentElements[winnerIndex];
+        const winnerName = winnerElement.textContent;
+
+        // 修正：將獲勝者滾動到視圖中
+        winnerElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        await sleep(100); // 稍微等待滾動
+
+        // 3. 顯示獲勝動畫
+        winnerElement.classList.add('modal-selected-student-border');
+        lastSelectedModalStudent = winnerElement;
+        showCelebrationEmoji(winnerElement, '🏆'); // 學生列表用 🏆
+
+        showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
+        
+        // 4. 恢復按鈕
+        btn.disabled = false;
+        btn.classList.remove('drawing');
+        btn.textContent = '抽籤 🎲';
     }
-
-    // 2. 選出獲勝者
-    const winnerIndex = Math.floor(Math.random() * studentElements.length);
-    const winnerElement = studentElements[winnerIndex];
-    const winnerName = winnerElement.textContent;
-
-    // 3. 顯示獲勝動畫
-    winnerElement.classList.add('modal-selected-student-border');
-    lastSelectedModalStudent = winnerElement;
-    showCelebrationEmoji(winnerElement, '🏆'); // 學生列表用 🏆
-
-    showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
-
-    // 4. 恢復按鈕
-    btn.disabled = false;
-    btn.classList.remove('drawing');
-    btn.textContent = '抽籤 🎲';
-}
 
         function setupEventListeners() {
             // Entry screen.
