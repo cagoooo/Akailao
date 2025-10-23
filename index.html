@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -1122,128 +1123,6 @@
         .matching-line.incorrect {
             stroke: #ef4444;
         }
-        /* --- 抽籤優化：漸變按鈕與動畫 --- */
-.lottery-btn {
-    background: linear-gradient(-45deg, #f97316, #ea580c, #f59e0b, #d97706);
-    background-size: 400% 400%;
-    animation: gradient-animation 10s ease infinite;
-    border: none;
-    transition: transform 0.3s ease, box-shadow 0.3s ease;
-    will-change: transform, background-position;
-}
-
-.lottery-btn:hover:not(:disabled) {
-    transform: scale(1.08) rotate(-3deg);
-    box-shadow: 0 10px 20px rgba(234, 88, 12, 0.4);
-}
-
-.lottery-btn:disabled,
-.lottery-btn.drawing {
-    background: #9ca3af; /* Tailwind gray-400 */
-    cursor: not-allowed;
-    animation: spin-pulse 1.5s infinite linear;
-    transform: none;
-    box-shadow: none;
-}
-
-@keyframes gradient-animation {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-}
-
-@keyframes spin-pulse {
-    0% { transform: scale(1) rotate(0deg); }
-    50% { transform: scale(1.02) rotate(10deg); }
-    100% { transform: scale(1) rotate(0deg); }
-}
-
-/* --- 抽籤優化：候選者高亮動畫 --- */
-.highlight-animation {
-    transition: all 0.1s ease-in-out;
-    background-color: #dbeafe !important; /* Tailwind blue-100 */
-    border: 2px solid #2563eb !important; /* Tailwind blue-600 */
-    transform: scale(1.05);
-}
-
-/* --- 抽籤優化：獲勝者動畫 --- */
-.winner-card-animation {
-    position: relative;
-    overflow: hidden; /* 為了 shimmer 效果 */
-    animation: glow-animation 1.5s infinite alternate;
-}
-
-/* 獲勝卡片的光暈 */
-@keyframes glow-animation {
-    0% {
-        box-shadow: 0 0 10px rgba(239, 68, 68, 0.5), 0 0 20px rgba(239, 68, 68, 0.3);
-        border-color: #fca5a5;
-    }
-    100% {
-        box-shadow: 0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.7);
-        border-color: #ef4444;
-    }
-}
-
-/* 獲勝卡片的 Shimmer 光影流動效果 */
-.shimmer-effect::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -150%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(
-        100deg,
-        rgba(255, 255, 255, 0) 20%,
-        rgba(255, 255, 255, 0.4) 50%,
-        rgba(255, 255, 255, 0) 80%
-    );
-    transform: skewX(-25deg);
-    animation: shimmer 2s infinite ease-out;
-}
-
-@keyframes shimmer {
-    0% { left: -150%; }
-    100% { left: 150%; }
-}
-
-/* 慶祝表情符號 */
-.celebration-emoji {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 3rem;
-    animation: celebrate-pop 0.8s ease-out;
-    z-index: 10;
-    pointer-events: none;
-    text-shadow: 0 2px 5px rgba(0,0,0,0.3);
-}
-
-@keyframes celebrate-pop {
-    0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
-    50% { transform: translate(-50%, -50%) scale(1.5); opacity: 1; }
-    100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
-}
-
-/* --- 修改現有抽籤樣式 --- */
-/* 替換原有的 .selected-student-border */
-.selected-student-border {
-    border: 3px solid #ef4444; /* Tailwind red-500 */
-    animation: glow-animation 1.5s infinite alternate;
-    position: relative;
-    overflow: hidden;
-}
-
-/* 替換原有的 .modal-selected-student-border */
-.modal-selected-student-border {
-    border: 2px solid #ef4444; /* Red border */
-    background-color: #fef2f2 !important; /* Light red background */
-    animation: glow-animation 1.5s infinite alternate;
-    position: relative;
-    overflow: hidden;
-}
     </style>
 </head>
 <body class="flex items-center justify-center min-h-screen">
@@ -1381,7 +1260,7 @@
                      <button id="toggle-pause-btn" class="btn bg-gray-500 hover:bg-gray-600 !w-auto text-sm">
                         <i class="fas fa-pause mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
                      </button>
-                     <button id="draw-lottery-btn" class="btn !w-auto text-sm lottery-btn">抽籤 🎲</button> <button id="show-unsubmitted-students-btn" class="btn btn-orange !w-auto text-sm hidden">未作答學生 📝</button>
+                     <button id="draw-lottery-btn" class="btn btn-orange !w-auto text-sm">抽籤 🎲</button> <button id="show-unsubmitted-students-btn" class="btn btn-orange !w-auto text-sm hidden">未作答學生 📝</button>
                      <button id="ai-text-summary-btn" class="btn btn-purple !w-auto text-sm hidden">AI 文字分析 🤖</button> 
                      <button id="download-media-btn" class="btn btn-purple !w-auto text-sm hidden">下載所有媒體 💾</button> 
                      <button id="show-statistics-btn" class="btn btn-primary !w-auto text-sm hidden">顯示統計 📊</button>
@@ -1643,7 +1522,7 @@
         <div id="student-list-modal-content" class="magnified-image-modal-content">
             <button id="student-list-modal-close-btn" class="magnified-image-modal-close">×</button>
             <h4 class="text-2xl font-bold mb-4 text-gray-800">目前在線學生</h4>
-            <button id="modal-draw-lottery-btn" class="btn !w-auto text-sm mb-4 lottery-btn">抽籤 🎲</button> <div id="modal-student-names">
+            <button id="modal-draw-lottery-btn" class="btn btn-orange !w-auto text-sm mb-4">抽籤 🎲</button> <div id="modal-student-names">
                 <p class="text-gray-500 text-sm">沒有學生在線</p>
             </div>
         </div>
@@ -2460,39 +2339,6 @@
         // NEW: Peer Review System Variables
         let peerReviewActive = false; // Whether peer review is currently active
         let peerReviewUnsubscribe = null; // Unsubscribe function for peer review votes listener
-        // --- 新增：抽籤動畫用的 sleep 函式 ---
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-// --- 新增：顯示慶祝表情動畫 ---
-function showCelebrationEmoji(targetElement, emoji) {
-    // 移除舊的 emoji
-    const oldEmoji = targetElement.querySelector('.celebration-emoji');
-    if (oldEmoji) {
-        oldEmoji.remove();
-    }
-
-    // 移除舊的 shimmer
-    const oldShimmer = targetElement.querySelector('.shimmer-effect');
-    if (oldShimmer) {
-        oldShimmer.remove();
-    }
-
-    // 增加 shimmer 效果
-    const shimmer = document.createElement('div');
-    shimmer.className = 'shimmer-effect';
-    targetElement.appendChild(shimmer);
-
-    // 增加 emoji 效果
-    const emojiEl = document.createElement('div');
-    emojiEl.className = 'celebration-emoji';
-    emojiEl.textContent = emoji;
-    targetElement.appendChild(emojiEl);
-
-    // 動畫結束後移除元素
-    setTimeout(() => {
-        emojiEl.remove();
-        shimmer.remove();
-    }, 2000); // 配合 shimmer 動畫時間
-}
         let studentVotedWorks = new Set(); // Track which works this student has voted for
         let allPeerReviewVotes = {}; // Global object to store all votes data
         const MAX_VOTES_PER_STUDENT = 3; // Maximum votes per student per interaction
@@ -5757,123 +5603,7 @@ function showCelebrationEmoji(targetElement, emoji) {
             };
             reader.readAsDataURL(file);
         }
-// --- 修正：處理監控視圖抽籤 (已提交學生) ---
-async function handleMonitorLotteryDraw() {
-        const btn = document.getElementById('draw-lottery-btn');
-        if (btn.disabled) return; // 防止重複點擊
 
-        const container = document.getElementById('student-responses-container');
-        const studentCards = Array.from(container.querySelectorAll('.student-response-item'));
-        
-        if (studentCards.length === 0) {
-            return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
-        }
-
-        // 移除舊的獲勝者樣式
-        if (lastSelectedStudentCard) {
-            lastSelectedStudentCard.classList.remove('selected-student-border');
-        }
-        studentCards.forEach(card => card.classList.remove('selected-student-border'));
-
-        btn.disabled = true;
-        btn.classList.add('drawing');
-        btn.textContent = '抽籤中...';
-
-        // 1. 緊張感動畫：依序高亮
-        const highlightDuration = 100;
-        const highlightRounds = 3;
-        
-        for (let round = 0; round < highlightRounds; round++) {
-            // 打亂順序 (修正：使用 ... 複製陣列，避免修改原陣列)
-            const shuffledCards = [...studentCards].sort(() => 0.5 - Math.random());
-            
-            for (const card of shuffledCards) {
-                card.classList.add('highlight-animation');
-                await sleep(highlightDuration);
-                card.classList.remove('highlight-animation');
-            }
-        }
-
-        // 2. 選出獲勝者 (現在 studentCards 仍是原始順序)
-        const winnerIndex = Math.floor(Math.random() * studentCards.length);
-        const winnerCard = studentCards[winnerIndex];
-        const winnerName = winnerCard.querySelector('.name-box').textContent;
-
-        // 修正：將獲勝者滾動到視圖中
-        winnerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        await sleep(100); // 稍微等待滾動
-
-        // 3. 顯示獲勝動畫
-        winnerCard.classList.add('selected-student-border');
-        lastSelectedStudentCard = winnerCard;
-        showCelebrationEmoji(winnerCard, '🎉'); // 監控視圖用 🎉
-
-        showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
-
-        // 4. 恢復按鈕
-        btn.disabled = false;
-        btn.classList.remove('drawing');
-        btn.textContent = '抽籤 🎲';
-    }
-
-// --- 修正：處理學生列表抽籤 (所有在線學生) ---
-async function handleModalLotteryDraw() {
-        const btn = document.getElementById('modal-draw-lottery-btn');
-        if (btn.disabled) return;
-
-        const container = document.getElementById('modal-student-names');
-        const studentElements = Array.from(container.querySelectorAll('p'));
-
-        if (studentElements.length === 0 || (studentElements.length === 1 && studentElements[0].textContent.includes('沒有學生'))) {
-            return showMessage('目前沒有學生在線可供抽籤。', 'info');
-        }
-        
-        // 移除舊的獲勝者樣式
-        if (lastSelectedModalStudent) {
-            lastSelectedModalStudent.classList.remove('modal-selected-student-border');
-        }
-        studentElements.forEach(el => el.classList.remove('modal-selected-student-border'));
-
-        btn.disabled = true;
-        btn.classList.add('drawing');
-        btn.textContent = '抽籤中...';
-        
-        // 1. 緊張感動畫：依序高亮
-        const highlightDuration = 75;
-        const highlightRounds = 3;
-
-        for (let round = 0; round < highlightRounds; round++) {
-            // 打亂順序 (修正：使用 ... 複製陣列，避免修改原陣列)
-            const shuffledElements = [...studentElements].sort(() => 0.5 - Math.random());
-            
-            for (const el of shuffledElements) {
-                el.classList.add('highlight-animation');
-                await sleep(highlightDuration);
-                el.classList.remove('highlight-animation');
-            }
-        }
-
-        // 2. 選出獲勝者 (現在 studentElements 仍是原始順序)
-        const winnerIndex = Math.floor(Math.random() * studentElements.length);
-        const winnerElement = studentElements[winnerIndex];
-        const winnerName = winnerElement.textContent;
-
-        // 修正：將獲勝者滾動到視圖中
-        winnerElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        await sleep(100); // 稍微等待滾動
-
-        // 3. 顯示獲勝動畫
-        winnerElement.classList.add('modal-selected-student-border');
-        lastSelectedModalStudent = winnerElement;
-        showCelebrationEmoji(winnerElement, '🏆'); // 學生列表用 🏆
-
-        showMessage(`恭喜！抽中學生：${winnerName}`, 'success');
-        
-        // 4. 恢復按鈕
-        btn.disabled = false;
-        btn.classList.remove('drawing');
-        btn.textContent = '抽籤 🎲';
-    }
 
         function setupEventListeners() {
             // Entry screen.
@@ -6305,9 +6035,48 @@ async function handleModalLotteryDraw() {
             // Teacher utility buttons.
             document.getElementById('refresh-student-count-btn').addEventListener('click', manualRefreshCounts);
             // Original lottery button in monitor view (now replaced by modal one)
-            document.getElementById('draw-lottery-btn').addEventListener('click', handleMonitorLotteryDraw);
+            document.getElementById('draw-lottery-btn').addEventListener('click', () => {
+                if (allStudentResponses.length === 0) return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
+                if (lastSelectedStudentCard) lastSelectedStudentCard.classList.remove('selected-student-border');
+                const randomIndex = Math.floor(Math.random() * allStudentResponses.length);
+                const selectedStudentName = allStudentResponses[randomIndex].name;
+                const studentCards = document.querySelectorAll('#student-responses-container .student-response-item');
+                const foundCard = Array.from(studentCards).find(card => card.querySelector('.name-box').textContent === selectedStudentName);
+                if (foundCard) {
+                    foundCard.classList.add('selected-student-border');
+                    lastSelectedStudentCard = foundCard;
+                    showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
+                }
+            });
             // NEW: Lottery button inside the student list modal
-            document.getElementById('modal-draw-lottery-btn').addEventListener('click', handleModalLotteryDraw);
+            document.getElementById('modal-draw-lottery-btn').addEventListener('click', () => {
+                if (activeStudentNames.length === 0) {
+                    return showMessage('目前沒有學生在線可供抽籤。', 'info');
+                }
+
+                // Remove highlight from previously selected student in the modal
+                if (lastSelectedModalStudent) {
+                    lastSelectedModalStudent.classList.remove('modal-selected-student-border');
+                }
+
+                // Randomly select a student from all active online students
+                const randomIndex = Math.floor(Math.random() * activeStudentNames.length);
+                const selectedStudentName = activeStudentNames[randomIndex];
+
+                // Find the corresponding <p> element in the modal
+                const studentNameElements = document.querySelectorAll('#modal-student-names p');
+                const foundElement = Array.from(studentNameElements).find(p => p.textContent === selectedStudentName);
+
+                if (foundElement) {
+                    foundElement.classList.add('modal-selected-student-border');
+                    lastSelectedModalStudent = foundElement; // Store the currently selected element
+                    showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
+                } else {
+                    // This case should ideally not happen if activeStudentNames is correctly populated
+                    // and the modal list is correctly rendered.
+                    showMessage(`抽中學生：${selectedStudentName} (未在列表中找到)`, 'info');
+                }
+            });
 
 
             document.getElementById('download-media-btn').addEventListener('click', async (e) => { // Changed ID
