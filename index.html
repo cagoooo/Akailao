@@ -2258,6 +2258,7 @@
         let matchingQuestionBanks = []; // Matching Question Bank storage
         let studentResponsesUnsubscribe = null;
         let classroomPresenceUnsubscribe = null; // Unsubscribe function for classroom presence listener.
+        let lotteryUnsubscribe = null; // NEW: Listener for lottery results
 
         // Quick Poll variables
         let quickPollActive = false;
@@ -3064,7 +3065,25 @@
         }
 
         // --- Firebase Functions ---
-
+        /**
+         * NEW: (Teacher) Announces the drawn student to Firestore.
+         * @param {string} studentName - The name of the student who was drawn.
+         */
+        async function announceDrawnStudent(studentName) {
+            if (!classroomCode) return;
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            try {
+                await setDoc(controlRef, {
+                    lastDrawnStudent: {
+                        name: studentName,
+                        timestamp: new Date() // 使用新 Date 物件來確保每次都能觸發監聽
+                    }
+                }, { merge: true });
+            } catch (error) {
+                console.error("Failed to announce drawn student:", error);
+                showMessage("宣布抽籤結果失敗。", "error");
+            }
+        }
         /**
          * (Teacher) Sets the current interaction mode and clears old student response data.
          * @param {string} mode - 'true_false', 'multiple_choice', 'text_input', 'drawing', 'url_dispatch', 'recording', or 'waiting'.
@@ -3148,7 +3167,8 @@
                     active_mode: mode,
                     backgroundImage: teacherUploadedBackgroundImageDataURL || null,
                     teacherId: userId, // Store teacher ID
-                    isPaused: isResponsePaused // Use current local pause state
+                    isPaused: isResponsePaused, // Use current local pause state
+                    lastDrawnStudent: null // <-- 在此新增 (清除上次抽籤紀錄)
                 };
 
                 // MODIFIED: Add combined dispatch settings if in that mode.
@@ -3220,6 +3240,95 @@
             }
         }
 
+        /**
+         * NEW: (Student) Displays the lottery winner in an overlay.
+         * @param {string} winnerName - The name of the student who was drawn.
+         */
+         function showLotteryWinner(winnerName) {
+            // 檢查是否已存在一個抽籤結果的畫面
+            let overlay = document.getElementById('lottery-winner-overlay');
+            if (overlay) overlay.remove(); // 移除舊的
+
+            overlay = document.createElement('div');
+            overlay.id = 'lottery-winner-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 9999;
+                animation: fadeIn 0.5s ease-in-out;
+            `;
+
+            // 檢查是否為自己被抽中
+            const isWinner = (winnerName === studentName);
+            const winnerMessage = isWinner ? "恭喜你被抽中了！" : `抽中了： ${winnerName}`;
+            const iconColor = isWinner ? '#4ade80' : '#60a5fa'; // 綠色 (自己) 或 藍色 (別人)
+
+            overlay.innerHTML = `
+                <div style="text-align: center; color: white; font-size: 3rem; font-weight: bold;">
+                    <i class="fas fa-dice" style="color: ${iconColor}; font-size: 6rem; margin-bottom: 20px;"></i>
+                    <h1 style="margin: 20px 0; color: white;">${winnerMessage}</h1>
+                    <p style="font-size: 1.5rem; color: #d1d5db;">點擊任意位置關閉</p>
+                </div>
+                <style>
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: scale(0.8); }
+                        to { opacity: 1; transform: scale(1); }
+                    }
+                </style>
+            `;
+
+            overlay.addEventListener('click', () => {
+                overlay.remove();
+            });
+
+            document.body.appendChild(overlay);
+
+            // 5 秒後自動關閉
+            setTimeout(() => {
+                if (overlay.parentElement) {
+                    overlay.remove();
+                }
+            }, 5000);
+        }
+
+        /**
+         * NEW: (Student) Listens for lottery results from the teacher.
+         */
+        function listenToLottery() {
+            if (lotteryUnsubscribe) lotteryUnsubscribe(); // 取消舊的監聽
+
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            let lastTimestamp = null; // 用於防止重複顯示同一個抽籤結果
+
+            lotteryUnsubscribe = onSnapshot(controlRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const drawnStudent = data.lastDrawnStudent;
+
+                    if (drawnStudent && drawnStudent.name) {
+                        // 轉換 Firestore 時間戳
+                        const eventTimestamp = drawnStudent.timestamp?.toMillis(); 
+                        
+                        // 檢查這是否是一個新的抽籤事件
+                        if (eventTimestamp && eventTimestamp !== lastTimestamp) {
+                            lastTimestamp = eventTimestamp;
+                            
+                            // 如果學生不在搶答模式中，則顯示抽籤結果
+                            if (currentInteractionMode !== 'quick_answer') {
+                                showLotteryWinner(drawnStudent.name);
+                            }
+                        }
+                    }
+                }
+            });
+        }
         /**
          * (Student) Listens for changes in the teacher's interaction mode and switches the student interface accordingly.
          */
@@ -5357,6 +5466,7 @@
 
             if (interactionModeUnsubscribe) interactionModeUnsubscribe();
             if (studentResponsesUnsubscribe) studentResponsesUnsubscribe();
+            if (lotteryUnsubscribe) lotteryUnsubscribe(); // <-- 在此新增
             if (classroomPresenceUnsubscribe) { // Only unsubscribe presence here
                 classroomPresenceUnsubscribe();
                 classroomPresenceUnsubscribe = null;
@@ -5676,6 +5786,7 @@
                         document.getElementById('student-welcome-msg').textContent = `你好，${studentName}！`;
                         listenToInteractionMode();
                         listenToPeerReviewStatus(); // NEW: Listen for peer review status
+                        listenToLottery(); // <-- 在此新增
                         showView('studentWaiting');
                         // Set student presence using the specific classroomCode
                         const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
@@ -6046,6 +6157,7 @@
                     foundCard.classList.add('selected-student-border');
                     lastSelectedStudentCard = foundCard;
                     showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
+                    announceDrawnStudent(selectedStudentName); // <-- 在此新增
                 }
             });
             // NEW: Lottery button inside the student list modal
@@ -6071,6 +6183,7 @@
                     foundElement.classList.add('modal-selected-student-border');
                     lastSelectedModalStudent = foundElement; // Store the currently selected element
                     showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
+                    announceDrawnStudent(selectedStudentName); // <-- 在此新增
                 } else {
                     // This case should ideally not happen if activeStudentNames is correctly populated
                     // and the modal list is correctly rendered.
