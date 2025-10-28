@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-	<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <style>
@@ -28,12 +28,22 @@
             flex-direction: column;
             align-items: center;
             background-color: #ffffff;
-            padding: 2rem 1.5rem;
+            padding: 1.25rem 1rem;
             border-radius: 1rem;
             border: 1px solid #e5e7eb;
             box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
             transition: all 0.3s ease-in-out;
             text-align: center;
+        }
+        @media (min-width: 640px) {
+            .role-card {
+                padding: 1.5rem 1.25rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .role-card {
+                padding: 2rem 1.5rem;
+            }
         }
         .role-card:hover {
             transform: translateY(-8px);
@@ -41,19 +51,40 @@
             border-color: #93c5fd; /* Light blue border on hover */
         }
         .role-card-icon {
-            width: 80px;
-            height: 80px;
+            width: 60px;
+            height: 60px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 2.5rem;
+            font-size: 2rem;
             transition: all 0.3s ease-in-out;
         }
+        @media (min-width: 640px) {
+            .role-card-icon {
+                width: 70px;
+                height: 70px;
+                font-size: 2.25rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .role-card-icon {
+                width: 80px;
+                height: 80px;
+                font-size: 2.5rem;
+            }
+        }
         .role-card .btn {
-            font-size: 1.1rem;
-            padding-top: 0.625rem;
-            padding-bottom: 0.625rem;
+            font-size: 1rem;
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+        @media (min-width: 640px) {
+            .role-card .btn {
+                font-size: 1.1rem;
+                padding-top: 0.625rem;
+                padding-bottom: 0.625rem;
+            }
         }
         /* --- 初始畫面樣式結束 --- */
 
@@ -1131,43 +1162,43 @@
 
         <div id="entry-view" class="w-full h-screen flex flex-col items-center justify-center p-4">
             <!-- 建置說明按鈕 -->
-            <div class="absolute top-4 right-4 z-10">
+            <div class="absolute top-2 right-2 sm:top-4 sm:right-4 z-10">
                 <a href="https://filedn.com/laMtL9jmKf7JrDEQG0A6OPy/html/%E5%89%9B%E5%A5%BD%E5%AD%B8%E6%9C%80%E6%96%B0%E7%89%88-%E5%BB%BA%E7%BD%AE%E6%89%8B%E5%86%8A/%E5%89%9B%E5%A5%BD%E5%AD%B8%E6%95%99%E5%B8%AB%E4%BD%BF%E7%94%A8%E5%BB%BA%E7%BD%AE%E6%89%8B%E5%86%8ANew.html" target="_blank" rel="noopener noreferrer" 
-                   class="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg shadow-md transition-all duration-200 hover:shadow-lg">
-                    <i class="fas fa-play-circle mr-2"></i>
-                    建置操作手冊
+                   class="inline-flex items-center px-3 py-2 sm:px-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-medium rounded-lg shadow-md transition-all duration-200 hover:shadow-lg">
+                    <i class="fas fa-play-circle mr-0 sm:mr-2"></i>
+                    <span class="hidden sm:inline ml-2">建置操作手冊</span>
                 </a>
             </div>
             
-            <div class="w-full max-w-3xl bg-white/80 backdrop-blur-sm p-8 md:p-12 rounded-2xl shadow-xl text-center border border-gray-200">
+            <div class="w-full max-w-3xl bg-white/80 backdrop-blur-sm p-5 sm:p-8 md:p-12 rounded-2xl shadow-xl text-center border border-gray-200">
         
-                <div class="flex flex-col md:flex-row items-center justify-center mb-6">
-                    <i class="fas fa-rocket text-5xl text-indigo-500 mb-4 md:mb-0 md:mr-6"></i>
+                <div class="flex flex-col md:flex-row items-center justify-center mb-4 sm:mb-6">
+                    <i class="fas fa-rocket text-4xl sm:text-5xl text-indigo-500 mb-3 md:mb-0 md:mr-6"></i>
                     <div>
-                        <h1 class="text-4xl md:text-5xl font-bold text-gray-800">剛好學：課堂互動so easy</h1>
-                        <p class="text-lg text-gray-600 mt-2">一個專為現代課堂設計的即時互動工具</p>
+                        <h1 class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold text-gray-800 leading-tight">剛好學：課堂互動so easy</h1>
+                        <p class="text-base sm:text-lg text-gray-600 mt-1 sm:mt-2">一個專為現代課堂設計的即時互動工具</p>
                     </div>
                 </div>
                 
-                <hr class="my-8 border-gray-200">
+                <hr class="my-6 sm:my-8 border-gray-200">
         
-                <p class="text-xl font-medium text-gray-700 mb-6">請選擇您的角色以開始</p>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <p class="text-lg sm:text-xl font-medium text-gray-700 mb-4 sm:mb-6">請選擇您的角色以開始</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 md:gap-8">
                     <div class="role-card group">
                         <div class="role-card-icon bg-blue-100 text-blue-500 group-hover:bg-blue-500 group-hover:text-white">
                             <i class="fas fa-chalkboard-teacher"></i>
                         </div>
-                        <h2 class="text-2xl font-bold text-gray-800 mt-4">我是教師</h2>
-                        <p class="text-gray-500 my-2 h-12">建立教室，發起互動，即時查看學生反饋。</p>
-                        <button id="teacher-entry-btn" class="btn btn-primary !w-full">建立或進入教室</button>
+                        <h2 class="text-xl sm:text-2xl font-bold text-gray-800 mt-3 sm:mt-4">我是教師</h2>
+                        <p class="text-sm sm:text-base text-gray-500 my-2 min-h-[3rem] sm:h-12">建立教室，發起互動，即時查看學生反饋。</p>
+                        <button id="teacher-entry-btn" class="btn btn-primary !w-full text-sm sm:text-base">建立或進入教室</button>
                     </div>
                     <div class="role-card group">
                          <div class="role-card-icon bg-green-100 text-green-500 group-hover:bg-green-500 group-hover:text-white">
                             <i class="fas fa-user-graduate"></i>
                          </div>
-                         <h2 class="text-2xl font-bold text-gray-800 mt-4">我是學生</h2>
-                         <p class="text-gray-500 my-2 h-12">輸入教室代碼，參與課堂問答與互動。</p>
-                        <button id="student-entry-btn" class="btn btn-green !w-full">加入課堂</button>
+                         <h2 class="text-xl sm:text-2xl font-bold text-gray-800 mt-3 sm:mt-4">我是學生</h2>
+                         <p class="text-sm sm:text-base text-gray-500 my-2 min-h-[3rem] sm:h-12">輸入教室代碼，參與課堂問答與互動。</p>
+                        <button id="student-entry-btn" class="btn btn-green !w-full text-sm sm:text-base">加入課堂</button>
                     </div>
                 </div>
             </div>
@@ -1191,85 +1222,122 @@
             </div>
         </div>
 
-        <div id="teacher-menu-view" class="hidden text-center relative">
-            <h2 class="text-3xl font-bold text-gray-800 mb-8">教師面板：請選擇互動模式</h2>
-            <div class="absolute top-4 right-4 flex flex-col items-end">
-                <div class="flex items-center gap-2 p-2 rounded-md bg-white shadow-sm">
-                    <div id="student-status-area" class="text-gray-600 text-lg cursor-pointer flex items-center justify-center hover:bg-gray-200 transition-colors">
-                        <span>目前有 <span id="active-student-count" class="font-bold text-blue-700">0</span> 位學生在線</span>
+        <div id="teacher-menu-view" class="hidden text-center relative px-2 sm:px-4 pt-32 sm:pt-0">
+            <h2 class="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 mb-4 sm:mb-8">教師面板：請選擇互動模式</h2>
+            
+            <!-- 頂部控制區：手機版堆疊，桌面版左右分佈 -->
+            <div class="absolute top-2 left-2 right-2 z-10 sm:static sm:mb-4 flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-4">
+                <!-- 左側區域：下課按鈕 + 教室代碼 -->
+                <div class="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                    <button id="end-class-session-menu-btn" class="btn btn-red w-full sm:!w-auto text-xs sm:text-base h-9 sm:h-11 px-2 sm:px-4 py-1 sm:py-2 flex items-center justify-center" title="下課並清空資料">
+                        <i class="fas fa-door-open mr-1 sm:mr-2"></i> <span class="text-xs sm:text-base">下課 🔚</span>
+                    </button>
+                    <div id="teacher-menu-classroom-code-display" class="text-center sm:text-left text-base sm:text-xl md:text-2xl lg:text-3xl font-bold text-gray-800 bg-yellow-100 px-3 sm:px-4 py-1 sm:py-2 rounded-lg border-2 border-yellow-400 shadow-sm w-full sm:w-auto">
+                        教室代碼: <span id="teacher-menu-code-value" class="text-blue-600">---</span>
                     </div>
-                    <button id="refresh-student-count-btn" class="text-gray-500 hover:text-blue-700 transition-colors" title="更新統計">
+                </div>
+                
+                <!-- 右側區域：學生統計 -->
+                <div class="flex items-center gap-1 sm:gap-2 p-1 sm:p-2 rounded-md bg-white shadow-sm w-full sm:w-auto justify-center">
+                    <div id="student-status-area" class="text-gray-600 text-xs sm:text-base md:text-lg cursor-pointer flex items-center justify-center hover:bg-gray-200 transition-colors px-1">
+                        <span class="hidden sm:inline">目前有 </span><span id="active-student-count" class="font-bold text-blue-700 mx-1">0</span> <span class="hidden sm:inline">位</span>學生<span class="hidden sm:inline">在線</span>
+                    </div>
+                    <button id="refresh-student-count-btn" class="text-gray-500 hover:text-blue-700 transition-colors text-sm sm:text-base" title="更新統計">
                         <i class="fas fa-sync-alt"></i>
                     </button>
                 </div>
-                </div>
+            </div>
 
-            <div class="absolute top-4 left-4">
-                <button id="end-class-session-menu-btn" class="btn btn-red !w-auto text-base h-11 px-4 py-2 flex items-center justify-center" title="下課並清空資料">
-                    <i class="fas fa-door-open mr-2"></i> <span id="end-class-button-text">下課 🔚</span>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 md:gap-4 mx-auto max-w-2xl">
+                <button data-mode="true_false" class="btn btn-primary aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">A.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">是非題</span>
+                </button>
+                <button id="choice-sequencing-matching-menu-btn" class="btn btn-green aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">B.</span>
+                    <span class="text-lg sm:text-xl md:text-2xl lg:text-3xl font-bold leading-tight">選擇/排序<br class="hidden sm:inline">/配對</span>
+                </button>
+                <button data-mode="text_input" class="btn btn-orange aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">C.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">文字題</span>
+                </button>
+                <button data-mode="drawing" class="btn btn-purple aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">D.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">繪圖題</span>
+                </button>
+                <button data-mode="url_dispatch" class="btn btn-teal aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">E.</span>
+                    <span class="text-base sm:text-lg md:text-xl lg:text-2xl font-bold leading-tight">派送網址<br class="hidden sm:inline">/HTML</span>
+                </button>
+                <button data-mode="recording" class="btn bg-indigo-600 hover:bg-indigo-700 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">F.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">錄音題</span>
+                </button>
+                <button id="reading-comprehension-settings-btn" class="btn bg-red-500 hover:bg-red-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">G.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">閱讀測驗</span>
+                </button>
+                <button data-mode="quick_answer" class="btn bg-orange-500 hover:bg-orange-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">H.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">搶答</span>
+                </button>
+                <button id="quick-poll-settings-btn" class="btn bg-lime-500 hover:bg-lime-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-xs sm:text-sm md:text-base opacity-60 mb-0.5">I.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-tight">快速投票</span>
                 </button>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mx-auto w-fit">
-                <button data-mode="true_false" class="btn btn-primary !w-40 !h-40 flex items-center justify-center text-4xl">A. 是非題</button>
-                <button id="choice-sequencing-matching-menu-btn" class="btn btn-green !w-40 !h-40 flex items-center justify-center text-3xl">B. 選擇/排序/配對</button>
-                <button data-mode="text_input" class="btn btn-orange !w-40 !h-40 flex items-center justify-center text-4xl">C. 文字題</button>
-                <button data-mode="drawing" class="btn btn-purple !w-40 !h-40 flex items-center justify-center text-4xl">D. 繪圖題</button>
-                <button data-mode="url_dispatch" class="btn btn-teal !w-40 !h-40 flex items-center justify-center text-4xl">E. 派送網址/HTML</button>
-                <button data-mode="recording" class="btn bg-indigo-600 hover:bg-indigo-700 !w-40 !h-40 flex items-center justify-center text-4xl">F. 錄音題</button>
-                <button id="reading-comprehension-settings-btn" class="btn bg-red-500 hover:bg-red-600 !w-40 !h-40 flex items-center justify-center text-4xl">G. 閱讀測驗</button>
-                <button data-mode="quick_answer" class="btn bg-orange-500 hover:bg-orange-600 !w-40 !h-40 flex items-center justify-center text-4xl">H. 搶答</button>
-                <button id="quick-poll-settings-btn" class="btn bg-lime-500 hover:bg-lime-600 !w-40 !h-40 flex items-center justify-center text-4xl">I. 快速投票</button>
-            </div>
-            <div class="mt-8 flex flex-col items-center">
-                <div class="flex gap-4 mb-4">
-                    <label for="teacher-image-upload-input" class="btn btn-purple !w-auto text-base h-11 px-4 py-2 flex items-center justify-center cursor-pointer">
-                        <i class="fas fa-upload mr-2"></i> 上傳繪圖背景圖片 (教師用) 🖼️
+            <div class="mt-6 sm:mt-8 flex flex-col items-center px-2">
+                <div class="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4 w-full sm:w-auto">
+                    <label for="teacher-image-upload-input" class="btn btn-purple !w-full sm:!w-auto text-xs sm:text-base h-9 sm:h-11 px-2 sm:px-4 py-1 sm:py-2 flex items-center justify-center cursor-pointer">
+                        <i class="fas fa-upload mr-1 sm:mr-2"></i> <span class="hidden xs:inline">上傳繪圖背景圖片 (教師用) 🖼️</span><span class="xs:hidden">上傳背景 🖼️</span>
                     </label>
                     <input type="file" id="teacher-image-upload-input" accept="image/*" class="hidden">
-                    <button id="clear-teacher-background-btn" class="btn btn-red !w-auto text-base h-11 px-4 py-2 flex items-center justify-center">
-                        <i class="fas fa-trash mr-2"></i> 清除背景圖 🗑️
+                    <button id="clear-teacher-background-btn" class="btn btn-red !w-full sm:!w-auto text-xs sm:text-base h-9 sm:h-11 px-2 sm:px-4 py-1 sm:py-2 flex items-center justify-center">
+                        <i class="fas fa-trash mr-1 sm:mr-2"></i> <span class="hidden xs:inline">清除背景圖 🗑️</span><span class="xs:hidden">清除 🗑️</span>
                     </button>
                 </div>
-                <p id="teacher-image-status" class="text-gray-600 text-sm mt-2">目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。</p>
-                <div id="teacher-image-preview-container" class="mt-4 hidden border border-gray-300 rounded-lg p-2 max-w-xs">
+                <p id="teacher-image-status" class="text-gray-600 text-xs sm:text-sm mt-2 text-center">目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。</p>
+                <div id="teacher-image-preview-container" class="mt-4 hidden border border-gray-300 rounded-lg p-2 max-w-xs w-full">
                     <img id="teacher-image-preview" src="" alt="背景圖片預覽" class="w-full h-auto rounded-md object-contain">
                 </div>
             </div>
 
-            <div class="absolute bottom-4 left-4">
-                <button id="ai-settings-btn" class="text-gray-500 hover:text-blue-700 transition-colors text-3xl" title="AI 設定">
+            <div class="mt-6 flex justify-center gap-4 sm:gap-8 pb-4">
+                <button id="ai-settings-btn" class="text-gray-500 hover:text-blue-700 transition-colors text-2xl sm:text-3xl" title="AI 設定">
                     <i class="fas fa-robot"></i>
                 </button>
-            </div>
-            <div class="absolute bottom-4 right-4">
-                 <button id="url-dispatch-settings-btn" class="text-gray-500 hover:text-teal-700 transition-colors text-3xl" title="設定派送網址/HTML">
+                <button id="url-dispatch-settings-btn" class="text-gray-500 hover:text-teal-700 transition-colors text-2xl sm:text-3xl" title="設定派送網址/HTML">
                     <i class="fas fa-link"></i>
                 </button>
             </div>
         </div>
         
-        <div id="teacher-monitor-view" class="hidden">
-            <div class="flex justify-between items-center mb-6">
-                <div class="flex items-center gap-4"> <button id="end-class-session-monitor-btn" class="btn btn-red !w-auto text-base h-11 px-4 py-2 flex items-center justify-center" title="下課並清空資料">
-                        <i class="fas fa-door-open mr-2"></i> <span id="end-class-monitor-button-text">下課 🔚</span>
+        <div id="teacher-monitor-view" class="hidden px-2 sm:px-4">
+            <div class="flex flex-col gap-3 mb-6">
+                <!-- 第一行：下課按鈕 + 教室代碼 -->
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-4">
+                    <button id="end-class-session-monitor-btn" class="btn bg-red-700 hover:bg-red-800 w-full sm:!w-auto text-base sm:text-lg md:text-xl font-semibold h-12 sm:h-13 md:h-14 px-4 sm:px-5 md:px-6 py-2 flex items-center justify-center shadow-lg border-2 border-red-900" title="下課並清空資料">
+                        <i class="fas fa-exclamation-triangle mr-2 text-lg sm:text-xl"></i> <span id="end-class-monitor-button-text">⚠️ 下課結束課程</span>
                     </button>
-                    <h2 class="text-3xl font-bold text-gray-800"></h2>
+                    <h2 class="text-base sm:text-2xl md:text-3xl font-bold text-gray-800 text-center sm:text-left"></h2>
                 </div>
-                <div class="flex gap-2">
-                     <button id="toggle-pause-btn" class="btn bg-gray-500 hover:bg-gray-600 !w-auto text-sm">
-                        <i class="fas fa-pause mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
-                     </button>
-                     <button id="draw-lottery-btn" class="btn btn-orange !w-auto text-sm">抽籤 🎲</button> <button id="show-unsubmitted-students-btn" class="btn btn-orange !w-auto text-sm hidden">未作答學生 📝</button>
-                     <button id="ai-text-summary-btn" class="btn btn-purple !w-auto text-sm hidden">AI 文字分析 🤖</button> 
-                     <button id="download-media-btn" class="btn btn-purple !w-auto text-sm hidden">下載所有媒體 💾</button> 
-                     <button id="show-statistics-btn" class="btn btn-primary !w-auto text-sm hidden">顯示統計 📊</button>
-                     <button id="start-peer-review-btn" class="btn btn-teal !w-auto text-sm hidden">開始互評 ❤️</button>
-                     <button id="view-questions-btn" class="btn bg-indigo-600 hover:bg-indigo-700 !w-auto text-sm hidden">查看題目 📝</button>
-                     <button id="view-reading-questions-btn" class="btn bg-red-600 hover:bg-red-700 !w-auto text-sm hidden">顯示題目 📖</button>
-                     <button id="download-responses-btn" class="btn btn-green !w-auto text-sm hidden">下載回應 📥</button>
-                     <button id="end-interaction-btn" class="btn btn-red !w-auto text-sm">結束互動 🛑</button>
-                 </div>
+                
+                <!-- 第二行：功能按鈕區（可換行） -->
+                <div class="flex flex-wrap gap-2">
+                    <button id="toggle-pause-btn" class="btn bg-gray-500 hover:bg-gray-600 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
+                        <i class="fas fa-pause mr-1 sm:mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
+                    </button>
+                    <button id="draw-lottery-btn" class="btn btn-orange flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">抽籤 🎲</button>
+                    <button id="show-unsubmitted-students-btn" class="btn btn-orange flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">未作答學生 📝</button>
+                    <button id="ai-text-summary-btn" class="btn btn-purple flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">AI 文字分析 🤖</button>
+                    <button id="download-media-btn" class="btn btn-purple flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載所有媒體 💾</button>
+                    <button id="show-statistics-btn" class="btn btn-primary flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示統計 📊</button>
+                    <button id="start-peer-review-btn" class="btn btn-teal flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">開始互評 ❤️</button>
+                    <button id="view-questions-btn" class="btn bg-indigo-600 hover:bg-indigo-700 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">查看題目 📝</button>
+                    <button id="view-reading-questions-btn" class="btn bg-red-600 hover:bg-red-700 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示題目 📖</button>
+                    <button id="download-responses-btn" class="btn btn-green flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載回應 📥</button>
+                    <button id="end-interaction-btn" class="btn btn-primary flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 font-bold shadow-md">✅ 結束互動，回到選單</button>
+                </div>
             </div>
             <div id="student-responses-container" class="bg-gray-100 p-4 rounded-lg h-96 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 <p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>
@@ -1553,24 +1621,24 @@
     </div>
 
     <div id="ai-settings-modal" class="magnified-image-modal hidden">
-        <div id="ai-settings-modal-content" class="magnified-image-modal-content">
+        <div id="ai-settings-modal-content" class="magnified-image-modal-content max-w-lg mx-auto p-4 sm:p-6">
             <button id="ai-settings-modal-close-btn" class="magnified-image-modal-close">×</button>
-            <h4>AI 設定</h4>
-            <div class="space-y-4">
+            <h4 class="text-xl sm:text-2xl md:text-3xl font-bold text-gray-800 mb-4 sm:mb-6">AI 設定</h4>
+            <div class="space-y-4 sm:space-y-6">
                 <div>
-                    <label for="ai-source-select">AI 模型來源:</label>
-                    <select id="ai-source-select" class="drawing-tool-select">
-                        <option value="gemini-default">使用目前 Gemini (不可使用)</option>
-                        <option value="gemini-custom" selected>自訂 Gemini API Key</option>
+                    <label for="ai-source-select" class="block text-sm sm:text-base md:text-lg font-medium text-gray-700 mb-2">AI 模型來源:</label>
+                    <select id="ai-source-select" class="w-full px-3 py-3 sm:px-4 sm:py-4 text-base sm:text-lg md:text-xl font-semibold text-gray-800 border-2 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white cursor-pointer" style="appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23374151'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E&quot;); background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 1.5em 1.5em;">
+                        <option value="gemini-default" class="text-base sm:text-lg md:text-xl">使用目前 Gemini (不可使用)</option>
+                        <option value="gemini-custom" selected class="text-base sm:text-lg md:text-xl">自訂 Gemini API Key</option>
                     </select>
                 </div>
                 <div id="gemini-api-key-group" class="hidden">
-                    <label for="gemini-api-key-input">Gemini API Key:</label>
-                    <input type="password" id="gemini-api-key-input" placeholder="請貼上您的 Gemini API Key" class="w-full px-4 py-3 border border-gray-300 rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <label for="gemini-api-key-input" class="block text-sm sm:text-base md:text-lg font-medium text-gray-700 mb-2">Gemini API Key:</label>
+                    <input type="password" id="gemini-api-key-input" placeholder="請貼上您的 Gemini API Key" class="w-full px-3 py-2 sm:px-4 sm:py-3 border border-gray-300 rounded-lg text-sm sm:text-base md:text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
             </div>
-            <div class="settings-button-group">
-                <button id="save-ai-settings-btn" class="btn btn-primary">儲存設定 💾</button>
+            <div class="settings-button-group mt-6 sm:mt-8">
+                <button id="save-ai-settings-btn" class="btn btn-primary w-full sm:w-auto text-base sm:text-lg px-6 py-3">儲存設定 💾</button>
             </div>
         </div>
     </div>
@@ -2208,8 +2276,19 @@
         </div>
     </div>
 
-    <!-- Firebase 設定檔（請修改此檔案來使用您自己的 Firebase 專案） -->
-    <script src="firebase-config.js"></script>
+    <!-- Firebase 設定檔 -->
+    <script>
+        // Firebase configuration for the classroom interaction app
+        // 若要使用自己的 Firebase 資料庫，請修改以下配置
+        const __firebase_config = JSON.stringify({
+            apiKey: "AIzaSyCK62baVq9uADJUrY1tyfuCQvcMyksjaok",
+            authDomain: "classtools-f72de.firebaseapp.com",
+            projectId: "classtools-f72de",
+            storageBucket: "classtools-f72de.firebasestorage.app",
+            messagingSenderId: "662722605071",
+            appId: "1:662722605071:web:24d2bd0fa2d21bcd74f37a"
+        });
+    </script>
 
     <script type="module">
         // Import Firebase SDK functions.
@@ -2348,6 +2427,637 @@
         let savedCanvasState = null; // Save student's drawing when switching to peer review
         
 
+        // ============================================================================
+        // 🚀 OPTIMIZATION MODULE - Core Utilities
+        // ============================================================================
+
+        /**
+         * 工具函式模組 - Utility Functions Module
+         * 提供通用的輔助函式，包括節流、防抖、圖片壓縮等
+         */
+        const Utils = (function() {
+            /**
+             * 節流函式 - 限制函式執行頻率
+             * @param {Function} func - 要節流的函式
+             * @param {number} delay - 延遲時間（毫秒）
+             * @returns {Function} 節流後的函式
+             */
+            function throttle(func, delay = 16) {
+                let lastCall = 0;
+                let timeoutId = null;
+                
+                return function throttled(...args) {
+                    const now = Date.now();
+                    const timeSinceLastCall = now - lastCall;
+                    
+                    if (timeSinceLastCall >= delay) {
+                        lastCall = now;
+                        func.apply(this, args);
+                    } else {
+                        if (timeoutId) clearTimeout(timeoutId);
+                        timeoutId = setTimeout(() => {
+                            lastCall = Date.now();
+                            func.apply(this, args);
+                        }, delay - timeSinceLastCall);
+                    }
+                };
+            }
+
+            /**
+             * 防抖函式 - 延遲執行，在停止觸發後才執行
+             * @param {Function} func - 要防抖的函式
+             * @param {number} delay - 延遲時間（毫秒）
+             * @returns {Function} 防抖後的函式
+             */
+            function debounce(func, delay = 300) {
+                let timeoutId = null;
+                
+                return function debounced(...args) {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    timeoutId = setTimeout(() => {
+                        func.apply(this, args);
+                    }, delay);
+                };
+            }
+
+            /**
+             * 壓縮並調整圖片大小
+             * @param {string} dataURL - 圖片的 Data URL
+             * @param {number} maxWidth - 最大寬度
+             * @param {number} maxHeight - 最大高度
+             * @param {number} quality - 壓縮品質 (0-1)
+             * @returns {Promise<string>} 壓縮後的 Data URL
+             */
+            function compressImage(dataURL, maxWidth = 1024, maxHeight = 1024, quality = 0.8) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        // 計算縮放比例
+                        if (width > maxWidth || height > maxHeight) {
+                            const widthRatio = maxWidth / width;
+                            const heightRatio = maxHeight / height;
+                            const ratio = Math.min(widthRatio, heightRatio);
+                            
+                            width = Math.floor(width * ratio);
+                            height = Math.floor(height * ratio);
+                        }
+                        
+                        // 創建 canvas 進行壓縮
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 轉換為 JPEG 格式以獲得更好的壓縮
+                        const compressed = canvas.toDataURL('image/jpeg', quality);
+                        resolve(compressed);
+                    };
+                    
+                    img.onerror = () => reject(new Error('圖片載入失敗'));
+                    img.src = dataURL;
+                });
+            }
+
+            /**
+             * 深拷貝物件
+             * @param {any} obj - 要拷貝的物件
+             * @returns {any} 拷貝後的物件
+             */
+            function deepClone(obj) {
+                if (obj === null || typeof obj !== 'object') return obj;
+                if (obj instanceof Date) return new Date(obj.getTime());
+                if (obj instanceof Array) return obj.map(item => deepClone(item));
+                
+                const clonedObj = {};
+                for (const key in obj) {
+                    if (obj.hasOwnProperty(key)) {
+                        clonedObj[key] = deepClone(obj[key]);
+                    }
+                }
+                return clonedObj;
+            }
+
+            return {
+                throttle,
+                debounce,
+                compressImage,
+                deepClone
+            };
+        })();
+
+        /**
+         * 監聽器管理模組 - Listener Manager Module
+         * 統一管理所有 Firebase 監聽器，確保正確清理避免記憶體洩漏
+         */
+        const ListenerManager = (function() {
+            const listeners = new Map();
+            
+            /**
+             * 註冊監聽器
+             * @param {string} name - 監聽器名稱
+             * @param {Function} unsubscribe - 取消訂閱函式
+             */
+            function register(name, unsubscribe) {
+                // 如果已存在同名監聽器，先清理
+                if (listeners.has(name)) {
+                    const oldUnsubscribe = listeners.get(name);
+                    if (typeof oldUnsubscribe === 'function') {
+                        try {
+                            oldUnsubscribe();
+                        } catch (error) {
+                            console.warn(`清理監聽器 ${name} 時發生錯誤:`, error);
+                        }
+                    }
+                }
+                listeners.set(name, unsubscribe);
+            }
+            
+            /**
+             * 取消指定監聽器
+             * @param {string} name - 監聽器名稱
+             */
+            function unregister(name) {
+                if (listeners.has(name)) {
+                    const unsubscribe = listeners.get(name);
+                    if (typeof unsubscribe === 'function') {
+                        try {
+                            unsubscribe();
+                        } catch (error) {
+                            console.warn(`取消監聽器 ${name} 時發生錯誤:`, error);
+                        }
+                    }
+                    listeners.delete(name);
+                }
+            }
+            
+            /**
+             * 清理所有監聽器
+             */
+            function clearAll() {
+                listeners.forEach((unsubscribe, name) => {
+                    if (typeof unsubscribe === 'function') {
+                        try {
+                            unsubscribe();
+                        } catch (error) {
+                            console.warn(`清理監聽器 ${name} 時發生錯誤:`, error);
+                        }
+                    }
+                });
+                listeners.clear();
+            }
+            
+            /**
+             * 獲取當前註冊的監聽器數量
+             * @returns {number} 監聽器數量
+             */
+            function count() {
+                return listeners.size;
+            }
+            
+            /**
+             * 檢查監聽器是否存在
+             * @param {string} name - 監聽器名稱
+             * @returns {boolean} 是否存在
+             */
+            function has(name) {
+                return listeners.has(name);
+            }
+            
+            return {
+                register,
+                unregister,
+                clearAll,
+                count,
+                has
+            };
+        })();
+
+        /**
+         * 模態視窗管理模組 - Modal Manager Module
+         * 統一管理所有模態視窗的顯示和隱藏
+         */
+        const ModalManager = (function() {
+            /**
+             * 顯示模態視窗
+             * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+             */
+            function show(modalIdOrElement) {
+                const modal = typeof modalIdOrElement === 'string' 
+                    ? document.getElementById(modalIdOrElement)
+                    : modalIdOrElement;
+                    
+                if (modal) {
+                    modal.classList.remove('hidden');
+                    // 添加淡入動畫
+                    modal.style.animation = 'fadeIn 0.2s ease-in-out';
+                } else {
+                    console.warn('找不到模態視窗:', modalIdOrElement);
+                }
+            }
+            
+            /**
+             * 隱藏模態視窗
+             * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+             */
+            function hide(modalIdOrElement) {
+                const modal = typeof modalIdOrElement === 'string' 
+                    ? document.getElementById(modalIdOrElement)
+                    : modalIdOrElement;
+                    
+                if (modal) {
+                    modal.classList.add('hidden');
+                } else {
+                    console.warn('找不到模態視窗:', modalIdOrElement);
+                }
+            }
+            
+            /**
+             * 切換模態視窗顯示狀態
+             * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+             */
+            function toggle(modalIdOrElement) {
+                const modal = typeof modalIdOrElement === 'string' 
+                    ? document.getElementById(modalIdOrElement)
+                    : modalIdOrElement;
+                    
+                if (modal) {
+                    if (modal.classList.contains('hidden')) {
+                        show(modal);
+                    } else {
+                        hide(modal);
+                    }
+                } else {
+                    console.warn('找不到模態視窗:', modalIdOrElement);
+                }
+            }
+            
+            /**
+             * 隱藏所有模態視窗
+             */
+            function hideAll() {
+                document.querySelectorAll('.magnified-image-modal').forEach(modal => {
+                    modal.classList.add('hidden');
+                });
+            }
+            
+            return {
+                show,
+                hide,
+                toggle,
+                hideAll
+            };
+        })();
+
+        /**
+         * 載入指示器模組 - Loading Indicator Module
+         * 顯示全局載入動畫
+         */
+        const LoadingIndicator = (function() {
+            let loadingElement = null;
+            
+            /**
+             * 顯示載入指示器
+             * @param {string} message - 載入訊息
+             */
+            function show(message = '載入中...') {
+                // 如果已存在，先移除
+                if (loadingElement) hide();
+                
+                loadingElement = document.createElement('div');
+                loadingElement.id = 'global-loading-indicator';
+                loadingElement.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                    backdrop-filter: blur(3px);
+                `;
+                
+                loadingElement.innerHTML = `
+                    <div style="background: white; padding: 2rem 3rem; border-radius: 1rem; box-shadow: 0 10px 25px rgba(0,0,0,0.2); text-align: center;">
+                        <i class="fas fa-spinner fa-spin text-4xl text-blue-600 mb-3"></i>
+                        <p class="text-lg text-gray-800 font-medium">${message}</p>
+                    </div>
+                `;
+                
+                document.body.appendChild(loadingElement);
+            }
+            
+            /**
+             * 隱藏載入指示器
+             */
+            function hide() {
+                if (loadingElement && loadingElement.parentElement) {
+                    loadingElement.remove();
+                    loadingElement = null;
+                }
+            }
+            
+            /**
+             * 檢查是否正在顯示
+             * @returns {boolean} 是否顯示中
+             */
+            function isShowing() {
+                return loadingElement !== null && loadingElement.parentElement !== null;
+            }
+            
+            return {
+                show,
+                hide,
+                isShowing
+            };
+        })();
+
+        /**
+         * 題庫管理通用類 - Question Bank Manager Class
+         * 統一管理各種題型的題庫（排序題、配對題、選擇題、閱讀測驗）
+         */
+        class QuestionBankManager {
+            constructor(storageKey, bankArray) {
+                this.storageKey = storageKey;
+                this.banks = bankArray || [];
+            }
+            
+            /**
+             * 儲存題庫
+             * @param {Object} bank - 題庫物件 {name, ...otherData}
+             * @returns {boolean} 是否成功
+             */
+            save(bank) {
+                if (!bank || !bank.name) {
+                    console.warn('題庫必須包含 name 屬性');
+                    return false;
+                }
+                
+                const existingIndex = this.banks.findIndex(b => b.name === bank.name);
+                if (existingIndex !== -1) {
+                    this.banks[existingIndex] = bank;
+                } else {
+                    this.banks.push(bank);
+                }
+                
+                return true;
+            }
+            
+            /**
+             * 載入題庫到指定位置
+             * @param {number} index - 題庫索引
+             * @returns {Object|null} 題庫物件
+             */
+            load(index) {
+                if (index >= 0 && index < this.banks.length) {
+                    return this.banks[index];
+                }
+                return null;
+            }
+            
+            /**
+             * 刪除題庫
+             * @param {number} index - 題庫索引
+             * @returns {boolean} 是否成功
+             */
+            delete(index) {
+                if (index >= 0 && index < this.banks.length) {
+                    this.banks.splice(index, 1);
+                    return true;
+                }
+                return false;
+            }
+            
+            /**
+             * 獲取所有題庫
+             * @returns {Array} 題庫陣列
+             */
+            getAll() {
+                return this.banks;
+            }
+            
+            /**
+             * 清空所有題庫
+             */
+            clearAll() {
+                this.banks.length = 0;
+            }
+            
+            /**
+             * 根據名稱搜尋題庫
+             * @param {string} name - 題庫名稱
+             * @returns {Object|null} 題庫物件
+             */
+            findByName(name) {
+                return this.banks.find(b => b.name === name) || null;
+            }
+        }
+
+        /**
+         * 錯誤處理模組 - Error Handler Module
+         * 統一處理 Firebase 和其他錯誤
+         */
+        const ErrorHandler = (function() {
+            /**
+             * 處理 Firebase 錯誤
+             * @param {Error} error - 錯誤物件
+             * @param {string} defaultMessage - 預設錯誤訊息
+             */
+            function handleFirebaseError(error, defaultMessage = '操作失敗') {
+                console.error('[Firebase Error]', error);
+                
+                let userMessage = defaultMessage;
+                
+                // 根據錯誤代碼提供更具體的訊息
+                if (error.code) {
+                    switch (error.code) {
+                        case 'permission-denied':
+                            userMessage = '權限不足，請重新登入';
+                            // 3秒後返回登入頁
+                            setTimeout(() => {
+                                if (typeof showView === 'function') {
+                                    showView('entry');
+                                }
+                            }, 3000);
+                            break;
+                        
+                        case 'unavailable':
+                        case 'failed-precondition':
+                            userMessage = '網路連線不穩定，請檢查網路';
+                            break;
+                        
+                        case 'not-found':
+                            userMessage = '找不到指定的資料';
+                            break;
+                        
+                        case 'already-exists':
+                            userMessage = '資料已存在';
+                            break;
+                        
+                        case 'resource-exhausted':
+                            userMessage = '伺服器繁忙，請稍後再試';
+                            break;
+                        
+                        case 'unauthenticated':
+                            userMessage = '未登入或登入已過期，請重新登入';
+                            setTimeout(() => {
+                                if (typeof showView === 'function') {
+                                    showView('entry');
+                                }
+                            }, 3000);
+                            break;
+                        
+                        default:
+                            userMessage = `${defaultMessage}（錯誤代碼：${error.code}）`;
+                    }
+                }
+                
+                // 顯示錯誤訊息給用戶
+                if (typeof showMessage === 'function') {
+                    showMessage(userMessage, 'error');
+                }
+                
+                return userMessage;
+            }
+            
+            /**
+             * 處理一般錯誤
+             * @param {Error} error - 錯誤物件
+             * @param {string} context - 錯誤發生的上下文
+             */
+            function handleGenericError(error, context = '') {
+                console.error(`[Error${context ? ' in ' + context : ''}]`, error);
+                
+                const userMessage = context 
+                    ? `${context}時發生錯誤，請稍後再試`
+                    : '發生錯誤，請稍後再試';
+                
+                if (typeof showMessage === 'function') {
+                    showMessage(userMessage, 'error');
+                }
+                
+                return userMessage;
+            }
+            
+            /**
+             * 安全執行異步函式
+             * @param {Function} asyncFn - 異步函式
+             * @param {string} context - 上下文描述
+             * @param {Function} onError - 錯誤回調（可選）
+             * @returns {Promise} 執行結果
+             */
+            async function safeExecute(asyncFn, context = '', onError = null) {
+                try {
+                    return await asyncFn();
+                } catch (error) {
+                    // 判斷是否為 Firebase 錯誤
+                    if (error.code) {
+                        handleFirebaseError(error, `${context}失敗`);
+                    } else {
+                        handleGenericError(error, context);
+                    }
+                    
+                    // 執行自訂錯誤回調
+                    if (typeof onError === 'function') {
+                        onError(error);
+                    }
+                    
+                    return null;
+                }
+            }
+            
+            return {
+                handleFirebaseError,
+                handleGenericError,
+                safeExecute
+            };
+        })();
+
+        /**
+         * DOM 查詢快取模組 - DOM Query Cache Module
+         * 提供常用 DOM 元素的快速存取
+         */
+        const DOMCache = (function() {
+            const cache = {};
+            
+            /**
+             * 獲取元素（帶快取）
+             * @param {string} id - 元素 ID
+             * @returns {HTMLElement|null} DOM 元素
+             */
+            function get(id) {
+                if (!cache[id]) {
+                    cache[id] = document.getElementById(id);
+                }
+                return cache[id];
+            }
+            
+            /**
+             * 批量獲取元素
+             * @param {Array<string>} ids - 元素 ID 陣列
+             * @returns {Object} 元素物件 {id: element}
+             */
+            function getMany(ids) {
+                const elements = {};
+                ids.forEach(id => {
+                    elements[id] = get(id);
+                });
+                return elements;
+            }
+            
+            /**
+             * 清除快取
+             * @param {string} id - 元素 ID（可選，不提供則清除全部）
+             */
+            function clear(id = null) {
+                if (id) {
+                    delete cache[id];
+                } else {
+                    for (const key in cache) {
+                        delete cache[key];
+                    }
+                }
+            }
+            
+            /**
+             * 預載常用元素
+             */
+            function preload() {
+                const commonIds = [
+                    'student-responses-container',
+                    'active-student-count',
+                    'message-box',
+                    'message-content',
+                    'text-input-area',
+                    'drawing-canvas',
+                    'submit-text-btn',
+                    'submit-drawing-btn',
+                    'student-welcome-msg'
+                ];
+                
+                commonIds.forEach(id => get(id));
+            }
+            
+            return {
+                get,
+                getMany,
+                clear,
+                preload
+            };
+        })();
+
+        // ============================================================================
+        // End of Optimization Module
+        // ============================================================================
+
         // --- DOM Elements Caching ---
         const views = {
             entry: document.getElementById('entry-view'),
@@ -2389,6 +3099,8 @@
                 if (viewName === 'entry') {
                     body.classList.add('initial-view-background');
                 }
+            } else {
+                console.error('找不到視圖:', viewName);
             }
         }
         
@@ -2564,19 +3276,16 @@
                     currentMatchingSelection.rightItem = null;
                     break;
                 case 'reading_comprehension':
-                    // Only clear content if not resuming from pause
-                    if (!isResumingFromPause) {
-                        document.getElementById('reading-text-display').textContent = '';
-                        document.getElementById('reading-questions-container').innerHTML = '';
-                        // Clear local answers when switching to a new reading comprehension session
-                        currentReadingAnswers = [];
-                    }
+                    // 🚀 FIX: 不要重置內容和答案，讓暫停恢復時保留學生的作答狀態
+                    // Only clear content if not resuming from pause AND mode actually changed
+                    // (This will be handled by displayReadingComprehensionForStudent instead)
                     const submitReadingBtn = document.getElementById('submit-reading-btn');
                     // Don't reset button state if resuming from pause (preserve submitted state)
                     if (!isResumingFromPause) {
                         submitReadingBtn.disabled = false;
                         submitReadingBtn.classList.remove('btn-gray');
                         submitReadingBtn.classList.add('btn-primary');
+                        submitReadingBtn.textContent = '送出答案 ✉️';
                     }
                     break;
                 case 'quick_poll':
@@ -3300,14 +4009,13 @@
 
         /**
          * NEW: (Student) Listens for lottery results from the teacher.
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          */
         function listenToLottery() {
-            if (lotteryUnsubscribe) lotteryUnsubscribe(); // 取消舊的監聽
-
             const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
             let lastTimestamp = null; // 用於防止重複顯示同一個抽籤結果
 
-            lotteryUnsubscribe = onSnapshot(controlRef, (docSnap) => {
+            const unsubscribe = onSnapshot(controlRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     const drawnStudent = data.lastDrawnStudent;
@@ -3328,15 +4036,19 @@
                     }
                 }
             });
+            
+            // 使用 ListenerManager 註冊監聽器
+            ListenerManager.register('lottery', unsubscribe);
+            // 同時保留舊變數以保持兼容性
+            lotteryUnsubscribe = unsubscribe;
         }
         /**
          * (Student) Listens for changes in the teacher's interaction mode and switches the student interface accordingly.
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          */
         function listenToInteractionMode() {
             // Use classroomCode in the Firestore path
-            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
-            // Ensure only one interaction mode listener is active for the student
-            if (interactionModeUnsubscribe) interactionModeUnsubscribe(); 
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control'); 
 
             interactionModeUnsubscribe = onSnapshot(controlRef, async (docSnap) => {
                 const studentPauseOverlay = document.getElementById('student-pause-overlay');
@@ -3459,9 +4171,10 @@
                         }
                     } else if (currentInteractionMode === 'reading_comprehension') {
                         const readingData = data.readingComprehensionData;
-                        // Always display if we have data and (mode changed OR resuming from pause OR pause state changed)
-                        if (readingData && (modeChanged || isResumingFromPause || pauseStateChanged)) {
-                            console.log('[Student] Displaying reading comprehension, modeChanged:', modeChanged, 'isResumingFromPause:', isResumingFromPause, 'pauseStateChanged:', pauseStateChanged);
+                        // 🚀 FIX: 只在模式改變或從暫停恢復時重新渲染，暫停時不要清空學生的選項
+                        // 移除 pauseStateChanged 條件，因為暫停只是阻止提交，不應該清空UI
+                        if (readingData && (modeChanged || isResumingFromPause)) {
+                            console.log('[Student] Displaying reading comprehension, modeChanged:', modeChanged, 'isResumingFromPause:', isResumingFromPause);
                             displayReadingComprehensionForStudent(readingData);
                             // Only reset submit button if mode changed (not when resuming from pause)
                             if (modeChanged) {
@@ -3480,6 +4193,9 @@
                 // So, keep the student in waiting view or current view, and just show an error.
                 showMessage("無法接收老師指令，請檢查網路連線。", "error");
             });
+            
+            // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+            ListenerManager.register('interactionMode', interactionModeUnsubscribe);
         }
         
         /**
@@ -3589,18 +4305,19 @@
         /**
          * (Student) Submits the answer to Firestore.
          * @param {string | object} answer - The student's answer.
+         * @returns {Promise<boolean>} Returns true if successful, false if failed
          */
         async function submitAnswer(answer) {
             // NEW: Prevent submission if paused
             if (isResponsePaused) {
                 showMessage('老師已暫停回覆，無法送出答案。', 'error');
-                return;
+                throw new Error('Response is paused');
             }
 
             if (!studentName || !userId || !classroomCode) {
                 console.error("Student name, User ID, or Classroom Code not set. Cannot submit answer.");
                 showMessage("學生姓名、用戶ID或教室代碼未設定，無法送出答案。", "error");
-                return;
+                throw new Error('Student info not set');
             }
             // Use classroomCode in the Firestore path
             const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
@@ -3611,25 +4328,25 @@
                     timestamp: new Date()
                 }, { merge: true });
                 console.log(`[Student] ${studentName} submitted answer:`, answer);
-                showMessage('回答已送出！', 'success');
+                return true;
             } catch (error) {
                 console.error("送出答案失敗:", error);
                 showMessage("送出答案失敗，請檢查網路連線。", "error");
+                throw error;
             }
         }
         
         /**
          * (Teacher) Listens for all student submissions and dynamically displays them.
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          * @param {string} mode - The current interaction mode, used to determine the answer type.
          */
         function listenToStudentSubmissions(mode) {
-             if (studentResponsesUnsubscribe) studentResponsesUnsubscribe();
-             
              // Use classroomCode in the Firestore path
              const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
              const container = document.getElementById('student-responses-container');
 
-             studentResponsesUnsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+             const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
                 container.innerHTML = ''; 
                 lastSelectedStudentCard = null; 
                 
@@ -3825,15 +4542,20 @@
                  console.error("[Teacher] Error listening to student submissions:", error);
                  showMessage("無法監聽學生作答，請檢查連線。", "error");
              });
+             
+             // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+             ListenerManager.register('studentResponses', unsubscribe);
+             studentResponsesUnsubscribe = unsubscribe; // 保持兼容性
         }
 
         /**
          * (Teacher) Listens for student online presence and updates the active student count list.
          * This listener should be persistent as long as the teacher is in the classroom.
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          */
         function listenToClassroomPresence() {
             // Only set up the listener if it's not already active
-            if (classroomPresenceUnsubscribe) {
+            if (ListenerManager.has('classroomPresence')) {
                 console.log("Presence listener already active. Skipping re-subscription.");
                 return;
             }
@@ -3848,7 +4570,7 @@
             const modalStudentNamesDiv = document.getElementById('modal-student-names');
             const monitorContainer = document.getElementById('student-responses-container');
 
-            classroomPresenceUnsubscribe = onSnapshot(presenceColRef, (querySnapshot) => {
+            const unsubscribe = onSnapshot(presenceColRef, (querySnapshot) => {
                 activeStudentNames = []; // Clear and re-populate
                 querySnapshot.forEach(doc => {
                     activeStudentNames.push(doc.data().name);
@@ -3890,9 +4612,14 @@
             }, (error) => {
                 console.error("[Teacher] Error listening to classroom presence:", error);
                 // If there's an error, maybe the listener broke, so clear it.
+                ListenerManager.unregister('classroomPresence');
                 classroomPresenceUnsubscribe = null;
                 showMessage("無法監聽學生在線狀態，請檢查連線。", "error");
             });
+            
+            // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+            ListenerManager.register('classroomPresence', unsubscribe);
+            classroomPresenceUnsubscribe = unsubscribe; // 保持兼容性
         }
 
         /**
@@ -5135,6 +5862,9 @@
             ctx.drawImage(drawingCanvas, 0, 0);
         }
 
+        /**
+         * 🚀 OPTIMIZED: 繪圖函式（將被節流包裝）
+         */
         function draw(e) {
             if (!isDrawing) return;
             e.preventDefault(); 
@@ -5146,6 +5876,9 @@
             [lastX, lastY] = [offsetX, offsetY];
             drawCombinedCanvas();
         }
+        
+        // 🚀 OPTIMIZED: 創建節流版本的繪圖函式（16ms ≈ 60 FPS）
+        const throttledDraw = Utils.throttle(draw, 16);
 
         function getMousePos(e) {
             const rect = canvas.getBoundingClientRect(); 
@@ -5736,24 +6469,29 @@
             document.getElementById('teacher-classroom-code-submit-btn').addEventListener('click', async () => {
                 const code = document.getElementById('teacher-classroom-code-input').value.trim();
                 if (code) {
-                    classroomCode = code;
-                    currentRole = 'teacher';
-                    document.getElementById('end-class-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text
-                    document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
-                    localStorage.setItem('teacherClassroomCode', classroomCode); // Persist teacher's classroom code
+                    try {
+                        classroomCode = code;
+                        currentRole = 'teacher';
+                        document.getElementById('teacher-menu-code-value').textContent = classroomCode; // Update classroom code in teacher menu
+                        document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
+                        localStorage.setItem('teacherClassroomCode', classroomCode); // Persist teacher's classroom code
 
-                    // Set initial classroom state in Firestore, including isPaused: false
-                    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
-                    await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true }); 
-                    isResponsePaused = false; // Initialize local state
-                    updateTeacherPauseButtonUI(); // Update button UI
-                    currentMultipleChoiceQuestions = null; // Ensure this is cleared on new class
+                        // Set initial classroom state in Firestore, including isPaused: false
+                        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                        await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true }); 
+                        isResponsePaused = false; // Initialize local state
+                        updateTeacherPauseButtonUI(); // Update button UI
+                        currentMultipleChoiceQuestions = null; // Ensure this is cleared on new class
 
-                    listenToClassroomPresence(); // Ensure presence listener is active
-                    showView('teacherMenu');
-                    document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
+                        listenToClassroomPresence(); // Ensure presence listener is active
+                        showView('teacherMenu');
+                        document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
+                    } catch (error) {
+                        console.error('進入教室失敗:', error);
+                        showMessage(`進入教室失敗：${error.message}`, 'error');
+                    }
                 } else {
-                     showMessage('請輸入教室代碼！', 'error');
+                    showMessage('請輸入教室代碼！', 'error');
                 }
             });
             document.getElementById('teacher-classroom-code-input').addEventListener('keydown', (e) => {
@@ -6039,13 +6777,13 @@
                 showMessage('答案已送出！', 'success');
             });
 
-            // Drawing board events.
+            // 🚀 OPTIMIZED: Drawing board events with throttled draw function
             canvas.addEventListener('mousedown', startDrawing);
-            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mousemove', throttledDraw);
             canvas.addEventListener('mouseup', stopDrawing);
             canvas.addEventListener('mouseleave', stopDrawing);
             canvas.addEventListener('touchstart', startDrawing, { passive: false });
-            canvas.addEventListener('touchmove', draw, { passive: false });
+            canvas.addEventListener('touchmove', throttledDraw, { passive: false });
             canvas.addEventListener('touchend', stopDrawing);
             window.addEventListener('resize', () => {
                 if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.drawing.classList.contains('hidden')) {
@@ -7372,17 +8110,14 @@
         
         /**
          * Listens for peer review votes and updates UI.
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          */
         function listenToPeerReviewVotes() {
             if (!classroomCode) return;
             
             const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
             
-            if (peerReviewUnsubscribe) {
-                peerReviewUnsubscribe();
-            }
-            
-            peerReviewUnsubscribe = onSnapshot(votesRef, (snapshot) => {
+            const unsubscribe = onSnapshot(votesRef, (snapshot) => {
                 const votes = {};
                 snapshot.forEach(doc => {
                     const data = doc.data();
@@ -7405,6 +8140,10 @@
                     updateTeacherVoteStats(votes);
                 }
             });
+            
+            // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+            ListenerManager.register('peerReviewVotes', unsubscribe);
+            peerReviewUnsubscribe = unsubscribe; // 保持兼容性
         }
         
         /**
@@ -7514,6 +8253,9 @@
 
         // --- Initialization Function ---
         async function initialize() {
+            // 🚀 OPTIMIZED: 預載常用 DOM 元素到快取
+            DOMCache.preload();
+            
             loadAISettings(); 
             loadDispatchSettings(); // Load saved combined dispatch settings
 
@@ -7529,7 +8271,7 @@
                     if (savedTeacherClassroomCode) {
                         classroomCode = savedTeacherClassroomCode;
                         currentRole = 'teacher';
-                        document.getElementById('end-class-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text
+                        document.getElementById('teacher-menu-code-value').textContent = classroomCode; // Update classroom code in teacher menu
                         document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
                         
                         // NEW: Fetch initial pause state and dispatch settings for teacher
@@ -7562,7 +8304,9 @@
                         showView('entry');
                     }
                 } else {
-                    console.error("Authentication failed, user is null.");
+                    // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
+                    // signInAnonymously() 執行後，onAuthStateChanged 會再次觸發並傳入有效的 user
+                    console.log("[Auth] Waiting for authentication...");
                     // If user is null (e.g., after signOut), ensure we are on the entry view.
                     showView('entry'); 
                 }
@@ -7919,17 +8663,14 @@
 
         /**
          * Listens for vote updates
+         * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
          */
         function listenToQuickPollVotes() {
             if (!classroomCode || !quickPollData) return;
 
             const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPollVotes');
 
-            if (quickPollVotesUnsubscribe) {
-                quickPollVotesUnsubscribe();
-            }
-
-            quickPollVotesUnsubscribe = onSnapshot(votesRef, (snapshot) => {
+            const unsubscribe = onSnapshot(votesRef, (snapshot) => {
                 // Aggregate votes
                 const voteCounts = {};
                 quickPollData.options.forEach(opt => voteCounts[opt] = 0);
@@ -7950,6 +8691,10 @@
                     updateQuickPollTable();
                 }
             });
+            
+            // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+            ListenerManager.register('quickPollVotes', unsubscribe);
+            quickPollVotesUnsubscribe = unsubscribe; // 保持兼容性
         }
 
         /**
@@ -8437,6 +9182,39 @@
                 return;
             }
 
+            // 🚀 FIX: 檢測是否為新的閱讀測驗會話
+            // 比較完整的題目內容（包括問題、選項、正確答案）以避免誤判
+            let isNewSession = false;
+            if (!readingComprehensionData) {
+                isNewSession = true;
+            } else if (readingComprehensionData.questions.length !== readingData.questions.length ||
+                      readingComprehensionData.text !== readingData.text) {
+                isNewSession = true;
+            } else {
+                // 深度比較題目內容
+                for (let i = 0; i < readingData.questions.length; i++) {
+                    const oldQ = readingComprehensionData.questions[i];
+                    const newQ = readingData.questions[i];
+                    if (oldQ.question !== newQ.question ||
+                        oldQ.correctAnswer !== newQ.correctAnswer ||
+                        JSON.stringify(oldQ.options) !== JSON.stringify(newQ.options)) {
+                        isNewSession = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (isNewSession) {
+                console.log('[displayReadingComprehensionForStudent] New session detected, clearing previous answers');
+                currentReadingAnswers = [];
+                // 重置提交按鈕狀態（新測驗）
+                const submitBtn = document.getElementById('submit-reading-btn');
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('btn-gray');
+                submitBtn.classList.add('btn-primary');
+                submitBtn.textContent = '送出答案 ✉️';
+            }
+
             // Store reading data for student to use when submitting
             if (currentRole === 'student') {
                 readingComprehensionData = readingData;
@@ -8446,11 +9224,12 @@
             questionsContainer.innerHTML = '';
             console.log('[displayReadingComprehensionForStudent] Set text:', readingData.text);
 
-            // Determine which answers to restore
+            // Determine which answers to restore and check submission status
             let answersToRestore = [];
+            let hasSubmittedToFirebase = false;
 
             // Priority 1: Use current local answers (not yet submitted)
-            if (currentReadingAnswers.length > 0) {
+            if (currentReadingAnswers.length > 0 && !isNewSession) {
                 answersToRestore = currentReadingAnswers;
                 console.log('[displayReadingComprehensionForStudent] Restoring local answers:', answersToRestore);
             }
@@ -8464,14 +9243,19 @@
                         // Check if answer is a JSON string or array
                         if (typeof data.answer === 'string') {
                             try {
-                                answersToRestore = JSON.parse(data.answer);
+                                const parsed = JSON.parse(data.answer);
+                                if (Array.isArray(parsed) && parsed.length > 0) {
+                                    answersToRestore = parsed;
+                                    hasSubmittedToFirebase = true;
+                                }
                             } catch (e) {
                                 answersToRestore = [];
                             }
-                        } else if (Array.isArray(data.answer)) {
+                        } else if (Array.isArray(data.answer) && data.answer.length > 0) {
                             answersToRestore = data.answer;
+                            hasSubmittedToFirebase = true;
                         }
-                        console.log('[displayReadingComprehensionForStudent] Restoring submitted answers:', answersToRestore);
+                        console.log('[displayReadingComprehensionForStudent] Restoring submitted answers:', answersToRestore, 'hasSubmitted:', hasSubmittedToFirebase);
                     }
                 } catch (error) {
                     console.error('Error fetching previous answers:', error);
@@ -8516,6 +9300,33 @@
                     console.log('[Reading] Answer updated:', questionIndex, '=', selectedValue);
                 });
             });
+            
+            // 🚀 FIX: 如果學生已經提交答案到 Firebase，恢復鎖定狀態
+            if (hasSubmittedToFirebase) {
+                console.log('[displayReadingComprehensionForStudent] Student has submitted, applying lock');
+                const submitBtn = document.getElementById('submit-reading-btn');
+                submitBtn.disabled = true;
+                submitBtn.classList.remove('btn-primary');
+                submitBtn.classList.add('btn-gray');
+                submitBtn.textContent = '✓ 已送出答案';
+                
+                // 禁用所有選項
+                const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+                allRadios.forEach(radio => {
+                    radio.disabled = true;
+                });
+                
+                // 為已選擇的答案添加視覺標記
+                const allLabels = questionsContainer.querySelectorAll('label');
+                allLabels.forEach(label => {
+                    const radio = label.querySelector('input[type="radio"]');
+                    if (radio && radio.checked) {
+                        label.classList.add('bg-green-100', 'border-green-400', 'border-2');
+                    } else if (radio) {
+                        label.classList.add('opacity-50');
+                    }
+                });
+            }
         }
 
         /**
@@ -8523,6 +9334,14 @@
          */
         async function submitReadingAnswer() {
             const questionsContainer = document.getElementById('reading-questions-container');
+            const submitBtn = document.getElementById('submit-reading-btn');
+            
+            // 🚀 FIX: 防止重複點擊（檢查按鈕是否已被禁用）
+            if (submitBtn.disabled) {
+                console.log('[submitReadingAnswer] Button already disabled, ignoring click');
+                return;
+            }
+            
             const answers = [];
 
             // Collect all answers
@@ -8535,17 +9354,51 @@
                 }
             }
 
+            // 🚀 FIX: 驗證答案（在禁用按鈕之前）
             if (answers.filter(a => a > 0).length === 0) {
                 showMessage('請至少回答一題！', 'error');
                 return;
             }
 
-            await submitAnswer(JSON.stringify(answers));
-            showMessage('答案已提交！', 'success');
-            document.getElementById('submit-reading-btn').disabled = true;
-
-            // Clear local answers after successful submission
-            currentReadingAnswers = [];
+            // 驗證通過後才禁用按鈕，防止提交過程中重複點擊
+            submitBtn.disabled = true;
+            submitBtn.textContent = '送出中...';
+            
+            try {
+                await submitAnswer(JSON.stringify(answers));
+                showMessage('答案已提交！', 'success');
+                
+                // 🚀 FIX: 提交成功後永久鎖定提交按鈕和所有選項
+                submitBtn.classList.remove('btn-primary');
+                submitBtn.classList.add('btn-gray');
+                submitBtn.textContent = '✓ 已送出答案';
+                
+                // 禁用所有選項，讓學生無法更改答案
+                const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+                allRadios.forEach(radio => {
+                    radio.disabled = true;
+                });
+                
+                // 為已選擇的答案添加視覺標記
+                const allLabels = questionsContainer.querySelectorAll('label');
+                allLabels.forEach(label => {
+                    const radio = label.querySelector('input[type="radio"]');
+                    if (radio && radio.checked) {
+                        label.classList.add('bg-green-100', 'border-green-400', 'border-2');
+                    } else if (radio) {
+                        label.classList.add('opacity-50');
+                    }
+                });
+                
+                // 不要清空 currentReadingAnswers，以便暫停恢復時保留
+                // currentReadingAnswers = []; // REMOVED
+            } catch (error) {
+                // 如果提交失敗，重新啟用按鈕讓學生可以重試
+                console.error('[submitReadingAnswer] Submit failed:', error);
+                showMessage('提交失敗，請重試！', 'error');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '送出答案 ✉️';
+            }
         }
 
         /**
