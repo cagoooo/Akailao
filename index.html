@@ -6193,6 +6193,22 @@
          * (Teacher) Ends the entire class session, clears all student data and presence for the current classroom code.
          */
         async function endClassSession() {
+            // 二次確認機制：防止誤按下課按鈕
+            const confirmed = confirm(
+                '⚠️ 您確定要下課嗎？\n\n' +
+                '下課後將會：\n' +
+                '• 清空所有學生回應資料\n' +
+                '• 結束當前教室\n' +
+                '• 學生將無法繼續作答\n\n' +
+                '此操作無法復原，請確認是否要繼續？'
+            );
+            
+            // 如果用戶點擊取消，則不執行下課操作
+            if (!confirmed) {
+                showMessage('已取消下課操作', 'info');
+                return;
+            }
+            
             markClassEnded(); // Mark that class has been properly ended
             clearAllQuestionBanks(); // Clear question banks from memory
             showMessage('正在結束課程並清空資料...', 'info');
