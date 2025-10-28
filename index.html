@@ -9421,12 +9421,18 @@
             const aiSpinner = document.getElementById('ai-reading-loading-spinner');
 
             const topic = aiTopicTextarea.value.trim();
-            const existingText = readingTextTextarea.value.trim();
 
             if (!topic) {
                 showMessage('請輸入出題要求！', 'error');
                 return;
             }
+
+            // 自動清除舊內容，提供更好的 UX 體驗
+            readingTextTextarea.value = '';
+            questionsTextarea.value = '';
+            
+            // 清除後，existingText 永遠為空，每次都生成新文本和題目
+            const existingText = '';
 
             // Show loading
             aiBtn.disabled = true;
