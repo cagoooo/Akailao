@@ -1474,6 +1474,18 @@
             <div id="interaction-reading-comprehension" class="hidden text-center p-4">
                 <h3 class="text-2xl font-bold text-center mb-4">閱讀測驗</h3>
 
+                <!-- 前十名排行榜 -->
+                <div id="reading-leaderboard" class="max-w-6xl mx-auto mb-4 hidden">
+                    <div class="bg-gradient-to-r from-yellow-50 via-white to-yellow-50 border-2 border-yellow-300 rounded-lg p-3 sm:p-4 shadow-md">
+                        <h4 class="text-base sm:text-lg font-bold text-yellow-700 mb-3 flex items-center justify-center">
+                            <i class="fas fa-trophy mr-2"></i>前十名排行榜 🏆
+                        </h4>
+                        <div id="reading-leaderboard-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-2 sm:gap-3">
+                            <!-- 排行榜將動態生成在這裡 -->
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 閱讀文本顯示 -->
                 <div class="max-w-4xl mx-auto mb-6">
                     <div id="reading-text-display" class="bg-gray-50 p-6 rounded-lg border text-left text-base leading-relaxed whitespace-pre-wrap"></div>
@@ -1604,6 +1616,11 @@
             <div id="students-by-answer-list-container" class="hidden">
                 <h5 id="students-by-answer-list-title"></h5>
                 <p id="students-by-answer-names" class="text-gray-700"></p> 
+            </div>
+            <div class="flex justify-center gap-4 mt-6">
+                <button id="download-statistics-btn" class="btn btn-green !w-auto text-base h-11 px-6">
+                    <i class="fas fa-download mr-2"></i>下載統計 (CSV)
+                </button>
             </div>
         </div>
     </div>
@@ -2281,12 +2298,12 @@
         // Firebase configuration for the classroom interaction app
         // 若要使用自己的 Firebase 資料庫，請修改以下配置
         const __firebase_config = JSON.stringify({
-            apiKey: "AIzaSyAFb26eR6dab3jnCyu7QMewS1W2JRkf12s",
-            authDomain: "class-61828.firebaseapp.com",
-            projectId: "class-61828",
-            storageBucket: "class-61828.firebasestorage.app",
-            messagingSenderId: "634841604557",
-            appId: "1:634841604557:web:45d3b0fad12aa15595a484"
+            apiKey: "AIzaSyCK62baVq9uADJUrY1tyfuCQvcMyksjaok",
+            authDomain: "classtools-f72de.firebaseapp.com",
+            projectId: "classtools-f72de",
+            storageBucket: "classtools-f72de.firebasestorage.app",
+            messagingSenderId: "662722605071",
+            appId: "1:662722605071:web:24d2bd0fa2d21bcd74f37a"
         });
     </script>
 
@@ -2318,6 +2335,7 @@
         let currentInteractionMode = null; // To track the active mode for statistics.
         let allStudentResponses = []; // Global variable to store all student responses for charting and lottery.
         let activeStudentNames = []; // NEW: Global variable to store names of all currently active students.
+        let activeStudentsPresenceMap = new Map(); // 🚀 NEW: 存儲所有在線學生的完整 presence 數據（包含分心狀態）
         let lastSelectedStudentCard = null; // To track the previously selected card for the lottery feature.
         let isResponsePaused = false; // NEW: Global state for response pause.
         let lastSelectedModalStudent = null; // NEW: To track the previously selected student in the modal for lottery.
@@ -2329,6 +2347,11 @@
         let studentResponsesUnsubscribe = null;
         let classroomPresenceUnsubscribe = null; // Unsubscribe function for classroom presence listener.
         let lotteryUnsubscribe = null; // NEW: Listener for lottery results
+        
+        // Student attention monitoring variables
+        let studentDistractionCount = 0; // 累計分心次數
+        let isStudentCurrentlyDistracted = false; // 當前是否分心
+        let attentionMonitoringActive = false; // 防止重複註冊監聽器
 
         // Quick Poll variables
         let quickPollActive = false;
@@ -3132,8 +3155,24 @@
                 '3': 'hover:bg-green-600', '4': 'hover:bg-red-600'
             };
             
-            // Ensure all interaction UIs are enabled by default before applying pause state
+            // 🚀 FIX: 排除所有可能已提交的按鈕，避免在異步檢查完成前覆蓋已提交狀態
+            // 這些控件將在各自的 case 中單獨處理
+            const excludedSubmitButtons = [
+                'submit-reading-btn',
+                'submit-text-btn', 
+                'submit-drawing-btn',
+                'submit-recording-btn',
+                'submit-custom-mc-btn',
+                'submit-sequencing-btn',
+                'submit-matching-btn'
+            ];
+            
+            // Only re-enable controls if they're not submission-related
             document.querySelectorAll('#student-interaction-view button, #student-interaction-view textarea, #student-interaction-view input[type="file"], #student-interaction-view select, #student-interaction-view input[type="radio"]').forEach(el => {
+                // 跳過所有提交按鈕和答案按鈕的重置，這些將在各自的 case 中單獨處理
+                if (excludedSubmitButtons.includes(el.id)) return;
+                if (el.classList.contains('answer-btn')) return; // 跳過是非題和選擇題的答案按鈕
+                
                 el.disabled = false;
                 // Re-add original classes if they were removed by pause state
                 if (el.classList.contains('btn-gray')) {
@@ -3141,102 +3180,307 @@
                     el.classList.add('btn-primary'); // Assuming primary is default for many
                 }
             });
-            // Re-enable canvas interaction
-            canvas.style.pointerEvents = 'auto';
+            
+            // Canvas 和其他容器的 pointerEvents 將在各自的 case 中處理
+            // 避免在這裡全局啟用
 
             switch(mode) {
                 case 'true_false':
-                    interactionUIs[mode].querySelectorAll('.answer-btn').forEach(btn => {
-                        btn.disabled = false;
-                        btn.classList.remove(grayClass);
-                        if (btn.dataset.answer === 'O') btn.classList.replace('bg-gray-400', 'bg-green-500');
-                        if (btn.dataset.answer === 'X') btn.classList.replace('bg-gray-400', 'bg-red-500');
-                    });
+                    // 🚀 NEW: 檢查學生是否已提交是非題答案，永久鎖定已提交的選項
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'true_false' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted true/false answer, locking buttons');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        // 如果已提交，鎖定所有按鈕
+                        if (hasSubmitted) {
+                            interactionUIs[mode].querySelectorAll('.answer-btn').forEach(btn => {
+                                btn.disabled = true;
+                                btn.classList.remove('bg-green-500', 'bg-red-500');
+                                btn.classList.add(grayClass);
+                            });
+                        } else {
+                            // 🎯 IMPROVED: 未提交，恢復按鈕到初始狀態
+                            interactionUIs[mode].querySelectorAll('.answer-btn').forEach(btn => {
+                                btn.disabled = false;
+                                btn.classList.remove(grayClass);
+                                
+                                // 恢復原始內容和顏色
+                                const answer = btn.dataset.answer;
+                                if (answer === 'O') {
+                                    btn.classList.add('bg-green-500');
+                                    btn.innerHTML = `
+                                        <i class="fas fa-check text-white" style="font-size: 4rem;"></i>
+                                        <p class="text-white text-2xl font-bold mt-2">正確</p>
+                                    `;
+                                } else if (answer === 'X') {
+                                    btn.classList.add('bg-red-500');
+                                    btn.innerHTML = `
+                                        <i class="fas fa-times text-white" style="font-size: 4rem;"></i>
+                                        <p class="text-white text-2xl font-bold mt-2">錯誤</p>
+                                    `;
+                                }
+                                
+                                // 移除已送出標記
+                                btn.removeAttribute('data-original-text');
+                                btn.removeAttribute('data-submitted');
+                            });
+                        }
+                    })();
                     break;
                 case 'multiple_choice':
-                    // Reset default MC options
-                    const defaultMcOptions = document.getElementById('default-mc-options');
-                    defaultMcOptions.querySelectorAll('.answer-btn').forEach(btn => {
-                        btn.disabled = false;
-                        btn.classList.remove(grayClass);
-                        if (btn.dataset.answer === '1') btn.classList.replace('bg-gray-400', 'bg-blue-500');
-                        if (btn.dataset.answer === '2') btn.classList.replace('bg-gray-400', 'bg-yellow-500');
-                        if (btn.dataset.answer === '3') btn.classList.replace('bg-gray-400', 'bg-green-500');
-                        if (btn.dataset.answer === '4') btn.classList.replace('bg-gray-400', 'bg-red-500');
-                        btn.classList.add(hoverClassMap[btn.dataset.answer]);
-                    });
-                    // Reset custom MC options (but preserve submission state)
-                    document.getElementById('custom-mc-questions-container').innerHTML = '';
-                    // NEW: 只有在不是從暫停狀態恢復時才重置按鈕，避免覆蓋已提交狀態
-                    if (!isResumingFromPause) {
-                        const submitBtn = document.getElementById('submit-custom-mc-btn');
-                        submitBtn.disabled = false;
-                        submitBtn.classList.replace('btn-gray', 'btn-primary');
-                        submitBtn.textContent = '送出全部答案 ✉️';
-                    }
+                    // 🚀 NEW: 檢查學生是否已提交選擇題答案（包含默認1-4和自訂選擇題）
+                    (async () => {
+                        let hasSubmitted = false;
+                        let submittedInteractionMode = null;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'multiple_choice' && data.answer) {
+                                        hasSubmitted = true;
+                                        submittedInteractionMode = data.interactionMode;
+                                        console.log('[resetStudentUIState] Student has submitted multiple choice answer, locking buttons');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        const defaultMcOptions = document.getElementById('default-mc-options');
+                        
+                        // 如果已提交，鎖定所有按鈕
+                        if (hasSubmitted) {
+                            // 鎖定默認選擇題按鈕
+                            defaultMcOptions.querySelectorAll('.answer-btn').forEach(btn => {
+                                btn.disabled = true;
+                                btn.classList.remove('bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-red-500');
+                                btn.classList.add(grayClass);
+                                // Remove hover classes
+                                btn.classList.remove(hoverClassMap['1'], hoverClassMap['2'], hoverClassMap['3'], hoverClassMap['4']);
+                            });
+                            
+                            // 鎖定自訂選擇題提交按鈕
+                            const submitBtn = document.getElementById('submit-custom-mc-btn');
+                            submitBtn.disabled = true;
+                            submitBtn.classList.remove('btn-primary');
+                            submitBtn.classList.add('btn-gray');
+                            submitBtn.textContent = '✓ 已送出答案';
+                        } else {
+                            // 🎯 IMPROVED: 未提交，恢復按鈕到初始狀態
+                            defaultMcOptions.querySelectorAll('.answer-btn').forEach(btn => {
+                                btn.disabled = false;
+                                btn.classList.remove(grayClass);
+                                
+                                // 恢復原始內容和顏色
+                                const answer = btn.dataset.answer;
+                                if (answer === '1') {
+                                    btn.classList.add('bg-blue-500', hoverClassMap['1']);
+                                    btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">1</span>';
+                                } else if (answer === '2') {
+                                    btn.classList.add('bg-yellow-500', hoverClassMap['2']);
+                                    btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">2</span>';
+                                } else if (answer === '3') {
+                                    btn.classList.add('bg-green-500', hoverClassMap['3']);
+                                    btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">3</span>';
+                                } else if (answer === '4') {
+                                    btn.classList.add('bg-red-500', hoverClassMap['4']);
+                                    btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">4</span>';
+                                }
+                                
+                                // 移除已送出標記
+                                btn.removeAttribute('data-original-text');
+                                btn.removeAttribute('data-submitted');
+                            });
+                            
+                            // Reset custom MC options (but preserve submission state)
+                            document.getElementById('custom-mc-questions-container').innerHTML = '';
+                            // 只有在不是從暫停狀態恢復時才重置按鈕
+                            if (!isResumingFromPause) {
+                                const submitBtn = document.getElementById('submit-custom-mc-btn');
+                                submitBtn.disabled = false;
+                                submitBtn.classList.remove('btn-gray');
+                                submitBtn.classList.add('btn-primary');
+                                submitBtn.textContent = '送出全部答案 ✉️';
+                            }
+                        }
+                    })();
                     break;
                 case 'text_input':
-                    document.getElementById('text-input-area').value = '';
-                    const submitTextBtn = document.getElementById('submit-text-btn');
-                    submitTextBtn.disabled = false;
-                    submitTextBtn.classList.remove('btn-gray');
-                    submitTextBtn.classList.add('btn-primary');
+                    // 🚀 NEW: 檢查學生是否已提交文字題答案，永久鎖定已提交的按鈕
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'text_input' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted text answer, locking button');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        const submitTextBtn = document.getElementById('submit-text-btn');
+                        
+                        // 如果已提交，鎖定按鈕
+                        if (hasSubmitted) {
+                            submitTextBtn.disabled = true;
+                            submitTextBtn.classList.remove('btn-primary');
+                            submitTextBtn.classList.add('btn-gray');
+                            submitTextBtn.textContent = '✓ 已送出答案';
+                            document.getElementById('text-input-area').disabled = true;
+                        } else {
+                            document.getElementById('text-input-area').value = '';
+                            document.getElementById('text-input-area').disabled = false;
+                            submitTextBtn.disabled = false;
+                            submitTextBtn.classList.remove('btn-gray');
+                            submitTextBtn.classList.add('btn-primary');
+                            submitTextBtn.textContent = '送出答案 ✉️';
+                        }
+                    })();
                     break;
                 case 'drawing':
-                    // Only clear the drawing canvas if it's NOT resuming from a pause.
-                    // If isResumingFromPause is true, it means we are re-enabling controls
-                    // within the *same* drawing session after a pause, so preserve the drawing.
-                    if (!isResumingFromPause) {
-                         clearDrawingCanvas(); // Clears only the student's drawing layer.
-                         studentUploadedImageDataURL = null; // Clear student uploaded image too
-                         studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
-                    }
-                    
-                    const submitDrawingBtn = document.getElementById('submit-drawing-btn');
-                    submitDrawingBtn.disabled = false;
-                    submitDrawingBtn.classList.replace('btn-gray', 'btn-primary');
-                    
-                    // Reset drawing tools to default values.
-                    const colorSelect = document.getElementById('color-select');
-                    const sizeSelect = document.getElementById('size-select');
-                    const penToolBtn = document.getElementById('pen-tool-btn');
-                    const eraserBtn = document.getElementById('eraser-btn');
+                    // 🚀 NEW: 檢查學生是否已提交繪圖答案，永久鎖定已提交的按鈕
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'drawing' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted drawing answer, locking button');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        const submitDrawingBtn = document.getElementById('submit-drawing-btn');
+                        
+                        // 如果已提交，鎖定按鈕和畫布
+                        if (hasSubmitted) {
+                            submitDrawingBtn.disabled = true;
+                            submitDrawingBtn.classList.remove('btn-primary');
+                            submitDrawingBtn.classList.add('btn-gray');
+                            submitDrawingBtn.textContent = '✓ 已送出答案';
+                            canvas.style.pointerEvents = 'none'; // 禁用畫布交互
+                        } else {
+                            // Only clear the drawing canvas if it's NOT resuming from a pause.
+                            if (!isResumingFromPause) {
+                                clearDrawingCanvas(); // Clears only the student's drawing layer.
+                                studentUploadedImageDataURL = null; // Clear student uploaded image too
+                                studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+                            }
+                            
+                            submitDrawingBtn.disabled = false;
+                            submitDrawingBtn.classList.remove('btn-gray');
+                            submitDrawingBtn.classList.add('btn-primary');
+                            submitDrawingBtn.textContent = '送出答案 ✉️';
+                            canvas.style.pointerEvents = 'auto'; // 啟用畫布交互
+                            
+                            // Reset drawing tools to default values.
+                            const colorSelect = document.getElementById('color-select');
+                            const sizeSelect = document.getElementById('size-select');
+                            const penToolBtn = document.getElementById('pen-tool-btn');
+                            const eraserBtn = document.getElementById('eraser-btn');
 
-                    colorSelect.value = 'black';
-                    sizeSelect.value = '2';
-                    drawingCtx.strokeStyle = 'black'; 
-                    drawingCtx.lineWidth = 2;
-                    drawingCtx.globalCompositeOperation = 'source-over'; 
-                    
-                    penToolBtn.classList.add('border-blue-500');
-                    eraserBtn.classList.remove('border-blue-500');
+                            colorSelect.value = 'black';
+                            sizeSelect.value = '2';
+                            drawingCtx.strokeStyle = 'black'; 
+                            drawingCtx.lineWidth = 2;
+                            drawingCtx.globalCompositeOperation = 'source-over'; 
+                            
+                            penToolBtn.classList.add('border-blue-500');
+                            eraserBtn.classList.remove('border-blue-500');
 
-                    updateColorSwatch(colorSelect.value);
+                            updateColorSwatch(colorSelect.value);
+                        }
+                    })();
                     break;
                 case 'url_dispatch': // This mode now handles both URL and HTML
                     // Content is dynamically generated, no specific reset needed here beyond clearing in showInteractionUI
                     break;
                 case 'recording':
-                    // Reset recording state
-                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                        mediaRecorder.stop();
-                    }
-                    if (audioStream) {
-                        audioStream.getTracks().forEach(track => track.stop());
-                    }
-                    audioChunks = [];
-                    audioBlob = null;
-                    audioDataURL = null;
-                    document.getElementById('audio-preview').classList.add('hidden');
-                    document.getElementById('audio-preview').src = '';
-                    document.getElementById('start-recording-btn').disabled = false;
-                    document.getElementById('stop-recording-btn').disabled = true;
-                    document.getElementById('play-recording-btn').disabled = true;
-                    document.getElementById('reset-recording-btn').disabled = true;
-                    document.getElementById('submit-recording-btn').disabled = true;
-                    recordingStatusText.textContent = '準備錄音...';
-                    recordingStatusIcon.classList.remove('fa-spin', 'text-red-500');
-                    recordingStatusIcon.classList.add('text-gray-400');
+                    // 🚀 NEW: 檢查學生是否已提交錄音答案，永久鎖定已提交的按鈕
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'recording' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted recording answer, locking buttons');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        // 如果已提交，鎖定所有按鈕
+                        if (hasSubmitted) {
+                            document.getElementById('start-recording-btn').disabled = true;
+                            document.getElementById('stop-recording-btn').disabled = true;
+                            document.getElementById('play-recording-btn').disabled = true;
+                            document.getElementById('reset-recording-btn').disabled = true;
+                            const submitRecordingBtn = document.getElementById('submit-recording-btn');
+                            submitRecordingBtn.disabled = true;
+                            submitRecordingBtn.classList.remove('btn-primary');
+                            submitRecordingBtn.classList.add('btn-gray');
+                            submitRecordingBtn.textContent = '✓ 已送出答案';
+                            recordingStatusText.textContent = '已送出錄音答案';
+                        } else {
+                            // Reset recording state
+                            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                                mediaRecorder.stop();
+                            }
+                            if (audioStream) {
+                                audioStream.getTracks().forEach(track => track.stop());
+                            }
+                            audioChunks = [];
+                            audioBlob = null;
+                            audioDataURL = null;
+                            document.getElementById('audio-preview').classList.add('hidden');
+                            document.getElementById('audio-preview').src = '';
+                            document.getElementById('start-recording-btn').disabled = false;
+                            document.getElementById('stop-recording-btn').disabled = true;
+                            document.getElementById('play-recording-btn').disabled = true;
+                            document.getElementById('reset-recording-btn').disabled = true;
+                            document.getElementById('submit-recording-btn').disabled = true;
+                            recordingStatusText.textContent = '準備錄音...';
+                            recordingStatusIcon.classList.remove('fa-spin', 'text-red-500');
+                            recordingStatusIcon.classList.add('text-gray-400');
+                        }
+                    })();
                     break;
                 case 'quick_answer':
                     // Reset quick answer state
@@ -3247,37 +3491,131 @@
                     document.getElementById('quick-answer-button-container').classList.add('pointer-events-none');
                     break;
                 case 'sequencing':
-                    // Reset sequencing state
-                    document.getElementById('sequencing-items-container').innerHTML = '';
-                    const submitSequencingBtn = document.getElementById('submit-sequencing-btn');
-                    submitSequencingBtn.disabled = false;
-                    submitSequencingBtn.classList.remove('btn-gray');
-                    submitSequencingBtn.classList.add('btn-primary');
+                    // 🚀 NEW: 檢查學生是否已提交排序題答案，永久鎖定已提交的按鈕
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'sequencing' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted sequencing answer, locking button');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        const submitSequencingBtn = document.getElementById('submit-sequencing-btn');
+                        
+                        // 如果已提交，鎖定按鈕
+                        if (hasSubmitted) {
+                            submitSequencingBtn.disabled = true;
+                            submitSequencingBtn.classList.remove('btn-primary');
+                            submitSequencingBtn.classList.add('btn-gray');
+                            submitSequencingBtn.textContent = '✓ 已送出答案';
+                            // 禁用排序項目的拖動
+                            document.getElementById('sequencing-items-container').style.pointerEvents = 'none';
+                        } else {
+                            // Reset sequencing state
+                            document.getElementById('sequencing-items-container').innerHTML = '';
+                            document.getElementById('sequencing-items-container').style.pointerEvents = 'auto';
+                            submitSequencingBtn.disabled = false;
+                            submitSequencingBtn.classList.remove('btn-gray');
+                            submitSequencingBtn.classList.add('btn-primary');
+                            submitSequencingBtn.textContent = '送出答案 ✉️';
+                        }
+                    })();
                     break;
                 case 'matching':
-                    // Reset matching state
-                    document.getElementById('matching-column-a').innerHTML = '';
-                    document.getElementById('matching-column-b').innerHTML = '';
-                    document.getElementById('matching-svg-canvas').innerHTML = '';
-                    const submitMatchingBtn = document.getElementById('submit-matching-btn');
-                    submitMatchingBtn.disabled = false;
-                    submitMatchingBtn.classList.remove('btn-gray');
-                    submitMatchingBtn.classList.add('btn-primary');
-                    currentMatchingSelection.leftItem = null;
-                    currentMatchingSelection.rightItem = null;
+                    // 🚀 NEW: 檢查學生是否已提交配對題答案，永久鎖定已提交的按鈕
+                    (async () => {
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'matching' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted matching answer, locking button');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        const submitMatchingBtn = document.getElementById('submit-matching-btn');
+                        
+                        // 如果已提交，鎖定按鈕
+                        if (hasSubmitted) {
+                            submitMatchingBtn.disabled = true;
+                            submitMatchingBtn.classList.remove('btn-primary');
+                            submitMatchingBtn.classList.add('btn-gray');
+                            submitMatchingBtn.textContent = '✓ 已送出答案';
+                            // 禁用配對項目的點擊
+                            document.getElementById('matching-column-a').style.pointerEvents = 'none';
+                            document.getElementById('matching-column-b').style.pointerEvents = 'none';
+                        } else {
+                            // Reset matching state
+                            document.getElementById('matching-column-a').innerHTML = '';
+                            document.getElementById('matching-column-b').innerHTML = '';
+                            document.getElementById('matching-svg-canvas').innerHTML = '';
+                            document.getElementById('matching-column-a').style.pointerEvents = 'auto';
+                            document.getElementById('matching-column-b').style.pointerEvents = 'auto';
+                            submitMatchingBtn.disabled = false;
+                            submitMatchingBtn.classList.remove('btn-gray');
+                            submitMatchingBtn.classList.add('btn-primary');
+                            submitMatchingBtn.textContent = '送出答案 ✉️';
+                            currentMatchingSelection.leftItem = null;
+                            currentMatchingSelection.rightItem = null;
+                        }
+                    })();
                     break;
                 case 'reading_comprehension':
-                    // 🚀 FIX: 不要重置內容和答案，讓暫停恢復時保留學生的作答狀態
-                    // Only clear content if not resuming from pause AND mode actually changed
-                    // (This will be handled by displayReadingComprehensionForStudent instead)
-                    const submitReadingBtn = document.getElementById('submit-reading-btn');
-                    // Don't reset button state if resuming from pause (preserve submitted state)
-                    if (!isResumingFromPause) {
-                        submitReadingBtn.disabled = false;
-                        submitReadingBtn.classList.remove('btn-gray');
-                        submitReadingBtn.classList.add('btn-primary');
-                        submitReadingBtn.textContent = '送出答案 ✉️';
-                    }
+                    // 🚀 FIX: 檢查學生是否已提交，永久鎖定已提交的答案
+                    (async () => {
+                        const submitReadingBtn = document.getElementById('submit-reading-btn');
+                        
+                        // 檢查 Firebase 中是否已有提交記錄
+                        let hasSubmitted = false;
+                        if (currentRole === 'student' && studentName && classroomCode) {
+                            try {
+                                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                                const docSnap = await getDoc(studentRef);
+                                if (docSnap.exists()) {
+                                    const data = docSnap.data();
+                                    if (data.interactionMode === 'reading_comprehension' && data.answer) {
+                                        hasSubmitted = true;
+                                        console.log('[resetStudentUIState] Student has submitted reading answer, locking button');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[resetStudentUIState] Error checking submission status:', error);
+                            }
+                        }
+                        
+                        // 如果已提交，永久鎖定按鈕
+                        if (hasSubmitted) {
+                            submitReadingBtn.disabled = true;
+                            submitReadingBtn.classList.remove('btn-primary');
+                            submitReadingBtn.classList.add('btn-gray');
+                            submitReadingBtn.textContent = '✓ 已送出答案';
+                        }
+                        // 否則，只有在不是從暫停恢復時才重置按鈕
+                        else if (!isResumingFromPause) {
+                            submitReadingBtn.disabled = false;
+                            submitReadingBtn.classList.remove('btn-gray');
+                            submitReadingBtn.classList.add('btn-primary');
+                            submitReadingBtn.textContent = '送出答案 ✉️';
+                        }
+                    })();
                     break;
                 case 'quick_poll':
                     // Reset quick poll state
@@ -3303,14 +3641,30 @@
             interactiveElements.forEach(el => {
                 // Only disable if the element is not the pause overlay itself or its children
                 if (!el.closest('#student-pause-overlay')) {
-                    el.disabled = disable;
                     if (disable) {
+                        el.disabled = disable;
                         // Add a class for visual feedback if needed, e.g., gray out
                         if (el.tagName === 'BUTTON' && !el.classList.contains('btn-gray')) {
                             el.classList.add('btn-gray');
                             el.classList.remove('btn-primary', 'btn-green', 'btn-orange', 'btn-purple', 'btn-teal', 'bg-indigo-600', 'hover:bg-indigo-700', 'bg-yellow-600', 'hover:bg-yellow-700'); // Remove original colors
                         }
                     } else {
+                        // 🎯 CRITICAL FIX: 檢查是否已提交答案，防止重新啟用已鎖定的按鈕
+                        const hasDataSubmitted = el.hasAttribute('data-submitted');
+                        const hasDataAttribute = el.hasAttribute('data-original-text');
+                        const textContent = el.textContent || '';
+                        const hasSubmittedText = textContent.includes('已送出') || textContent.includes('✓');
+                        const hasSubmitted = hasDataSubmitted || hasDataAttribute || hasSubmittedText;
+                        
+                        // 🎯 如果按鈕已提交，保持禁用狀態
+                        if (hasSubmitted) {
+                            el.disabled = true; // 保持禁用
+                            return; // 跳過後續的樣式恢復邏輯
+                        }
+                        
+                        // 未提交的按鈕才重新啟用
+                        el.disabled = false;
+                        
                         // Re-enable and restore original styles
                         if (el.tagName === 'BUTTON' && el.classList.contains('btn-gray')) {
                             el.classList.remove('btn-gray');
@@ -3923,9 +4277,8 @@
                 }
 
                 if (mode === 'url_dispatch') { // Now handles both URL and HTML
-                    // For URL/HTML dispatch, the monitor view shows online students, handled by presence listener.
-                    // Clear existing responses display if any.
-                    document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+                    // For URL/HTML dispatch, listen to student submissions for real-time distraction updates
+                    listenToStudentSubmissions(mode);
                 } else if (mode === 'waiting') {
                     // When going to 'waiting' mode, ensure the student responses container is cleared
                     // and shows the "waiting" message.
@@ -4033,6 +4386,115 @@
             // 同時保留舊變數以保持兼容性
             lotteryUnsubscribe = unsubscribe;
         }
+
+        /**
+         * NEW: (Student) Monitors student attention by detecting page visibility changes and window blur/focus events.
+         * When student switches tabs or navigates away, their distraction status is updated in Firebase.
+         */
+        async function startStudentAttentionMonitoring() {
+            if (!studentName || !userId || !classroomCode) {
+                console.warn('[Attention] Cannot start monitoring: student info not set');
+                return;
+            }
+
+            // 防止重複註冊監聽器
+            if (attentionMonitoringActive) {
+                console.log('[Attention] Monitoring already active, skipping duplicate registration');
+                return;
+            }
+
+            console.log('[Attention] Starting student attention monitoring for:', studentName);
+            
+            // 初始化狀態變量（先設置，確保事件監聽器可以使用）
+            isStudentCurrentlyDistracted = false;
+            studentDistractionCount = 0;
+            attentionMonitoringActive = true;
+
+            // 更新分心狀態到 Firebase
+            const updateDistractionStatus = async (isDistracted) => {
+                try {
+                    // 🚀 FIX: 寫入 presence 集合，而不是 studentResponses 集合
+                    const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
+                    
+                    if (isDistracted && !isStudentCurrentlyDistracted) {
+                        // 學生剛開始分心
+                        studentDistractionCount++;
+                        isStudentCurrentlyDistracted = true;
+                        
+                        await setDoc(presenceRef, {
+                            name: studentName,
+                            isDistracted: true,
+                            distractionCount: studentDistractionCount,
+                            lastDistractionTime: new Date(),
+                            timestamp: new Date()
+                        }, { merge: true });
+                        
+                        console.log(`[Attention] ✅ Student ${studentName} is distracted (count: ${studentDistractionCount})`);
+                        console.log(`[Attention] Firebase presence updated with isDistracted: true`);
+                    } else if (!isDistracted && isStudentCurrentlyDistracted) {
+                        // 學生回到頁面
+                        isStudentCurrentlyDistracted = false;
+                        
+                        await setDoc(presenceRef, {
+                            name: studentName,
+                            isDistracted: false,
+                            distractionCount: studentDistractionCount,
+                            returnTime: new Date(),
+                            timestamp: new Date()
+                        }, { merge: true });
+                        
+                        console.log(`[Attention] ✅ Student ${studentName} returned to page`);
+                        console.log(`[Attention] Firebase presence updated with isDistracted: false`);
+                    } else {
+                        console.log(`[Attention] No state change - isDistracted: ${isDistracted}, current: ${isStudentCurrentlyDistracted}`);
+                    }
+                } catch (error) {
+                    console.error('[Attention] ❌ Failed to update distraction status:', error);
+                }
+            };
+
+            // 監聽頁面可見性變化（分頁切換）- Chrome/Edge/Firefox 支援
+            document.addEventListener('visibilitychange', () => {
+                const hidden = document.hidden;
+                console.log(`[Attention] 📋 visibilitychange event - document.hidden: ${hidden}`);
+                if (hidden) {
+                    console.log('[Attention] 🔴 Page hidden - student switched tab or minimized window');
+                    updateDistractionStatus(true);
+                } else {
+                    console.log('[Attention] 🟢 Page visible - student returned to tab');
+                    updateDistractionStatus(false);
+                }
+            });
+
+            // 監聽視窗失焦/獲得焦點（切換到其他應用程式）
+            window.addEventListener('blur', () => {
+                console.log('[Attention] 🔴 Window blur - student switched to another window');
+                updateDistractionStatus(true);
+            });
+
+            window.addEventListener('focus', () => {
+                console.log('[Attention] 🟢 Window focus - student returned to window');
+                updateDistractionStatus(false);
+            });
+
+            // 🚀 FIX: 初始化 presence 文檔，確保學生剛加入時就能被教師端監控
+            try {
+                const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
+                await setDoc(presenceRef, {
+                    name: studentName,
+                    isDistracted: false,
+                    distractionCount: 0,
+                    joinTime: new Date(),
+                    timestamp: new Date()
+                }, { merge: true });
+                
+                console.log(`[Attention] ✅ Initialized presence monitoring for ${studentName}`);
+                console.log(`[Attention] 📊 Initial state - isDistracted: false, count: 0`);
+            } catch (error) {
+                console.error('[Attention] ❌ Failed to initialize presence monitoring:', error);
+            }
+        }
+
         /**
          * (Student) Listens for changes in the teacher's interaction mode and switches the student interface accordingly.
          * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
@@ -4066,6 +4528,9 @@
                     studentPauseOverlay.classList.add('hidden'); // Hide overlay if class ends
                     currentInteractionMode = null; // Reset global mode for student
                     isResponsePaused = false; // Reset global pause state for student
+                    attentionMonitoringActive = false; // Reset attention monitoring flag
+                    studentDistractionCount = 0; // Reset distraction count
+                    isStudentCurrentlyDistracted = false; // Reset distraction state
                     return; // Exit the function as the session is over
                 }
 
@@ -4172,6 +4637,10 @@
                                 document.getElementById('submit-reading-btn').disabled = false;
                             }
                         }
+                        // 啟動排行榜監聽（如果尚未啟動）
+                        if (modeChanged) {
+                            listenToReadingLeaderboard();
+                        }
                     } else if (currentInteractionMode === 'quick_poll') {
                         if (modeChanged) {
                             listenToQuickPollConfig();
@@ -4187,6 +4656,165 @@
             
             // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
             ListenerManager.register('interactionMode', interactionModeUnsubscribe);
+        }
+        
+        /**
+         * (Student) Updates the reading leaderboard display based on current student responses.
+         * 🚀 HELPER: 排行榜渲染邏輯，可被監聽器和手動調用共用
+         */
+        function updateReadingLeaderboardDisplay(studentsData) {
+            const leaderboardContainer = document.getElementById('reading-leaderboard');
+            const leaderboardList = document.getElementById('reading-leaderboard-list');
+            
+            if (!leaderboardContainer || !leaderboardList) {
+                console.warn('[Leaderboard] DOM elements not found');
+                return;
+            }
+            
+            const questions = readingComprehensionData.questions;
+            
+            // 只在有題目時顯示排行榜
+            if (!questions || questions.length === 0) {
+                leaderboardContainer.classList.add('hidden');
+                return;
+            }
+            
+            const rankedStudents = [];
+            
+            // 計算每個學生的正確率
+            studentsData.forEach(student => {
+                if (student.answer) {
+                    try {
+                        const studentAnswers = JSON.parse(student.answer);
+                        let correctCount = 0;
+                        studentAnswers.forEach((ans, index) => {
+                            if (questions[index] && ans === questions[index].correctAnswer) {
+                                correctCount++;
+                            }
+                        });
+                        const accuracy = Math.round((correctCount / questions.length) * 100);
+                        rankedStudents.push({
+                            name: student.name,
+                            correctCount: correctCount,
+                            totalQuestions: questions.length,
+                            accuracy: accuracy,
+                            timestamp: student.timestamp // 🚀 NEW: 保存提交時間戳用於排序
+                        });
+                    } catch (e) {
+                        // 答案格式錯誤，不加入排名
+                        console.warn('[Leaderboard] Invalid answer format for student:', student.name);
+                    }
+                }
+            });
+            
+            // 🚀 FIX: 排序邏輯 - 正確數降序 → 提交時間升序（先交卷排名更高） → 姓名升序
+            rankedStudents.sort((a, b) => {
+                // 1. 主要排序：正確數高的在前
+                if (b.correctCount !== a.correctCount) {
+                    return b.correctCount - a.correctCount;
+                }
+                // 2. 次要排序：提交時間早的在前（同分時先交卷排名更高）
+                if (a.timestamp && b.timestamp) {
+                    const timeA = a.timestamp.toMillis ? a.timestamp.toMillis() : new Date(a.timestamp).getTime();
+                    const timeB = b.timestamp.toMillis ? b.timestamp.toMillis() : new Date(b.timestamp).getTime();
+                    if (timeA !== timeB) {
+                        return timeA - timeB;
+                    }
+                }
+                // 3. 最後排序：姓名字母順序
+                return a.name.localeCompare(b.name);
+            });
+            
+            // 只顯示前十名
+            const top10 = rankedStudents.slice(0, 10);
+            
+            if (top10.length > 0) {
+                leaderboardContainer.classList.remove('hidden');
+                leaderboardList.innerHTML = '';
+                
+                top10.forEach((student, index) => {
+                    const rank = index + 1;
+                    let badgeClass = 'bg-gray-100 text-gray-700 border-gray-300';
+                    let icon = '';
+                    let rankText = `第${rank}名`;
+                    
+                    if (rank === 1) {
+                        badgeClass = 'bg-yellow-100 text-yellow-700 border-yellow-300';
+                        icon = '🥇';
+                        rankText = '';
+                    } else if (rank === 2) {
+                        badgeClass = 'bg-gray-200 text-gray-700 border-gray-400';
+                        icon = '🥈';
+                        rankText = '';
+                    } else if (rank === 3) {
+                        badgeClass = 'bg-orange-100 text-orange-700 border-orange-300';
+                        icon = '🥉';
+                        rankText = '';
+                    } else if (rank <= 5) {
+                        badgeClass = 'bg-blue-100 text-blue-700 border-blue-300';
+                        icon = '🏅';
+                        rankText = `第${rank}名`;
+                    } else {
+                        badgeClass = 'bg-purple-50 text-purple-600 border-purple-200';
+                        icon = '⭐';
+                        rankText = `第${rank}名`;
+                    }
+                    
+                    const card = document.createElement('div');
+                    card.className = `${badgeClass} border-2 rounded-lg p-2 sm:p-3 text-center transition-all hover:scale-105 hover:shadow-md`;
+                    card.innerHTML = `
+                        <div class="text-2xl sm:text-3xl mb-1">${icon}</div>
+                        <div class="font-bold text-xs sm:text-sm truncate mb-1">${student.name}</div>
+                        ${rankText ? `<div class="text-xs font-semibold mb-1">${rankText}</div>` : ''}
+                        <div class="text-xs sm:text-sm font-medium">${student.correctCount}/${student.totalQuestions}</div>
+                        <div class="text-xs text-gray-600">${student.accuracy}%</div>
+                    `;
+                    leaderboardList.appendChild(card);
+                });
+            } else {
+                // 🚀 FIX: 清空排行榜並隱藏容器，防止顯示舊數據
+                leaderboardList.innerHTML = '';
+                leaderboardContainer.classList.add('hidden');
+            }
+        }
+        
+        /**
+         * (Student) Listens to all student responses and displays the top 10 leaderboard for reading comprehension.
+         * 🚀 NEW: 閱讀測驗排行榜監聽
+         * ✨ OPTIMIZED: 使用全域 readingComprehensionData，由 listenToInteractionMode 更新
+         * 
+         * 實作說明：
+         * - listenToInteractionMode 已經監聽 control 文檔並更新 readingComprehensionData
+         * - 本函數只需監聽 studentResponses 集合，使用已經更新的全域變數
+         * - 當題目更新時，listenToInteractionMode 會重新調用 displayReadingComprehensionForStudent
+         * - 這樣可以避免重複監聽同一個文檔，減少 Firestore 讀取
+         */
+        function listenToReadingLeaderboard() {
+            if (!classroomCode) {
+                console.warn('[Leaderboard] Classroom code not set');
+                return;
+            }
+            
+            // 如果已經有監聽器，先註銷
+            if (ListenerManager.has('readingLeaderboard')) {
+                console.log('[Leaderboard] Already listening, skipping');
+                return;
+            }
+            
+            const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            
+            const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+                const studentsData = [];
+                querySnapshot.forEach(doc => {
+                    studentsData.push(doc.data());
+                });
+                updateReadingLeaderboardDisplay(studentsData);
+            }, (error) => {
+                console.error('[Leaderboard] Error listening:', error);
+            });
+            
+            ListenerManager.register('readingLeaderboard', unsubscribe);
+            console.log('[Leaderboard] Started listening for reading comprehension leaderboard');
         }
         
         /**
@@ -4316,9 +4944,10 @@
                  await setDoc(studentRef, { 
                     name: studentName,
                     answer: answer,
+                    interactionMode: currentInteractionMode, // 🎯 CRITICAL FIX: 儲存互動模式，讓 resetStudentUIState 能正確檢查提交狀態
                     timestamp: new Date()
                 }, { merge: true });
-                console.log(`[Student] ${studentName} submitted answer:`, answer);
+                console.log(`[Student] ${studentName} submitted answer:`, answer, 'mode:', currentInteractionMode);
                 return true;
             } catch (error) {
                 console.error("送出答案失敗:", error);
@@ -4327,6 +4956,217 @@
             }
         }
         
+        /**
+         * 🚀 NEW: (Teacher) 創建單個學生卡片（統一的卡片生成邏輯，支持所有9種互動模式）
+         * @param {Object} student - 學生數據
+         * @param {HTMLElement} container - 學生卡片容器
+         * @param {string} mode - 當前互動模式
+         * @param {Array} rankedStudents - 排名數據（閱讀測驗模式使用）
+         */
+        function createStudentCard(student, container, mode, rankedStudents = []) {
+            const card = document.createElement('div');
+            card.className = 'student-response-item';
+            card.setAttribute('data-student-name', student.name);
+
+            let answerContentHTML = '';
+            
+            // 處理所有模式的答案顯示
+            if (mode === 'url_dispatch') {
+                // URL dispatch mode: show online indicator
+                answerContentHTML = `<i class="fas fa-check-circle text-green-500 text-2xl"></i>`;
+            } else if (student.answer === null || student.answer === undefined) {
+                // 學生未提交答案（所有模式通用）
+                answerContentHTML = `<p class="text-gray-400">尚未作答</p>`;
+            } else if (mode === 'drawing') {
+                // 繪圖模式
+                if (String(student.answer).startsWith('data:image')) {
+                    answerContentHTML = `<img src="${student.answer}" alt="${student.name} 的繪圖" class="w-full h-auto rounded-md border max-h-32 object-contain cursor-pointer" data-full-image="${student.answer}"/>`;
+                } else {
+                    answerContentHTML = `<p class="text-gray-500">繪圖未完成或格式錯誤</p>`;
+                }
+            } else if (mode === 'recording') {
+                // 錄音模式
+                if (String(student.answer).startsWith('data:audio')) {
+                    answerContentHTML = `<audio controls src="${student.answer}" class="w-full"></audio>`;
+                } else {
+                    answerContentHTML = `<p class="text-gray-500">錄音未完成或格式錯誤</p>`;
+                }
+            } else if (mode === 'text_input') {
+                // 文字輸入模式
+                answerContentHTML = `<p class="text-gray-700 whitespace-pre-wrap">${student.answer || '(空白)'}</p>`;
+            } else if (mode === 'multiple_choice' && Array.isArray(student.answer) && currentMultipleChoiceQuestions) {
+                // 自訂選擇題模式
+                answerContentHTML = `<div class="flex flex-col w-full">`;
+                student.answer.forEach((qAns, index) => {
+                    const question = currentMultipleChoiceQuestions[qAns.qIndex];
+                    if (question) {
+                        const isCorrect = (String(qAns.ans) === String(question.correctAnswer));
+                        answerContentHTML += `
+                            <div class="mc-question-answer">
+                                <i class="icon fas ${isCorrect ? 'fa-check-circle correct-icon' : 'fa-times-circle incorrect-icon'}"></i>
+                                <span class="question-text">Q${qAns.qIndex + 1}:</span>
+                                <span class="student-choice">${qAns.ans}</span>
+                            </div>
+                        `;
+                    }
+                });
+                answerContentHTML += `</div>`;
+            } else if (mode === 'quick_answer') {
+                // 搶答模式
+                if (student.answer && student.answer.includes('搶答成功')) {
+                    answerContentHTML = `<div class="text-center">
+                        <i class="fas fa-trophy text-yellow-500 text-4xl mb-2"></i>
+                        <p class="text-xl font-bold text-green-600">搶答成功！</p>
+                        <p class="text-lg text-gray-600">第一名</p>
+                    </div>`;
+                } else {
+                    answerContentHTML = `<p class="text-gray-500">未搶答或搶答失敗</p>`;
+                }
+            } else if (mode === 'sequencing') {
+                // 排序題模式
+                try {
+                    const studentOrder = JSON.parse(student.answer);
+                    const correctOrder = sequencingData.correctOrder;
+                    let isCorrect = true;
+
+                    answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
+                    studentOrder.forEach((item, index) => {
+                        const correct = correctOrder[index] === item;
+                        if (!correct) isCorrect = false;
+                        answerContentHTML += `
+                            <div class="flex items-center gap-2 text-sm">
+                                <i class="fas ${correct ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}"></i>
+                                <span class="font-bold">${index + 1}.</span>
+                                <span>${item}</span>
+                            </div>
+                        `;
+                    });
+                    answerContentHTML += `</div>`;
+                } catch (e) {
+                    answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+                }
+            } else if (mode === 'matching') {
+                // 配對題模式
+                try {
+                    const studentMatches = JSON.parse(student.answer);
+                    const correctPairs = matchingData.pairs;
+                    let correctCount = 0;
+
+                    answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
+                    studentMatches.forEach(match => {
+                        const correctPair = correctPairs.find(p => p.left === match.left);
+                        const isCorrect = correctPair && correctPair.right === match.right;
+                        if (isCorrect) correctCount++;
+
+                        answerContentHTML += `
+                            <div class="flex items-center gap-2 text-xs">
+                                <i class="fas ${isCorrect ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}"></i>
+                                <span>${match.left}</span>
+                                <i class="fas fa-arrow-right text-gray-400"></i>
+                                <span>${match.right}</span>
+                            </div>
+                        `;
+                    });
+                    answerContentHTML += `<div class="text-xs text-gray-600 mt-1">正確: ${correctCount}/${studentMatches.length}</div></div>`;
+                } catch (e) {
+                    answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+                }
+            } else if (mode === 'reading_comprehension') {
+                // 閱讀測驗模式
+                try {
+                    const studentAnswers = JSON.parse(student.answer);
+                    const questions = readingComprehensionData.questions;
+                    let correctCount = 0;
+
+                    answerContentHTML = `<div class="flex flex-col w-full" style="font-size: 10px; gap: 1px;">`;
+                    studentAnswers.forEach((ans, index) => {
+                        if (questions[index]) {
+                            const isCorrect = (ans === questions[index].correctAnswer);
+                            if (isCorrect) correctCount++;
+
+                            answerContentHTML += `
+                                <div class="flex items-center whitespace-nowrap" style="gap: 4px; line-height: 1.3;">
+                                    <i class="fas ${isCorrect ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}" style="font-size: 11px;"></i>
+                                    <span class="font-bold" style="min-width: 22px;">Q${index + 1}</span>
+                                    <span class="text-gray-700" style="min-width: 32px;">答:${ans || '未'}</span>
+                                    ${!isCorrect && ans > 0 ? `<span class="text-gray-500" style="font-size: 9px;">(正確:${questions[index].correctAnswer})</span>` : ''}
+                                </div>
+                            `;
+                        }
+                    });
+                    
+                    // 計算正確率和排名
+                    const accuracy = Math.round((correctCount / questions.length) * 100);
+                    const rankInfo = rankedStudents.find(r => r.name === student.name);
+                    const rank = rankInfo ? rankedStudents.indexOf(rankInfo) + 1 : null;
+                    
+                    // 排名徽章顏色
+                    let rankBadgeClass = 'bg-gray-100 text-gray-700';
+                    let rankIcon = '';
+                    if (rank === 1) {
+                        rankBadgeClass = 'bg-yellow-100 text-yellow-700';
+                        rankIcon = '🥇 ';
+                    } else if (rank === 2) {
+                        rankBadgeClass = 'bg-gray-200 text-gray-700';
+                        rankIcon = '🥈 ';
+                    } else if (rank === 3) {
+                        rankBadgeClass = 'bg-orange-100 text-orange-700';
+                        rankIcon = '🥉 ';
+                    } else if (rank <= 5) {
+                        rankBadgeClass = 'bg-blue-100 text-blue-700';
+                        rankIcon = '🏅 ';
+                    }
+                    
+                    const rankBadge = rank ? `<span class="px-1.5 py-0.5 ${rankBadgeClass} text-xs font-bold rounded ml-1">${rankIcon}第${rank}名</span>` : '';
+                    
+                    answerContentHTML += `<div class="font-bold mt-1 pt-1 border-t flex items-center justify-between ${correctCount === questions.length ? 'text-green-600' : 'text-gray-700'}" style="font-size: 10px;">
+                        <span>正確: ${correctCount}/${questions.length} (${accuracy}%)</span>
+                        ${rankBadge}
+                    </div></div>`;
+                } catch (e) {
+                    answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+                }
+            } else {
+                // 預設選擇題模式 (1-4)
+                answerContentHTML = `<p class="text-2xl font-bold text-blue-600">${student.answer}</p>`;
+            }
+            
+            // 從全局 presence Map 中讀取學生分心狀態（所有模式通用）
+            const presenceData = activeStudentsPresenceMap.get(student.name) || { isDistracted: false, distractionCount: 0 };
+            const isDistracted = presenceData.isDistracted;
+            const distractionCount = presenceData.distractionCount;
+            const distractionBadge = distractionCount > 0 
+                ? `<span class="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-bold rounded">${distractionCount}次</span>` 
+                : '';
+            const distractionWarning = isDistracted 
+                ? `<i class="fas fa-exclamation-triangle text-red-600 ml-1 animate-pulse" title="學生分心中"></i>` 
+                : '';
+            const cardBgClass = isDistracted ? 'bg-red-50 border-2 border-red-400' : '';
+            
+            card.className = `student-response-item ${cardBgClass}`;
+            card.innerHTML = `
+                <div class="name-box flex items-center justify-between">
+                    <span>${student.name}</span>
+                    <span class="flex items-center">${distractionWarning}${distractionBadge}</span>
+                </div>
+                <div class="answer-box">
+                    ${answerContentHTML}
+                </div>
+            `;
+            container.appendChild(card);
+            
+            // 特殊處理：繪圖模式添加點擊放大功能
+            if (mode === 'drawing') {
+                const imgElement = card.querySelector('.answer-box img');
+                if (imgElement) {
+                    imgElement.addEventListener('click', (e) => {
+                        const fullImageUrl = e.target.dataset.fullImage;
+                        showMagnifiedDrawing(fullImageUrl);
+                    });
+                }
+            }
+        }
+
         /**
          * (Teacher) Listens for all student submissions and dynamically displays them.
          * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
@@ -4343,170 +5183,111 @@
                 
                 // REMOVED: document.getElementById('responded-student-count').textContent = querySnapshot.size; 
 
-                if (querySnapshot.empty) {
-                    if (mode !== 'url_dispatch') { 
-                        container.innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+                // 🚀 NEW: 為所有模式統一處理 - 顯示所有在線學生（包括未提交的）
+                // 創建一個 Map 來快速查找已提交答案的學生
+                const responsesMap = new Map();
+                querySnapshot.forEach((doc) => {
+                    const student = doc.data();
+                    responsesMap.set(student.name, student);
+                });
+                
+                // 為所有在線學生創建響應數組（包括未提交答案的）
+                let responses = [];
+                activeStudentNames.forEach(studentName => {
+                    if (responsesMap.has(studentName)) {
+                        // 學生已提交答案
+                        responses.push(responsesMap.get(studentName));
+                    } else {
+                        // 學生未提交答案，創建佔位數據
+                        responses.push({
+                            name: studentName,
+                            answer: null
+                        });
                     }
+                });
+                
+                // 🚀 FIX: 即使沒有學生在線，也要處理（清空容器）
+                if (responses.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center col-span-full">沒有學生在線...</p>';
                     allStudentResponses = [];
                     clearStudentsByAnswerList();
                     return;
                 }
                 
-                let responses = []; 
-                querySnapshot.forEach((doc) => {
-                    const student = doc.data();
-                    responses.push(student);
-                    const card = document.createElement('div');
-                    card.className = 'student-response-item'; 
-
-                    let answerContentHTML = ''; 
-                    
-                    if (student.answer === undefined || student.answer === null) {
-                        answerContentHTML = `<p class="text-gray-400">尚未作答</p>`;
-                    } else if (mode === 'drawing') {
-                        if(String(student.answer).startsWith('data:image')){
-                            answerContentHTML = `<img src="${student.answer}" alt="${student.name} 的繪圖" class="w-full h-auto rounded-md border max-h-32 object-contain cursor-pointer" data-full-image="${student.answer}"/>`;
-                        } else {
-                            answerContentHTML = `<p class="text-gray-500">繪圖未完成或格式錯誤</p>`;
-                        }
-                    } else if (mode === 'recording') { // New: Handle recording answers
-                        if (String(student.answer).startsWith('data:audio')) {
-                            answerContentHTML = `<audio controls src="${student.answer}" class="w-full"></audio>`;
-                        } else {
-                            answerContentHTML = `<p class="text-gray-500">錄音未完成或格式錯誤</p>`;
-                        }
-                    } else if (mode === 'text_input') {
-                        answerContentHTML = `<p class="text-gray-700 whitespace-pre-wrap">${student.answer || '(空白)'}</p>`;
-                    } else if (mode === 'multiple_choice' && Array.isArray(student.answer) && currentMultipleChoiceQuestions) {
-                        // NEW: Handle custom multiple choice answers
-                        answerContentHTML = `<div class="flex flex-col w-full">`;
-                        student.answer.forEach((qAns, index) => {
-                            const question = currentMultipleChoiceQuestions[qAns.qIndex];
-                            if (question) {
-                                const isCorrect = (String(qAns.ans) === String(question.correctAnswer));
-                                answerContentHTML += `
-                                    <div class="mc-question-answer">
-                                        <i class="icon fas ${isCorrect ? 'fa-check-circle correct-icon' : 'fa-times-circle incorrect-icon'}"></i>
-                                        <span class="question-text">Q${qAns.qIndex + 1}:</span>
-                                        <span class="student-choice">${qAns.ans}</span>
-                                    </div>
-                                `;
+                // 計算閱讀測驗排名（如果是閱讀測驗模式）
+                let rankedStudents = [];
+                if (mode === 'reading_comprehension' && readingComprehensionData.questions) {
+                    responses.forEach(student => {
+                        if (student.answer) {
+                            try {
+                                const studentAnswers = JSON.parse(student.answer);
+                                const questions = readingComprehensionData.questions;
+                                let correctCount = 0;
+                                studentAnswers.forEach((ans, index) => {
+                                    if (questions[index] && ans === questions[index].correctAnswer) {
+                                        correctCount++;
+                                    }
+                                });
+                                const accuracy = Math.round((correctCount / questions.length) * 100);
+                                rankedStudents.push({
+                                    name: student.name,
+                                    correctCount: correctCount,
+                                    totalQuestions: questions.length,
+                                    accuracy: accuracy,
+                                    timestamp: student.timestamp // 🚀 NEW: 保存提交時間戳用於排序
+                                });
+                            } catch (e) {
+                                // 答案格式錯誤，不加入排名
                             }
-                        });
-                        answerContentHTML += `</div>`;
-                    }
-                    else if (mode === 'quick_answer') {
-                        // Handle quick answer results
-                        if (student.answer && student.answer.includes('搶答成功')) {
-                            answerContentHTML = `<div class="text-center">
-                                <i class="fas fa-trophy text-yellow-500 text-4xl mb-2"></i>
-                                <p class="text-xl font-bold text-green-600">搶答成功！</p>
-                                <p class="text-lg text-gray-600">第一名</p>
-                            </div>`;
-                        } else {
-                            answerContentHTML = `<p class="text-gray-500">未搶答或搶答失敗</p>`;
                         }
-                    }
-                    else if (mode === 'sequencing') {
-                        // Handle sequencing answers
-                        try {
-                            const studentOrder = JSON.parse(student.answer);
-                            const correctOrder = sequencingData.correctOrder;
-                            let isCorrect = true;
-
-                            answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
-                            studentOrder.forEach((item, index) => {
-                                const correct = correctOrder[index] === item;
-                                if (!correct) isCorrect = false;
-                                answerContentHTML += `
-                                    <div class="flex items-center gap-2 text-sm">
-                                        <i class="fas ${correct ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}"></i>
-                                        <span class="font-bold">${index + 1}.</span>
-                                        <span>${item}</span>
-                                    </div>
-                                `;
-                            });
-                            answerContentHTML += `</div>`;
-                        } catch (e) {
-                            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+                    });
+                    // 🚀 FIX: 排序邏輯 - 正確數降序 → 提交時間升序（先交卷排名更高） → 姓名升序
+                    rankedStudents.sort((a, b) => {
+                        // 1. 主要排序：正確數高的在前
+                        if (b.correctCount !== a.correctCount) {
+                            return b.correctCount - a.correctCount;
                         }
-                    }
-                    else if (mode === 'matching') {
-                        // Handle matching answers
-                        try {
-                            const studentMatches = JSON.parse(student.answer);
-                            const correctPairs = matchingData.pairs;
-                            let correctCount = 0;
-
-                            answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
-                            studentMatches.forEach(match => {
-                                const correctPair = correctPairs.find(p => p.left === match.left);
-                                const isCorrect = correctPair && correctPair.right === match.right;
-                                if (isCorrect) correctCount++;
-
-                                answerContentHTML += `
-                                    <div class="flex items-center gap-2 text-xs">
-                                        <i class="fas ${isCorrect ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}"></i>
-                                        <span>${match.left}</span>
-                                        <i class="fas fa-arrow-right text-gray-400"></i>
-                                        <span>${match.right}</span>
-                                    </div>
-                                `;
-                            });
-                            answerContentHTML += `<div class="text-xs text-gray-600 mt-1">正確: ${correctCount}/${studentMatches.length}</div></div>`;
-                        } catch (e) {
-                            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+                        // 2. 次要排序：提交時間早的在前（同分時先交卷排名更高）
+                        if (a.timestamp && b.timestamp) {
+                            const timeA = a.timestamp.toMillis ? a.timestamp.toMillis() : new Date(a.timestamp).getTime();
+                            const timeB = b.timestamp.toMillis ? b.timestamp.toMillis() : new Date(b.timestamp).getTime();
+                            if (timeA !== timeB) {
+                                return timeA - timeB;
+                            }
                         }
-                    }
-                    else if (mode === 'reading_comprehension') {
-                        // Handle reading comprehension answers
-                        try {
-                            const studentAnswers = JSON.parse(student.answer);
-                            const questions = readingComprehensionData.questions;
-                            let correctCount = 0;
-
-                            answerContentHTML = `<div class="flex flex-col w-full" style="font-size: 10px; gap: 1px;">`;
-                            studentAnswers.forEach((ans, index) => {
-                                if (questions[index]) {
-                                    const isCorrect = (ans === questions[index].correctAnswer);
-                                    if (isCorrect) correctCount++;
-
-                                    answerContentHTML += `
-                                        <div class="flex items-center whitespace-nowrap" style="gap: 4px; line-height: 1.3;">
-                                            <i class="fas ${isCorrect ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500'}" style="font-size: 11px;"></i>
-                                            <span class="font-bold" style="min-width: 22px;">Q${index + 1}</span>
-                                            <span class="text-gray-700" style="min-width: 32px;">答:${ans || '未'}</span>
-                                            ${!isCorrect && ans > 0 ? `<span class="text-gray-500" style="font-size: 9px;">(正確:${questions[index].correctAnswer})</span>` : ''}
-                                        </div>
-                                    `;
-                                }
-                            });
-                            answerContentHTML += `<div class="font-bold mt-1 pt-1 border-t ${correctCount === questions.length ? 'text-green-600' : 'text-gray-700'}" style="font-size: 10px;">正確: ${correctCount}/${questions.length}</div></div>`;
-                        } catch (e) {
-                            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
-                        }
-                    }
-                    else { // Default multiple choice (1-4)
-                        answerContentHTML = `<p class="text-2xl font-bold text-blue-600">${student.answer}</p>`;
-                    }
+                        // 3. 最後排序：姓名字母順序
+                        return a.name.localeCompare(b.name);
+                    });
                     
-                    card.innerHTML = `
-                        <div class="name-box">${student.name}</div>
-                        <div class="answer-box">
-                            ${answerContentHTML}
-                        </div>
-                    `;
-                    container.appendChild(card);
-
-                    if (mode === 'drawing') {
-                        const imgElement = card.querySelector('.answer-box img');
-                        if (imgElement) {
-                            imgElement.addEventListener('click', (e) => {
-                                const fullImageUrl = e.target.dataset.fullImage;
-                                showMagnifiedDrawing(fullImageUrl);
-                            });
+                    // 🚀 NEW: 重新排序 responses 數組：已提交的按排名，未提交的按姓名排在後面
+                    const rankMap = new Map();
+                    rankedStudents.forEach((student, index) => {
+                        rankMap.set(student.name, index);
+                    });
+                    
+                    responses.sort((a, b) => {
+                        const hasAnswerA = a.answer !== null && a.answer !== undefined;
+                        const hasAnswerB = b.answer !== null && b.answer !== undefined;
+                        
+                        // 已提交的排在前面
+                        if (hasAnswerA && !hasAnswerB) return -1;
+                        if (!hasAnswerA && hasAnswerB) return 1;
+                        
+                        // 都已提交：按排名
+                        if (hasAnswerA && hasAnswerB) {
+                            const rankA = rankMap.has(a.name) ? rankMap.get(a.name) : 9999;
+                            const rankB = rankMap.has(b.name) ? rankMap.get(b.name) : 9999;
+                            return rankA - rankB;
                         }
-                    }
+                        
+                        // 都未提交：按姓名
+                        return a.name.localeCompare(b.name);
+                    });
+                }
+                
+                // 🚀 NEW: 使用統一的卡片生成函數（支持所有9種模式，包含分心狀態監控）
+                responses.forEach(student => {
+                    createStudentCard(student, container, mode, rankedStudents);
                 });
 
                 allStudentResponses = responses;
@@ -4540,6 +5321,52 @@
         }
 
         /**
+         * 🚀 NEW: (Teacher) 更新學生卡片的分心狀態顯示
+         * 當 presence 數據更新時，同步更新主視圖中已渲染的學生卡片
+         */
+        function updateStudentCardsDistractionStatus() {
+            const container = document.getElementById('student-responses-container');
+            if (!container) return;
+            
+            // 找到所有學生卡片
+            const studentCards = container.querySelectorAll('.student-response-item[data-student-name]');
+            
+            studentCards.forEach(card => {
+                const studentName = card.getAttribute('data-student-name');
+                if (!studentName) return;
+                
+                // 從 Map 中讀取分心狀態
+                const presenceData = activeStudentsPresenceMap.get(studentName) || { isDistracted: false, distractionCount: 0 };
+                const isDistracted = presenceData.isDistracted;
+                const distractionCount = presenceData.distractionCount;
+                
+                // 更新卡片背景樣式
+                if (isDistracted) {
+                    card.classList.add('bg-red-50', 'border-2', 'border-red-400');
+                } else {
+                    card.classList.remove('bg-red-50', 'border-2', 'border-red-400');
+                }
+                
+                // 🚀 FIX: 使用更穩健的方式更新分心指示器
+                const nameBox = card.querySelector('.name-box');
+                if (nameBox) {
+                    // 重新構建整個 name-box 的 HTML（確保狀態正確）
+                    const distractionWarning = isDistracted 
+                        ? `<i class="fas fa-exclamation-triangle text-red-600 ml-1 animate-pulse" title="學生分心中"></i>` 
+                        : '';
+                    const distractionBadge = distractionCount > 0 
+                        ? `<span class="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-bold rounded">${distractionCount}次</span>` 
+                        : '';
+                    
+                    nameBox.innerHTML = `
+                        <span>${studentName}</span>
+                        <span class="flex items-center">${distractionWarning}${distractionBadge}</span>
+                    `;
+                }
+            });
+        }
+
+        /**
          * (Teacher) Listens for student online presence and updates the active student count list.
          * This listener should be persistent as long as the teacher is in the classroom.
          * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
@@ -4562,44 +5389,77 @@
             const monitorContainer = document.getElementById('student-responses-container');
 
             const unsubscribe = onSnapshot(presenceColRef, (querySnapshot) => {
-                activeStudentNames = []; // Clear and re-populate
+                // 🚀 FIX: 儲存完整的學生數據（包含分心狀態），而不只是姓名
+                const activeStudentsData = []; // 新增：儲存完整學生資料
+                activeStudentNames = []; // 保持向後兼容
+                activeStudentsPresenceMap.clear(); // 🚀 NEW: 清空舊數據
+                
                 querySnapshot.forEach(doc => {
-                    activeStudentNames.push(doc.data().name);
+                    const studentData = doc.data();
+                    activeStudentNames.push(studentData.name);
+                    activeStudentsData.push(studentData); // 儲存完整數據
+                    // 🚀 NEW: 將完整的 presence 數據存入 Map（key: 學生名字, value: presence 數據）
+                    activeStudentsPresenceMap.set(studentData.name, {
+                        isDistracted: studentData.isDistracted === true,
+                        distractionCount: studentData.distractionCount || 0
+                    });
                 });
                 
                 activeStudentCountSpan.textContent = activeStudentNames.length;
 
-                // Update the student list modal.
+                // Update the student list modal with distraction status.
                 modalStudentNamesDiv.innerHTML = ''; 
                 if (lastSelectedModalStudent) { // Clear highlight in modal when list rebuilds
                     lastSelectedModalStudent.classList.remove('modal-selected-student-border');
                     lastSelectedModalStudent = null;
                 }
 
-                if (activeStudentNames.length === 0) {
+                if (activeStudentsData.length === 0) {
                     modalStudentNamesDiv.innerHTML = '<p class="text-gray-500 text-sm col-span-full">沒有學生在線</p>';
                 } else {
-                    activeStudentNames.sort().forEach(name => {
+                    // 🚀 FIX: 按照姓名排序並顯示學生及其分心狀態
+                    activeStudentsData.sort((a, b) => a.name.localeCompare(b.name)).forEach(student => {
                         const p = document.createElement('p');
-                        p.textContent = name;
+                        p.className = 'flex items-center justify-between'; // 使用 flex 布局
+                        p.setAttribute('data-student-name', student.name); // 🚀 FIX: 添加 data 屬性以便抽籤查找
+                        
+                        // 學生姓名容器
+                        const nameSpan = document.createElement('span');
+                        nameSpan.textContent = student.name;
+                        
+                        // 分心狀態容器
+                        const statusContainer = document.createElement('span');
+                        statusContainer.className = 'flex items-center gap-1';
+                        
+                        // 檢查分心狀態
+                        const isDistracted = student.isDistracted === true;
+                        const distractionCount = student.distractionCount || 0;
+                        
+                        // 添加分心次數徽章（如果有分心記錄）
+                        if (distractionCount > 0) {
+                            const badge = document.createElement('span');
+                            badge.className = 'px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-bold rounded';
+                            badge.textContent = `${distractionCount}次`;
+                            statusContainer.appendChild(badge);
+                        }
+                        
+                        // 添加當前分心警告圖標（如果正在分心）
+                        if (isDistracted) {
+                            const warning = document.createElement('i');
+                            warning.className = 'fas fa-exclamation-triangle text-red-600 animate-pulse';
+                            warning.title = '學生分心中';
+                            statusContainer.appendChild(warning);
+                        }
+                        
+                        p.appendChild(nameSpan);
+                        p.appendChild(statusContainer);
                         modalStudentNamesDiv.appendChild(p);
                     });
                 }
 
-                // Dynamically update the monitor view if in URL/HTML dispatch mode
-                if (currentInteractionMode === 'url_dispatch') { 
-                    monitorContainer.innerHTML = ''; // Clear previous content
-                    if (activeStudentNames.length === 0) {
-                        monitorContainer.innerHTML = '<p class="text-gray-500 text-center col-span-full">沒有學生在線</p>';
-                    } else {
-                        activeStudentNames.sort().forEach(name => {
-                            const card = document.createElement('div');
-                            card.className = 'student-response-item';
-                            card.innerHTML = `<div class="name-box">${name}</div><div class="answer-box"><i class="fas fa-check-circle text-green-500 text-2xl"></i></div>`;
-                            monitorContainer.appendChild(card);
-                        });
-                    }
-                }
+                // 🚀 FIX: 實時更新主視圖中學生卡片的分心狀態
+                // 當 presence 更新時，手動更新已渲染的學生卡片
+                updateStudentCardsDistractionStatus();
             }, (error) => {
                 console.error("[Teacher] Error listening to classroom presence:", error);
                 // If there's an error, maybe the listener broke, so clear it.
@@ -4695,7 +5555,12 @@
          * @returns {string[]} Sorted array of names of unsubmitted students.
          */
         function getUnsubmittedStudents(activeStudents, respondedStudents) {
-            const respondedNames = new Set(respondedStudents.map(s => s.name));
+            // 只計算真正有提交答案的學生（answer 字段不為空）
+            const respondedNames = new Set(
+                respondedStudents
+                    .filter(s => s.answer !== undefined && s.answer !== null && s.answer !== '')
+                    .map(s => s.name)
+            );
             return activeStudents.filter(name => !respondedNames.has(name)).sort();
         }
 
@@ -6249,6 +7114,8 @@
 
                 document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
                 document.getElementById('active-student-count').textContent = '0';
+                // 🚀 FIX: 清空在線學生模態框，避免下次開課時看到舊學生名單
+                document.getElementById('modal-student-names').innerHTML = '<p class="text-gray-500 text-sm col-span-full">沒有學生在線</p>';
                 // REMOVED: document.getElementById('responded-student-count').textContent = '0';
                 document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
                 document.getElementById('teacher-image-preview').src = '';
@@ -6532,10 +7399,16 @@
                         listenToInteractionMode();
                         listenToPeerReviewStatus(); // NEW: Listen for peer review status
                         listenToLottery(); // <-- 在此新增
+                        startStudentAttentionMonitoring(); // NEW: 啟動學生注意力監控
                         showView('studentWaiting');
-                        // Set student presence using the specific classroomCode
+                        // 🚀 FIX: Set student presence with distraction monitoring fields
                         const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
-                        await setDoc(presenceRef, { name: studentName, timestamp: new Date() }, { merge: true });
+                        await setDoc(presenceRef, { 
+                            name: studentName, 
+                            timestamp: new Date(),
+                            isDistracted: false,
+                            distractionCount: 0
+                        }, { merge: true });
                     } else {
                         showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
                     }
@@ -6706,14 +7579,46 @@
                         showMessage('老師已暫停回覆，無法送出答案。', 'error');
                         return;
                     }
+                    // 🎯 保存引用（在 await 之前）
                     const answer = e.currentTarget.dataset.answer;
-                    await submitAnswer(answer);
-                    e.currentTarget.closest('div').querySelectorAll('.answer-btn').forEach(b => {
-                        b.disabled = true;
-                        b.classList.add('btn-gray');
-                    });
-                    e.currentTarget.disabled = false;
-                    e.currentTarget.classList.remove('btn-gray');
+                    const answerText = e.currentTarget.textContent.trim();
+                    const clickedButton = e.currentTarget;
+                    const parentDiv = e.currentTarget.closest('div');
+                    
+                    try {
+                        await submitAnswer(answer);
+                        
+                        // 🎯 NEW: 鎖定所有按鈕（包括被點擊的）
+                        if (parentDiv) {
+                            parentDiv.querySelectorAll('.answer-btn').forEach(b => {
+                                b.disabled = true;
+                                b.classList.remove('bg-green-500', 'bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-yellow-600', 'bg-green-600', 'bg-red-600');
+                                b.classList.remove('hover:bg-green-600', 'hover:bg-red-600', 'hover:bg-blue-600', 'hover:bg-yellow-600', 'hover:bg-green-600', 'hover:bg-red-600');
+                                b.classList.add('bg-gray-400');
+                                // 🎯 NEW: 為所有按鈕設置提交標記（防止恢復時重新啟用）
+                                b.setAttribute('data-submitted', 'true');
+                            });
+                        }
+                        
+                        // 🎯 IMPROVED: 在被點擊按鈕上添加確認圖標（保留原始答案文字）
+                        const originalText = clickedButton.getAttribute('data-original-text') || answerText;
+                        clickedButton.setAttribute('data-original-text', originalText);
+                        clickedButton.innerHTML = `
+                            <div class="flex flex-col items-center justify-center gap-1">
+                                <span class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold">${answer}</span>
+                                <span class="text-xs sm:text-sm flex items-center gap-1">
+                                    <i class="fas fa-check-circle"></i>
+                                    <span>已送出</span>
+                                </span>
+                            </div>
+                        `;
+                        
+                        // 🎯 NEW: 顯示確認訊息（類似快速投票）
+                        showMessage(`✓ 提交成功！您的答案：${answerText}`, 'success');
+                    } catch (error) {
+                        console.error('[Answer Button] Submit failed:', error);
+                        // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                    }
                 });
             });
 
@@ -6724,10 +7629,36 @@
                     showMessage('老師已暫停回覆，無法送出答案。', 'error');
                     return;
                 }
-                const text = document.getElementById('text-input-area').value;
-                await submitAnswer(text);
-                e.currentTarget.disabled = true;
-                e.currentTarget.classList.replace('btn-primary', 'btn-gray');
+                const text = document.getElementById('text-input-area').value.trim();
+                if (!text) {
+                    showMessage('請輸入答案後再送出！', 'error');
+                    return;
+                }
+                
+                // 🎯 保存引用（在 await 之前）
+                const submitBtn = e.currentTarget;
+                const textArea = document.getElementById('text-input-area');
+                
+                try {
+                    await submitAnswer(text);
+                    
+                    // 🎯 NEW: 鎖定按鈕和文字區域
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                    
+                    if (textArea) {
+                        textArea.disabled = true;
+                    }
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    const displayText = text.length > 50 ? text.substring(0, 50) + '...' : text;
+                    showMessage(`✓ 提交成功！您的答案：${displayText}`, 'success');
+                } catch (error) {
+                    console.error('[Text Input] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                }
             });
             
             // Drawing submission.
@@ -6737,10 +7668,27 @@
                     showMessage('老師已暫停回覆，無法送出答案。', 'error');
                     return;
                 }
-                const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-                await submitAnswer(dataUrl);
-                e.currentTarget.disabled = true;
-                e.currentTarget.classList.replace('btn-primary', 'btn-gray');
+                
+                // 🎯 保存引用（在 await 之前）
+                const submitBtn = e.currentTarget;
+                
+                try {
+                    const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                    await submitAnswer(dataUrl);
+                    
+                    // 🎯 NEW: 鎖定按鈕和畫布
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                    canvas.style.pointerEvents = 'none';
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    showMessage('✓ 繪圖已送出！', 'success');
+                } catch (error) {
+                    console.error('[Drawing] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                }
             });
 
             // Sequencing submission.
@@ -6751,10 +7699,31 @@
                 }
                 const container = document.getElementById('sequencing-items-container');
                 const items = Array.from(container.children).map(item => item.dataset.text);
-                await submitAnswer(JSON.stringify(items));
-                e.currentTarget.disabled = true;
-                e.currentTarget.classList.replace('btn-primary', 'btn-gray');
-                showMessage('答案已送出！', 'success');
+                
+                if (items.length === 0) {
+                    showMessage('請先排序項目後再送出！', 'error');
+                    return;
+                }
+                
+                // 🎯 保存引用（在 await 之前）
+                const submitBtn = e.currentTarget;
+                
+                try {
+                    await submitAnswer(JSON.stringify(items));
+                    
+                    // 🎯 NEW: 鎖定按鈕和禁用拖動
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                    container.style.pointerEvents = 'none';
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    showMessage('✓ 排序已送出！', 'success');
+                } catch (error) {
+                    console.error('[Sequencing] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                }
             });
 
             // Matching submission.
@@ -6778,10 +7747,26 @@
                     return;
                 }
 
-                await submitAnswer(JSON.stringify(matches));
-                e.currentTarget.disabled = true;
-                e.currentTarget.classList.replace('btn-primary', 'btn-gray');
-                showMessage('答案已送出！', 'success');
+                // 🎯 保存引用（在 await 之前）
+                const submitBtn = e.currentTarget;
+
+                try {
+                    await submitAnswer(JSON.stringify(matches));
+                    
+                    // 🎯 NEW: 鎖定按鈕和禁用配對項目
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                    document.getElementById('matching-column-a').style.pointerEvents = 'none';
+                    document.getElementById('matching-column-b').style.pointerEvents = 'none';
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    showMessage(`✓ 配對已送出！完成 ${matches.length} 組配對`, 'success');
+                } catch (error) {
+                    console.error('[Matching] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                }
             });
 
             // 🚀 OPTIMIZED: Drawing board events with throttled draw function
@@ -6878,6 +7863,7 @@
             // NEW: Exit Peer Review Button (Student)
             document.getElementById('exit-peer-review-btn').addEventListener('click', exitPeerReview);
             chartModalCloseBtn.addEventListener('click', hideStatisticsModal);
+            document.getElementById('download-statistics-btn').addEventListener('click', downloadStatistics);
             magnifiedImageModalCloseBtn.addEventListener('click', hideMagnifiedDrawing);
             magnifiedImageModal.addEventListener('click', (e) => { if (e.target === magnifiedImageModal) hideMagnifiedDrawing(); });
             document.getElementById('close-message-btn').addEventListener('click', hideMessage);
@@ -6890,19 +7876,24 @@
 
             // Teacher utility buttons.
             document.getElementById('refresh-student-count-btn').addEventListener('click', manualRefreshCounts);
-            // Original lottery button in monitor view (now replaced by modal one)
+            // Original lottery button in monitor view
             document.getElementById('draw-lottery-btn').addEventListener('click', () => {
                 if (allStudentResponses.length === 0) return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
                 if (lastSelectedStudentCard) lastSelectedStudentCard.classList.remove('selected-student-border');
                 const randomIndex = Math.floor(Math.random() * allStudentResponses.length);
                 const selectedStudentName = allStudentResponses[randomIndex].name;
                 const studentCards = document.querySelectorAll('#student-responses-container .student-response-item');
-                const foundCard = Array.from(studentCards).find(card => card.querySelector('.name-box').textContent === selectedStudentName);
+                // 🚀 FIX: 使用 data-student-name 屬性查找學生卡片，而不是 textContent
+                const foundCard = Array.from(studentCards).find(card => card.getAttribute('data-student-name') === selectedStudentName);
                 if (foundCard) {
                     foundCard.classList.add('selected-student-border');
                     lastSelectedStudentCard = foundCard;
+                    foundCard.scrollIntoView({ behavior: 'smooth', block: 'center' }); // 滾動到選中的卡片
                     showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
-                    announceDrawnStudent(selectedStudentName); // <-- 在此新增
+                    announceDrawnStudent(selectedStudentName);
+                } else {
+                    console.warn('[Lottery] Student card not found:', selectedStudentName);
+                    showMessage(`抽中學生：${selectedStudentName}（卡片未找到）`, 'info');
                 }
             });
             // NEW: Lottery button inside the student list modal
@@ -6922,16 +7913,17 @@
 
                 // Find the corresponding <p> element in the modal
                 const studentNameElements = document.querySelectorAll('#modal-student-names p');
-                const foundElement = Array.from(studentNameElements).find(p => p.textContent === selectedStudentName);
+                // 🚀 FIX: 使用 data-student-name 屬性查找，而不是 textContent（避免分心狀態干擾）
+                const foundElement = Array.from(studentNameElements).find(p => p.getAttribute('data-student-name') === selectedStudentName);
 
                 if (foundElement) {
                     foundElement.classList.add('modal-selected-student-border');
                     lastSelectedModalStudent = foundElement; // Store the currently selected element
+                    foundElement.scrollIntoView({ behavior: 'smooth', block: 'center' }); // 🚀 FIX: 滾動到選中的學生
                     showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
                     announceDrawnStudent(selectedStudentName); // <-- 在此新增
                 } else {
-                    // This case should ideally not happen if activeStudentNames is correctly populated
-                    // and the modal list is correctly rendered.
+                    console.warn('[Modal Lottery] Student element not found:', selectedStudentName);
                     showMessage(`抽中學生：${selectedStudentName} (未在列表中找到)`, 'info');
                 }
             });
@@ -7194,12 +8186,30 @@
                     showMessage('老師已暫停回覆，無法送出錄音。', 'error');
                     return;
                 }
-                if (audioDataURL) {
-                    await submitAnswer(audioDataURL);
-                    submitRecordingBtn.disabled = true;
-                    submitRecordingBtn.classList.replace('btn-primary', 'btn-gray');
-                } else {
+                if (!audioDataURL) {
                     showMessage('沒有錄音可送出', 'error');
+                    return;
+                }
+                
+                try {
+                    await submitAnswer(audioDataURL);
+                    
+                    // 🎯 NEW: 鎖定所有錄音相關按鈕
+                    submitRecordingBtn.disabled = true;
+                    submitRecordingBtn.classList.remove('btn-primary');
+                    submitRecordingBtn.classList.add('btn-gray');
+                    submitRecordingBtn.textContent = '✓ 已送出答案';
+                    startRecordingBtn.disabled = true;
+                    stopRecordingBtn.disabled = true;
+                    playRecordingBtn.disabled = true;
+                    resetRecordingBtn.disabled = true;
+                    recordingStatusText.textContent = '已送出錄音答案';
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    showMessage('✓ 錄音已送出！', 'success');
+                } catch (error) {
+                    console.error('[Recording] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
                 }
             });
 
@@ -7568,17 +8578,29 @@
                     return;
                 }
 
-                await submitAnswer(studentAnswers);
-                
-                // NEW: 更新UI顯示已提交狀態
-                e.currentTarget.disabled = true;
-                e.currentTarget.classList.replace('btn-primary', 'btn-gray');
-                e.currentTarget.textContent = '已提交答案 ✓';
-                
-                // Disable all radio buttons after submission
-                document.querySelectorAll('#custom-mc-questions-container input[type="radio"]').forEach(radio => {
-                    radio.disabled = true;
-                });
+                // 🎯 保存引用（在 await 之前）
+                const submitBtn = e.currentTarget;
+
+                try {
+                    await submitAnswer(studentAnswers);
+                    
+                    // 🎯 NEW: 更新UI顯示已提交狀態
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                    
+                    // Disable all radio buttons after submission
+                    document.querySelectorAll('#custom-mc-questions-container input[type="radio"]').forEach(radio => {
+                        radio.disabled = true;
+                    });
+                    
+                    // 🎯 NEW: 顯示確認訊息
+                    showMessage(`✓ 提交成功！已完成 ${studentAnswers.length} 題`, 'success');
+                } catch (error) {
+                    console.error('[Custom MC] Submit failed:', error);
+                    // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+                }
             });
         }
 
@@ -8960,6 +9982,168 @@
         }
 
         /**
+         * Downloads statistics (for True/False and Multiple Choice) as CSV
+         */
+        async function downloadStatistics() {
+            if (!currentInteractionMode || allStudentResponses.length === 0) {
+                showMessage('沒有統計數據可供下載', 'info');
+                return;
+            }
+
+            let csv = '\uFEFF'; // BOM for Excel UTF-8 support
+            const timestamp = new Date().toLocaleString('zh-TW');
+
+            if (currentInteractionMode === 'true_false') {
+                // True/False Statistics
+                const filteredResponses = allStudentResponses.filter(r => r.answer === 'O' || r.answer === 'X');
+                const totalResponses = filteredResponses.length;
+                const oCount = filteredResponses.filter(r => r.answer === 'O').length;
+                const xCount = filteredResponses.filter(r => r.answer === 'X').length;
+
+                csv += `是非題作答統計\n`;
+                csv += `匯出時間,${timestamp}\n`;
+                csv += `總作答人數,${totalResponses}\n`;
+                csv += `\n`;
+
+                // Summary table
+                csv += `選項統計\n`;
+                csv += `選項,人數,百分比\n`;
+                csv += `O (正確),${oCount},${totalResponses > 0 ? ((oCount / totalResponses) * 100).toFixed(1) : '0.0'}%\n`;
+                csv += `X (錯誤),${xCount},${totalResponses > 0 ? ((xCount / totalResponses) * 100).toFixed(1) : '0.0'}%\n`;
+                csv += `\n`;
+
+                // Detailed responses
+                csv += `詳細作答記錄\n`;
+                csv += `學生姓名,答案,作答時間\n`;
+                filteredResponses.forEach(r => {
+                    const answerTime = r.timestamp 
+                        ? (r.timestamp.toDate ? r.timestamp.toDate().toLocaleString('zh-TW') : new Date(r.timestamp).toLocaleString('zh-TW'))
+                        : '未知';
+                    csv += `${r.name},${r.answer},${answerTime}\n`;
+                });
+
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `是非題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                link.click();
+
+                showMessage('是非題統計已下載！', 'success');
+
+            } else if (currentInteractionMode === 'multiple_choice') {
+                if (currentMultipleChoiceQuestions) {
+                    // Custom Multiple Choice Statistics
+                    const filteredResponses = allStudentResponses.filter(r => Array.isArray(r.answer));
+                    
+                    csv += `自訂選擇題作答統計\n`;
+                    csv += `匯出時間,${timestamp}\n`;
+                    csv += `總作答人數,${filteredResponses.length}\n`;
+                    csv += `題目總數,${currentMultipleChoiceQuestions.length}\n`;
+                    csv += `\n`;
+
+                    // Question-by-question statistics
+                    csv += `各題統計\n`;
+                    csv += `題號,題目,正確答案,作答人數,答對人數,答對率\n`;
+                    currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                        let correctCount = 0;
+                        let answeredCount = 0;
+
+                        filteredResponses.forEach(studentResponse => {
+                            const studentQAnswer = studentResponse.answer.find(ans => ans.qIndex === qIndex);
+                            if (studentQAnswer) {
+                                answeredCount++;
+                                if (String(studentQAnswer.ans) === String(q.correctAnswer)) {
+                                    correctCount++;
+                                }
+                            }
+                        });
+
+                        const correctRate = answeredCount > 0 ? ((correctCount / answeredCount) * 100).toFixed(1) : '0.0';
+                        csv += `${qIndex + 1},"${q.question}",${q.correctAnswer},${answeredCount},${correctCount},${correctRate}%\n`;
+                    });
+
+                    csv += `\n`;
+
+                    // Detailed student responses
+                    csv += `學生詳細作答記錄\n`;
+                    csv += `學生姓名,作答時間`;
+                    currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                        csv += `,Q${qIndex + 1}答案,Q${qIndex + 1}結果`;
+                    });
+                    csv += `\n`;
+
+                    filteredResponses.forEach(studentResponse => {
+                        const answerTime = studentResponse.timestamp 
+                            ? (studentResponse.timestamp.toDate ? studentResponse.timestamp.toDate().toLocaleString('zh-TW') : new Date(studentResponse.timestamp).toLocaleString('zh-TW'))
+                            : '未知';
+                        csv += `${studentResponse.name},${answerTime}`;
+                        
+                        currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                            const studentQAnswer = studentResponse.answer.find(ans => ans.qIndex === qIndex);
+                            if (studentQAnswer) {
+                                const isCorrect = String(studentQAnswer.ans) === String(q.correctAnswer) ? '✓' : '✗';
+                                csv += `,${studentQAnswer.ans},${isCorrect}`;
+                            } else {
+                                csv += `,未作答,`;
+                            }
+                        });
+                        csv += `\n`;
+                    });
+
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `自訂選擇題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                    link.click();
+
+                    showMessage('自訂選擇題統計已下載！', 'success');
+
+                } else {
+                    // Default Multiple Choice Statistics (1-4)
+                    const filteredResponses = allStudentResponses.filter(r => r.answer >= '1' && r.answer <= '4');
+                    const totalResponses = filteredResponses.length;
+                    const counts = { '1': 0, '2': 0, '3': 0, '4': 0 };
+                    filteredResponses.forEach(r => { counts[r.answer]++; });
+
+                    csv += `選擇題作答統計\n`;
+                    csv += `匯出時間,${timestamp}\n`;
+                    csv += `總作答人數,${totalResponses}\n`;
+                    csv += `\n`;
+
+                    // Summary table
+                    csv += `選項統計\n`;
+                    csv += `選項,人數,百分比\n`;
+                    ['1', '2', '3', '4'].forEach(opt => {
+                        const count = counts[opt];
+                        const percentage = totalResponses > 0 ? ((count / totalResponses) * 100).toFixed(1) : '0.0';
+                        csv += `選項${opt},${count},${percentage}%\n`;
+                    });
+                    csv += `\n`;
+
+                    // Detailed responses
+                    csv += `詳細作答記錄\n`;
+                    csv += `學生姓名,答案,作答時間\n`;
+                    filteredResponses.forEach(r => {
+                        const answerTime = r.timestamp 
+                            ? (r.timestamp.toDate ? r.timestamp.toDate().toLocaleString('zh-TW') : new Date(r.timestamp).toLocaleString('zh-TW'))
+                            : '未知';
+                        csv += `${r.name},選項${r.answer},${answerTime}\n`;
+                    });
+
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `選擇題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                    link.click();
+
+                    showMessage('選擇題統計已下載！', 'success');
+                }
+            } else {
+                showMessage('此模式不支援統計下載', 'info');
+            }
+        }
+
+        /**
          * Student submits a vote
          */
         async function submitQuickPollVote(option) {
@@ -9332,6 +10516,21 @@
                     } else if (radio) {
                         label.classList.add('opacity-50');
                     }
+                });
+            }
+            
+            // 🚀 OPTIMIZATION: 手動觸發排行榜更新（防止題目更新時排行榜不刷新）
+            // 這確保了即使沒有新的學生作答，排行榜也會反映最新的題目數據
+            if (currentRole === 'student' && classroomCode) {
+                const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                getDocs(studentsColRef).then(querySnapshot => {
+                    const studentsData = [];
+                    querySnapshot.forEach(doc => {
+                        studentsData.push(doc.data());
+                    });
+                    updateReadingLeaderboardDisplay(studentsData);
+                }).catch(error => {
+                    console.error('[displayReadingComprehensionForStudent] Error fetching students for leaderboard:', error);
                 });
             }
         }
