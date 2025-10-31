@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>剛好學 - Firebase 配置生成器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .card {
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+        }
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+        .input-group label {
+            display: block;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+        .input-group textarea {
+            width: 100%;
+            padding: 1rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 0.5rem;
+            font-size: 0.95rem;
+            font-family: 'Courier New', monospace;
+            transition: border-color 0.2s;
+            resize: vertical;
+            min-height: 300px;
+            background-color: #f9fafb;
+        }
+        .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background-color: white;
+        }
+        .btn {
+            padding: 1rem 2rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .alert {
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+            border-left: 4px solid #3b82f6;
+        }
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
+        }
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
+        }
+        .spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #ffffff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .code-example {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            margin-top: 0.5rem;
+        }
+        .code-example .comment {
+            color: #9ca3af;
+        }
+        .code-block-container {
+            position: relative;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+        }
+        .copy-btn.copied {
+            background: #10b981;
+        }
+        .highlight-text {
+            font-weight: 700;
+            color: #7c3aed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="text-center mb-8">
+                <h1 class="text-4xl font-bold text-gray-800 mb-2">
+                    <i class="fas fa-cog text-purple-600"></i> 剛好學
+                </h1>
+                <p class="text-xl text-gray-600">Firebase 配置生成器</p>
+            </div>
+
+            <div class="alert alert-info">
+                <i class="fas fa-lightbulb mr-2"></i>
+                <strong>快速上手：</strong>只需一個步驟！直接從 Firebase Console 複製配置代碼，貼上下方文本框，點擊生成即可下載您的專屬應用程式。
+            </div>
+
+            <form id="config-form">
+                <div class="input-group">
+                    <label for="firebaseConfig">
+                        <i class="fas fa-code text-purple-600 mr-2"></i>Firebase 配置代碼
+                        <span class="text-sm text-gray-500 font-normal ml-2">(直接從 Firebase Console 複製貼上)</span>
+                    </label>
+                    <textarea 
+                        id="firebaseConfig" 
+                        name="firebaseConfig" 
+                        placeholder="請貼上您的 Firebase 配置代碼，例如：
+
+const firebaseConfig = {
+  apiKey: &quot;AIzaSyC...&quot;,
+  authDomain: &quot;your-project.firebaseapp.com&quot;,
+  projectId: &quot;your-project&quot;,
+  storageBucket: &quot;your-project.appspot.com&quot;,
+  messagingSenderId: &quot;123456789012&quot;,
+  appId: &quot;1:123456789012:web:...&quot;
+};
+
+或者只貼上配置物件：
+
+{
+  apiKey: &quot;AIzaSyC...&quot;,
+  authDomain: &quot;your-project.firebaseapp.com&quot;,
+  projectId: &quot;your-project&quot;,
+  storageBucket: &quot;your-project.appspot.com&quot;,
+  messagingSenderId: &quot;123456789012&quot;,
+  appId: &quot;1:123456789012:web:...&quot;
+}"
+                        required
+                    ></textarea>
+                </div>
+
+                <div id="message-container"></div>
+
+                <div class="text-center">
+                    <button type="submit" id="generate-btn" class="btn btn-primary">
+                        <i class="fas fa-download mr-2"></i>生成並下載 index.html
+                    </button>
+                </div>
+            </form>
+
+            <div class="mt-8 p-6 bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl border-2 border-purple-200">
+                <h3 class="font-bold text-gray-800 mb-4 text-xl">
+                    <i class="fas fa-cog text-purple-600 mr-2"></i>🔧 建置主程式資料庫設定(Firebase)
+                </h3>
+                
+                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-5 rounded">
+                    <p class="text-gray-700 mb-2">
+                        本系統需要連接到 <strong>Google Firebase 資料庫</strong>才能運作，您需自行按照本說明完成建置後，才可正常使用。這能確保所有課堂資料（如學生答案）都保存在您自己的空間，確保資料的隱私與所有權。
+                    </p>
+                    <p class="text-sm text-gray-600 mt-2">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 mr-1"></i>
+                        <strong>注意：</strong>此為必要設定步驟，需要您具備基本的 Google Firebase 操作知識。若未完成此設定，系統將無法使用。
+                    </p>
+                </div>
+
+                <!-- 步驟 1 -->
+                <div class="mb-6">
+                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
+                        <span class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">1</span>
+                        建立 Firebase 專案
+                    </h4>
+                    <ul class="ml-10 text-gray-700 space-y-1">
+                        <li>• 前往 <a href="https://console.firebase.google.com/" target="_blank" class="text-purple-600 hover:underline font-semibold">Firebase Console</a>（超連結）</li>
+                        <li>• 點擊「新增專案」並依照指示完成建立</li>
+                    </ul>
+                </div>
+
+                <!-- 步驟 2 -->
+                <div class="mb-6">
+                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
+                        <span class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">2</span>
+                        啟用必要服務
+                    </h4>
+                    <div class="ml-10 space-y-3">
+                        <div>
+                            <p class="font-semibold text-gray-800 mb-1">
+                                <i class="fas fa-user-shield text-blue-600 mr-1"></i> Authentication (驗證)
+                            </p>
+                            <p class="text-gray-700 ml-5">在專案左側<span class="highlight-text">「建構」</span>中找到<span class="highlight-text">「Authentication」</span>，點擊<span class="highlight-text">「開始使用」</span>，進入<span class="highlight-text">「登入方式」</span>分頁，並<span class="highlight-text">「啟用」</span><span class="highlight-text">「匿名」</span>登入方式。</p>
+                        </div>
+                        <div>
+                            <p class="font-semibold text-gray-800 mb-1">
+                                <i class="fas fa-database text-orange-600 mr-1"></i> Firestore Database (資料庫)
+                            </p>
+                            <p class="text-gray-700 ml-5">在專案左側<span class="highlight-text">「建構」</span>中找到<span class="highlight-text">「Firestore Database」</span>，點擊<span class="highlight-text">「建立資料庫」</span>後點選<span class="highlight-text">「Standard版」</span>，接著下一步位置改成<span class="highlight-text">「asia-east1 (Taiwan)」</span>讀取資料才能非常快速，最後選擇以<span class="highlight-text">「測試模式」</span>啟動。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 步驟 3 -->
+                <div class="mb-6 bg-red-50 border-2 border-red-300 p-4 rounded-lg">
+                    <h4 class="font-bold text-red-700 mb-3 text-lg">
+                        <span class="bg-red-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">3</span>
+                        修改 Firestore 安全性規則 (非常重要！)
+                    </h4>
+                    <div class="ml-10 space-y-2">
+                        <p class="text-gray-700">資料庫建立後，在專案左側<span class="highlight-text">「建構」</span>中找到 Firestore Database 頁面，點擊上方的<span class="highlight-text">「規則」</span>(Rules) 分頁。</p>
+                        <p class="text-gray-700">將編輯器中的所有內容，替換為以下規則：</p>
+                        <div class="code-block-container">
+                            <button class="copy-btn" onclick="copyFirestoreRules(this)">
+                                <i class="fas fa-copy mr-1"></i>複製
+                            </button>
+                            <div class="code-example bg-gray-900 text-gray-100 p-4 rounded mt-2 overflow-x-auto">
+<pre class="text-sm" id="firestore-rules">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</pre>
+                            </div>
+                        </div>
+                        <p class="text-gray-600 text-sm mt-2">
+                            <i class="fas fa-lightbulb text-yellow-500 mr-1"></i>
+                            這條規則的意思是「允許任何已登入的使用者（包含我們剛才啟用的匿名登入）對資料庫進行讀寫」。
+                        </p>
+                        <p class="text-gray-700 font-semibold mt-3">
+                            <i class="fas fa-check-circle text-green-600 mr-1"></i>
+                            修改完成後，點擊<span class="highlight-text">「發佈」</span>(Publish) 來儲存您的新規則。
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 步驟 4 -->
+                <div class="mb-4">
+                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
+                        <span class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">4</span>
+                        取得您的 Firebase 設定值
+                    </h4>
+                    <div class="ml-10 space-y-2">
+                        <p class="text-gray-700">① 在 Firebase Console 中，點擊專案首頁左上角的齒輪圖示 <i class="fas fa-cog text-gray-600"></i>，選擇<span class="highlight-text">「專案設定」</span>。</p>
+                        <p class="text-gray-700">② 在<span class="highlight-text">「您的應用程式」</span>區塊，點擊<span class="highlight-text">「新增應用程式」</span>並選擇<span class="highlight-text">「網頁」</span>圖示 (<code>&lt;/&gt;</code>)。</p>
+                        <p class="text-gray-700">③ 為您的應用程式命名後，點擊<span class="highlight-text">「註冊應用程式」</span>按鈕，您會看到一組 <code class="bg-purple-100 px-2 py-1 rounded text-purple-700 font-semibold">firebaseConfig</code> 設定值。請將它複製下來。</p>
+                        <div class="code-example bg-gray-900 text-gray-100 p-4 rounded mt-2 overflow-x-auto">
+<pre class="text-sm">const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "xxx.firebaseapp.com",
+  projectId: "xxx",
+  storageBucket: "xxx.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:..."
+};</pre>
+                        </div>
+                        <p class="text-gray-700 font-semibold mt-3 bg-green-100 border-l-4 border-green-500 p-3 rounded">
+                            <i class="fas fa-arrow-up text-green-600 mr-1"></i>
+                            將這段配置代碼複製後，貼到本頁面最上方的文本框，然後點擊<span class="highlight-text">「生成並下載」</span>按鈕即可！
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- GitHub Pages 部署說明 -->
+            <div class="mt-6 p-5 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border-2 border-green-200">
+                <h3 class="font-bold text-gray-800 mb-3 text-lg">
+                    <i class="fas fa-rocket text-green-600 mr-2"></i>下一步：發布您的應用程式到網路上
+                </h3>
+                <p class="text-gray-700 mb-4">
+                    下載完成後，請將剛剛下載的 <code class="bg-white px-2 py-1 rounded text-sm font-semibold text-purple-700">index.html</code> 上傳到以下網站即可免費發布您的應用程式：
+                </p>
+                <div class="text-center">
+                    <a href="https://gg90052.github.io/ezpage/" 
+                       target="_blank" 
+                       class="inline-block bg-gradient-to-r from-green-500 to-blue-500 text-white px-8 py-4 rounded-lg font-bold text-lg hover:shadow-xl transition-all transform hover:scale-105">
+                        <i class="fas fa-cloud-upload-alt mr-2"></i>前往 GitHub Pages 發布工具
+                        <i class="fas fa-external-link-alt ml-2 text-sm"></i>
+                    </a>
+                </div>
+                <p class="text-sm text-gray-600 mt-4 text-center">
+                    <i class="fas fa-info-circle text-blue-500 mr-1"></i>
+                    上傳後，您將獲得一個公開網址，學生可以直接透過瀏覽器使用您的教學工具！
+                </p>
+            </div>
+            
+            <!-- Google AI Studio API KEY 獲取說明 -->
+            <div class="mt-6 p-5 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-lg border-2 border-orange-200">
+                <h3 class="font-bold text-gray-800 mb-3 text-lg">
+                    <i class="fas fa-magic text-orange-600 mr-2"></i>下一步：啟用 AI 生成題目功能（完全免費）
+                </h3>
+                <p class="text-gray-700 mb-4">
+                    想要使用 <strong>AI 自動生成 PIRLS 閱讀理解題組</strong>嗎？前往 Google AI Studio 獲取完全免費的 API Key：
+                </p>
+                <div class="text-center">
+                    <a href="https://aistudio.google.com/" 
+                       target="_blank" 
+                       class="inline-block bg-gradient-to-r from-orange-500 to-yellow-500 text-white px-8 py-4 rounded-lg font-bold text-lg hover:shadow-xl transition-all transform hover:scale-105">
+                        <i class="fas fa-brain mr-2"></i>前往 Google AI Studio 獲取 API Key
+                        <i class="fas fa-external-link-alt ml-2 text-sm"></i>
+                    </a>
+                </div>
+                <div class="mt-4 p-3 bg-white rounded-lg border border-orange-200">
+                    <p class="text-sm text-gray-700 mb-2">
+                        <i class="fas fa-lightbulb text-yellow-500 mr-2"></i>
+                        <strong>功能介紹：</strong>
+                    </p>
+                    <ul class="text-sm text-gray-600 ml-6 space-y-1">
+                        <li>✨ AI 智能生成符合 PIRLS 標準的閱讀理解題組</li>
+                        <li>📚 自動根據文章內容產生多層次問題</li>
+                        <li>🎯 支援不同難度與題型的題目生成</li>
+                        <li>💰 <strong>完全免費</strong>使用 Google 的 Gemini AI 模型</li>
+                    </ul>
+                </div>
+                <p class="text-sm text-gray-600 mt-3 text-center">
+                    <i class="fas fa-key text-orange-500 mr-1"></i>
+                    獲得 API Key 後，在應用程式中輸入即可開始使用 AI 生成題目功能！
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('config-form');
+        const generateBtn = document.getElementById('generate-btn');
+        const messageContainer = document.getElementById('message-container');
+
+        function showMessage(message, type = 'info') {
+            messageContainer.innerHTML = `
+                <div class="alert alert-${type}">
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'} mr-2"></i>
+                    ${message}
+                </div>
+            `;
+        }
+
+        function parseFirebaseConfig(configText) {
+            try {
+                // 清理文本：移除前後空白
+                configText = configText.trim();
+                
+                // 檢查開始和結束括號
+                const hasOpeningBrace = configText.indexOf('{') !== -1;
+                const hasClosingBrace = configText.lastIndexOf('}') !== -1;
+                
+                let jsonText = configText;
+                
+                // 先移除 const 聲明部分（如果有）
+                jsonText = jsonText.replace(/^const\s+\w+\s*=\s*/, '');
+                
+                // 移除尾部的分號（在添加括號之前）
+                jsonText = jsonText.replace(/;[\s]*$/, '').trim();
+                
+                // 根據括號情況進行處理
+                if (!hasOpeningBrace && !hasClosingBrace) {
+                    // 兩個括號都沒有：直接添加兩個括號
+                    jsonText = '{' + jsonText + '}';
+                } else if (!hasOpeningBrace && hasClosingBrace) {
+                    // 只有結束括號：添加開始括號
+                    jsonText = '{' + jsonText;
+                } else if (hasOpeningBrace && !hasClosingBrace) {
+                    // 只有開始括號：添加結束括號
+                    jsonText = jsonText + '}';
+                } else {
+                    // 兩個括號都有：提取括號之間的內容
+                    const firstBrace = jsonText.indexOf('{');
+                    const lastBrace = jsonText.lastIndexOf('}');
+                    jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+                }
+                
+                // 嘗試直接解析（如果是有效的 JSON）
+                try {
+                    return JSON.parse(jsonText);
+                } catch (e) {
+                    // 如果解析失敗，可能是因為屬性名稱沒有引號
+                    // 將 JavaScript 物件格式轉換為 JSON 格式
+                    
+                    // 為屬性名稱添加引號
+                    jsonText = jsonText.replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+                    
+                    // 將單引號替換為雙引號
+                    jsonText = jsonText.replace(/'/g, '"');
+                    
+                    // 再次嘗試解析
+                    return JSON.parse(jsonText);
+                }
+            } catch (error) {
+                throw new Error(`配置格式錯誤：${error.message}。請確認您貼上了 Firebase 配置的必要欄位。`);
+            }
+        }
+
+        function validateConfig(config) {
+            const requiredFields = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+            const missingFields = requiredFields.filter(field => !config[field]);
+            
+            if (missingFields.length > 0) {
+                throw new Error(`缺少必要欄位：${missingFields.join(', ')}。請確認您的 Firebase 配置完整。`);
+            }
+            
+            // 驗證欄位格式
+            if (!config.apiKey.startsWith('AIza')) {
+                throw new Error('API Key 格式似乎不正確（應該以 "AIza" 開頭）');
+            }
+            
+            if (!config.authDomain.includes('firebaseapp.com') && !config.authDomain.includes('.')) {
+                throw new Error('Auth Domain 格式似乎不正確');
+            }
+            
+            return true;
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const configText = document.getElementById('firebaseConfig').value.trim();
+            
+            if (!configText) {
+                showMessage('請貼上您的 Firebase 配置代碼！', 'error');
+                return;
+            }
+
+            // 禁用按鈕並顯示載入狀態
+            generateBtn.disabled = true;
+            generateBtn.innerHTML = '<span class="spinner mr-2"></span>解析並生成中...';
+            showMessage('正在解析配置並生成您的專屬應用程式...', 'info');
+
+            try {
+                // 解析配置
+                const config = parseFirebaseConfig(configText);
+                
+                // 驗證配置
+                validateConfig(config);
+                
+                showMessage('✅ 配置解析成功！正在生成應用程式...', 'info');
+
+                // 讀取 index.html 模板
+                const response = await fetch('index.html');
+                if (!response.ok) {
+                    throw new Error('無法讀取模板檔案，請確認網路連線正常');
+                }
+                
+                let htmlContent = await response.text();
+
+                // 替換 Firebase 配置
+                const configPattern = /const __firebase_config = JSON\.stringify\(\{[\s\S]*?\}\);/;
+                
+                // 檢查模板中是否存在配置區塊
+                if (!configPattern.test(htmlContent)) {
+                    throw new Error('模板檔案中未找到 Firebase 配置區塊，請確認模板檔案完整性');
+                }
+                
+                // 生成新的配置字串
+                const newConfigString = `const __firebase_config = JSON.stringify({
+            apiKey: "${config.apiKey}",
+            authDomain: "${config.authDomain}",
+            projectId: "${config.projectId}",
+            storageBucket: "${config.storageBucket}",
+            messagingSenderId: "${config.messagingSenderId}",
+            appId: "${config.appId}"
+        });`;
+
+                const updatedContent = htmlContent.replace(configPattern, newConfigString);
+
+                // 創建 Blob 並下載
+                const blob = new Blob([updatedContent], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'index.html';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                showMessage(`✅ 成功！您的專屬「剛好學」應用程式（專案：${config.projectId}）已開始下載。下載完成後即可直接使用！`, 'success');
+                generateBtn.innerHTML = '<i class="fas fa-check mr-2"></i>生成成功！再次下載？';
+
+            } catch (error) {
+                console.error('生成失敗:', error);
+                showMessage(`❌ ${error.message}`, 'error');
+                generateBtn.innerHTML = '<i class="fas fa-download mr-2"></i>生成並下載 index.html';
+            } finally {
+                generateBtn.disabled = false;
+            }
+        });
+
+        // 複製 Firestore 規則的功能
+        function copyFirestoreRules(button) {
+            const rulesText = document.getElementById('firestore-rules').textContent;
+            
+            navigator.clipboard.writeText(rulesText).then(() => {
+                // 更改按鈕狀態為已複製
+                const originalHTML = button.innerHTML;
+                button.innerHTML = '<i class="fas fa-check mr-1"></i>已複製！';
+                button.classList.add('copied');
+                
+                // 2 秒後恢復原狀
+                setTimeout(() => {
+                    button.innerHTML = originalHTML;
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('複製失敗:', err);
+                alert('複製失敗，請手動選取文字複製');
+            });
+        }
+    </script>
+</body>
+</html>
