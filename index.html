@@ -1019,11 +1019,25 @@
             }
         }
 
-        /* NEW: Styles for enlarged default multiple-choice buttons */
+        /* NEW: Styles for enlarged default multiple-choice buttons with RWD */
         #interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
-            width: 12rem; /* Double the original 6rem (h-24) */
-            height: 12rem; /* Double the original 6rem (h-24) */
-            font-size: 8rem; /* Double the original 4rem (text-7xl) */
+            width: 10rem; /* Mobile */
+            height: 10rem;
+            font-size: 6rem;
+        }
+        @media (min-width: 640px) {
+            #interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
+                width: 12rem; /* Tablet */
+                height: 12rem;
+                font-size: 7rem;
+            }
+        }
+        @media (min-width: 768px) {
+            #interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
+                width: 14rem; /* Desktop */
+                height: 14rem;
+                font-size: 8rem;
+            }
         }
         
         /* MODIFIED: MC Settings Modal for AI Question Generation */
@@ -1041,96 +1055,263 @@
             margin-top: 0; /* Remove top margin */
         }
 
-        /* Sequencing Question Styles */
+        /* Sequencing Question Styles - RWD Optimized */
         .sequencing-item {
             background-color: white;
             border-radius: 0.75rem;
-            padding: 1rem 1.5rem;
-            margin-bottom: 0.75rem;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 0.875rem 1rem;
+            margin-bottom: 0.625rem;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
             cursor: grab;
-            transition: all 0.2s ease;
-            border: 2px solid transparent;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid #e5e7eb;
             display: flex;
             align-items: center;
-            gap: 1rem;
-            font-size: 1.125rem;
+            gap: 0.75rem;
+            font-size: 1rem;
             font-weight: 500;
+            position: relative;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        @media (min-width: 640px) {
+            .sequencing-item {
+                padding: 1rem 1.25rem;
+                margin-bottom: 0.75rem;
+                gap: 1rem;
+                font-size: 1.125rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .sequencing-item {
+                padding: 1.125rem 1.5rem;
+                margin-bottom: 0.875rem;
+                font-size: 1.25rem;
+            }
+        }
+        .sequencing-item::before {
+            content: '⋮⋮';
+            color: #9ca3af;
+            font-size: 1.25rem;
+            line-height: 1;
+            margin-right: -0.25rem;
+            transition: color 0.2s ease;
         }
         .sequencing-item:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(59, 130, 246, 0.15);
+            transform: translateY(-3px);
+            border-color: #93c5fd;
+        }
+        .sequencing-item:hover::before {
+            color: #3b82f6;
+        }
+        .sequencing-item:active {
+            cursor: grabbing;
         }
         .sequencing-item.dragging {
-            opacity: 0.5;
+            opacity: 0.75;
             cursor: grabbing;
+            transform: scale(1.05) rotate(2deg);
+            box-shadow: 0 12px 24px rgba(59, 130, 246, 0.3);
+            border-color: #3b82f6;
+            z-index: 1000;
+            animation: pulse-drag 0.6s ease-in-out infinite;
+        }
+        @keyframes pulse-drag {
+            0%, 100% { transform: scale(1.05) rotate(2deg); }
+            50% { transform: scale(1.08) rotate(2deg); }
         }
         .sequencing-item.drag-over {
             border-color: #3b82f6;
             background-color: #eff6ff;
+            transform: translateY(0);
         }
         .sequencing-item-number {
-            background-color: #3b82f6;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
             color: white;
-            width: 2.5rem;
-            height: 2.5rem;
+            width: 2.25rem;
+            height: 2.25rem;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
             flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+            transition: all 0.3s ease;
+        }
+        @media (min-width: 640px) {
+            .sequencing-item-number {
+                width: 2.5rem;
+                height: 2.5rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .sequencing-item-number {
+                width: 2.75rem;
+                height: 2.75rem;
+                font-size: 1.125rem;
+            }
+        }
+        .sequencing-item:hover .sequencing-item-number {
+            transform: rotate(360deg);
+        }
+        .sequencing-item-text {
+            flex: 1;
+            line-height: 1.5;
         }
         .sequencing-container {
             max-width: 600px;
             margin: 0 auto;
+            padding: 0 0.5rem;
+        }
+        @media (min-width: 640px) {
+            .sequencing-container {
+                padding: 0;
+            }
         }
 
-        /* Matching Question Styles */
+        /* Matching Question Styles - RWD Optimized */
         .matching-container {
             max-width: 900px;
             margin: 0 auto;
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 2rem;
+            gap: 1rem;
             position: relative;
+            padding: 0 0.5rem;
+        }
+        @media (min-width: 640px) {
+            .matching-container {
+                gap: 1.5rem;
+                padding: 0;
+            }
+        }
+        @media (min-width: 768px) {
+            .matching-container {
+                gap: 2.5rem;
+            }
         }
         .matching-column {
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 0.75rem;
+            z-index: 2;
+        }
+        @media (min-width: 640px) {
+            .matching-column {
+                gap: 1rem;
+            }
         }
         .matching-item {
             background-color: white;
             border-radius: 0.75rem;
-            padding: 1rem 1.5rem;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 0.875rem 1rem;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
             cursor: pointer;
-            transition: all 0.2s ease;
-            border: 3px solid transparent;
-            font-size: 1.125rem;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 3px solid #e5e7eb;
+            font-size: 0.9375rem;
             font-weight: 500;
-            min-height: 4rem;
+            min-height: 3.5rem;
             display: flex;
             align-items: center;
             justify-content: center;
             text-align: center;
+            position: relative;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        @media (min-width: 640px) {
+            .matching-item {
+                padding: 1rem 1.25rem;
+                min-height: 4rem;
+                font-size: 1.0625rem;
+            }
+        }
+        @media (min-width: 768px) {
+            .matching-item {
+                padding: 1.125rem 1.5rem;
+                min-height: 4.5rem;
+                font-size: 1.125rem;
+            }
         }
         .matching-item:hover {
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(236, 72, 153, 0.12);
+            transform: translateY(-2px) scale(1.02);
+            border-color: #f9a8d4;
         }
         .matching-item.selected {
             border-color: #ec4899;
-            background-color: #fdf2f8;
-            box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.2);
+            background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+            box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.15), 0 6px 16px rgba(236, 72, 153, 0.2);
+            animation: pulse-select 1.5s ease-in-out infinite;
+            transform: scale(1.05);
+        }
+        @keyframes pulse-select {
+            0%, 100% { 
+                box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.15), 0 6px 16px rgba(236, 72, 153, 0.2);
+            }
+            50% { 
+                box-shadow: 0 0 0 6px rgba(236, 72, 153, 0.25), 0 8px 20px rgba(236, 72, 153, 0.3);
+            }
+        }
+        .matching-item.selected::after {
+            content: '✓';
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+            color: white;
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.875rem;
+            font-weight: bold;
+            box-shadow: 0 2px 6px rgba(236, 72, 153, 0.4);
+            animation: pop-in 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+        @keyframes pop-in {
+            0% { transform: scale(0); }
+            100% { transform: scale(1); }
         }
         .matching-item.matched {
             border-color: #10b981;
-            background-color: #ecfdf5;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
             cursor: default;
+            box-shadow: 0 4px 10px rgba(16, 185, 129, 0.15);
         }
         .matching-item.matched:hover {
+            transform: none;
+        }
+        .matching-item.matched::before {
+            content: '✓';
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            width: 1.75rem;
+            height: 1.75rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.875rem;
+            font-weight: bold;
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4);
+        }
+        .matching-item.answer-revealed {
+            border-color: #10b981;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            cursor: default;
+            box-shadow: 0 4px 10px rgba(16, 185, 129, 0.15);
+        }
+        .matching-item.answer-revealed:hover {
             transform: none;
         }
         #matching-svg-canvas {
@@ -1143,18 +1324,54 @@
             z-index: 1;
         }
         .matching-line {
-            stroke: #ec4899;
-            stroke-width: 3;
+            stroke: url(#lineGradient);
+            stroke-width: 4;
             fill: none;
             stroke-linecap: round;
+            opacity: 0;
+            animation: draw-line 0.5s ease-out forwards;
+            filter: drop-shadow(0 2px 4px rgba(236, 72, 153, 0.3));
+        }
+        @media (min-width: 768px) {
+            .matching-line {
+                stroke-width: 5;
+            }
+        }
+        @keyframes draw-line {
+            from {
+                stroke-dasharray: 1000;
+                stroke-dashoffset: 1000;
+                opacity: 0;
+            }
+            to {
+                stroke-dasharray: 1000;
+                stroke-dashoffset: 0;
+                opacity: 1;
+            }
         }
         .matching-line.correct {
-            stroke: #10b981;
+            stroke: url(#lineGradientCorrect);
+            filter: drop-shadow(0 2px 4px rgba(16, 185, 129, 0.3));
         }
         .matching-line.incorrect {
-            stroke: #ef4444;
+            stroke: url(#lineGradientIncorrect);
+            filter: drop-shadow(0 2px 4px rgba(239, 68, 68, 0.3));
+        }
+
+        /* Confetti Container for Quick Answer Success */
+        .confetti-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
         }
     </style>
+    
+    <!-- Canvas Confetti Library for Celebration Effects -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js"></script>
 </head>
 <body class="flex items-center justify-center min-h-screen">
 
@@ -1322,23 +1539,37 @@
                     <h2 class="text-base sm:text-2xl md:text-3xl font-bold text-gray-800 text-center sm:text-left"></h2>
                 </div>
                 
-                <!-- 第二行：功能按鈕區（可換行） -->
-                <div class="flex flex-wrap gap-2">
-                    <button id="toggle-pause-btn" class="btn bg-gray-500 hover:bg-gray-600 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
+                <!-- 第二行：功能按鈕區（Bento Box 響應式網格） -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    <button id="toggle-pause-btn" class="btn bg-gray-500 hover:bg-gray-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
                         <i class="fas fa-pause mr-1 sm:mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
                     </button>
-                    <button id="draw-lottery-btn" class="btn btn-orange flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">抽籤 🎲</button>
-                    <button id="show-unsubmitted-students-btn" class="btn btn-orange flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">未作答學生 📝</button>
-                    <button id="ai-text-summary-btn" class="btn btn-purple flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">AI 文字分析 🤖</button>
-                    <button id="download-media-btn" class="btn btn-purple flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載所有媒體 💾</button>
-                    <button id="show-statistics-btn" class="btn btn-primary flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示統計 📊</button>
-                    <button id="start-peer-review-btn" class="btn btn-teal flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">開始互評 ❤️</button>
-                    <button id="view-questions-btn" class="btn bg-indigo-600 hover:bg-indigo-700 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">查看題目 📝</button>
-                    <button id="view-reading-questions-btn" class="btn bg-red-600 hover:bg-red-700 flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示題目 📖</button>
-                    <button id="download-responses-btn" class="btn btn-green flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載回應 📥</button>
-                    <button id="end-interaction-btn" class="btn btn-primary flex-grow sm:flex-grow-0 sm:flex-shrink text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 font-bold shadow-md">✅ 結束互動，回到選單</button>
+                    <button id="reset-answers-btn" class="btn btn-green text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
+                        <i class="fas fa-redo mr-1 sm:mr-2"></i> <span>重新開始 🔄</span>
+                    </button>
+                    <button id="draw-lottery-btn" class="btn btn-orange text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">抽籤 🎲</button>
+                    <button id="show-unsubmitted-students-btn" class="btn btn-orange text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">未作答學生 📝</button>
+                    <button id="ai-text-summary-btn" class="btn btn-purple text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">AI 文字分析 🤖</button>
+                    <button id="download-media-btn" class="btn btn-purple text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載所有媒體 💾</button>
+                    <button id="show-statistics-btn" class="btn btn-primary text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示統計 📊</button>
+                    <button id="start-peer-review-btn" class="btn btn-teal text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">開始互評 ❤️</button>
+                    <button id="view-questions-btn" class="btn bg-indigo-600 hover:bg-indigo-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">查看題目 📝</button>
+                    <button id="view-reading-questions-btn" class="btn bg-red-600 hover:bg-red-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示題目 📖</button>
+                    <button id="show-matching-answer-btn" class="btn bg-pink-600 hover:bg-pink-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示答案 💡</button>
+                    <button id="show-sequencing-answer-btn" class="btn bg-cyan-600 hover:bg-cyan-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示答案 💡</button>
+                    <button id="download-responses-btn" class="btn btn-green text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載回應 📥</button>
+                    <button id="end-interaction-btn" class="btn btn-primary text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 font-bold shadow-md md:col-span-2 lg:col-span-3">✅ 結束互動，回到選單</button>
                 </div>
             </div>
+            <!-- 🚀 NEW: Teacher-side answer display area -->
+            <div id="teacher-answer-display" class="hidden bg-blue-50 p-4 rounded-lg mb-4 border-2 border-blue-300">
+                <h3 class="text-xl font-bold text-blue-800 mb-3 flex items-center">
+                    <i class="fas fa-check-circle mr-2"></i>
+                    <span id="teacher-answer-title">正確答案</span>
+                </h3>
+                <div id="teacher-answer-content" class="text-gray-800"></div>
+            </div>
+            
             <div id="student-responses-container" class="bg-gray-100 p-4 rounded-lg h-96 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 <p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>
             </div>
@@ -1383,13 +1614,13 @@
                     <button data-answer="X" class="answer-btn text-6xl w-32 h-32 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg transform hover:scale-110 transition">X</button>
                 </div>
             </div>
-            <div id="interaction-multiple-choice" class="hidden flex flex-col items-center">
-                <h3 class="text-2xl font-bold text-center mb-6">選擇題</h3>
-                <div id="default-mc-options" class="grid grid-cols-2 gap-4">
-                     <button data-answer="1" class="answer-btn btn bg-blue-500 hover:bg-blue-600 h-24 text-7xl">1</button>
-                     <button data-answer="2" class="answer-btn btn bg-yellow-500 hover:bg-yellow-600 h-24 text-7xl">2</button>
-                     <button data-answer="3" class="answer-btn btn bg-green-500 hover:bg-green-600 h-24 text-7xl">3</button>
-                     <button data-answer="4" class="answer-btn btn bg-red-500 hover:bg-red-600 h-24 text-7xl">4</button>
+            <div id="interaction-multiple-choice" class="hidden flex flex-col items-center px-4">
+                <h3 class="text-2xl font-bold text-center mb-4 sm:mb-6">選擇題</h3>
+                <div id="default-mc-options" class="grid grid-cols-2 gap-3 sm:gap-4 md:gap-5 w-full max-w-md sm:max-w-lg md:max-w-xl">
+                     <button data-answer="1" class="answer-btn btn bg-blue-500 hover:bg-blue-600 h-20 sm:h-24 md:h-28 text-5xl sm:text-6xl md:text-7xl">1</button>
+                     <button data-answer="2" class="answer-btn btn bg-yellow-500 hover:bg-yellow-600 h-20 sm:h-24 md:h-28 text-5xl sm:text-6xl md:text-7xl">2</button>
+                     <button data-answer="3" class="answer-btn btn bg-green-500 hover:bg-green-600 h-20 sm:h-24 md:h-28 text-5xl sm:text-6xl md:text-7xl">3</button>
+                     <button data-answer="4" class="answer-btn btn bg-red-500 hover:bg-red-600 h-20 sm:h-24 md:h-28 text-5xl sm:text-6xl md:text-7xl">4</button>
                 </div>
                 <div id="custom-mc-questions-container" class="hidden w-full max-w-2xl space-y-6 text-left">
                     </div>
@@ -1499,18 +1730,19 @@
                 <button id="submit-reading-btn" class="btn btn-primary mt-6 max-w-sm mx-auto">送出答案 ✉️</button>
             </div>
             <div id="interaction-quick-answer" class="hidden text-center flex flex-col items-center justify-center h-full min-h-screen p-4 relative">
-                <h3 class="text-2xl font-bold text-center mb-6">搶答題</h3>
-                <p id="quick-answer-status-text" class="text-lg text-gray-600 mb-6">等待搶答開始...</p>
+                <h3 class="text-2xl md:text-3xl font-bold text-center mb-4 md:mb-6">搶答題</h3>
+                <p id="quick-answer-status-text" class="text-base md:text-lg text-gray-600 mb-4 md:mb-6">等待搶答開始...</p>
                 <div id="quick-answer-button-container" class="absolute inset-0 pointer-events-none">
                     <!-- 搶答按鈕將會動態生成在這裡 -->
                 </div>
-                <div id="quick-answer-result" class="hidden">
-                    <h2 class="text-4xl font-bold text-green-600 mb-4">🎉 搶答成功！</h2>
-                    <p class="text-xl text-gray-700">你是第一個點到按鈕的學生！</p>
+                <div id="quick-answer-result" class="hidden relative z-10">
+                    <div id="confetti-container" class="confetti-container"></div>
+                    <h2 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-green-600 mb-3 md:mb-4 animate-bounce">🎉 搶答成功！</h2>
+                    <p class="text-lg sm:text-xl md:text-2xl text-gray-700 font-medium px-4">你是第一個點到按鈕的學生！</p>
                 </div>
                 <div id="quick-answer-locked" class="hidden">
-                    <h2 class="text-4xl font-bold text-red-600 mb-4">⏰ 搶答結束</h2>
-                    <p class="text-xl text-gray-700">其他同學已經搶答成功了！</p>
+                    <h2 class="text-3xl sm:text-4xl md:text-5xl font-bold text-red-600 mb-3 md:mb-4">⏰ 搶答結束</h2>
+                    <p class="text-lg sm:text-xl md:text-2xl text-gray-700 px-4">其他同學已經搶答成功了！</p>
                 </div>
             </div>
             <div id="interaction-sequencing" class="hidden text-center">
@@ -2311,7 +2543,7 @@
         // Import Firebase SDK functions.
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; // Added signOut
-        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Global Variables ---
         // Max dimension (px) for user uploaded images to prevent excessively large files.
@@ -2347,6 +2579,7 @@
         let studentResponsesUnsubscribe = null;
         let classroomPresenceUnsubscribe = null; // Unsubscribe function for classroom presence listener.
         let lotteryUnsubscribe = null; // NEW: Listener for lottery results
+        let quickAnswerUnsubscribe = null; // NEW: Listener for quick answer updates
         
         // Student attention monitoring variables
         let studentDistractionCount = 0; // 累計分心次數
@@ -2358,6 +2591,7 @@
         let quickPollData = null; // Stores current poll configuration
         let quickPollVotesUnsubscribe = null; // Listener for vote updates
         let currentChartType = 'bar'; // 'bar' or 'pie'
+        let quickPollOptions = []; // Stores current poll options
 
         // Drawing specific variables.
         const canvas = document.getElementById('drawing-canvas'); // Main canvas for student display.
@@ -2429,6 +2663,10 @@
             rightItem: null
         };
         let currentMultipleChoiceQuestions = null; // Stores questions from Firestore for student/teacher monitor
+        
+        // 🚀 NEW: Student-side tracking for sequencing/matching settings to detect changes
+        let lastSequencingSettings = null;
+        let lastMatchingSettings = null;
 
         // NEW: Peer Review System Variables
         let peerReviewActive = false; // Whether peer review is currently active
@@ -3137,8 +3375,11 @@
 
                 // Special handling for quick answer mode
                 if (mode === 'quick_answer') {
+                    console.log('[showInteractionUI] Starting quick answer mode...');
                     startQuickAnswer();
+                    console.log('[showInteractionUI] Quick answer started, now setting up listener...');
                     listenToQuickAnswerUpdates();
+                    console.log('[showInteractionUI] Quick answer listener registered');
                 }
              }
         }
@@ -3521,8 +3762,9 @@
                             // 禁用排序項目的拖動
                             document.getElementById('sequencing-items-container').style.pointerEvents = 'none';
                         } else {
-                            // Reset sequencing state
-                            document.getElementById('sequencing-items-container').innerHTML = '';
+                            // 🚀 FIX: 不要在這裡清空容器！
+                            // setupSequencingUI 會在需要時自己清空並重新填充
+                            // 如果這裡清空，會導致在後續快照更新時（settingsChanged=false）容器被清空但不重新渲染
                             document.getElementById('sequencing-items-container').style.pointerEvents = 'auto';
                             submitSequencingBtn.disabled = false;
                             submitSequencingBtn.classList.remove('btn-gray');
@@ -3563,10 +3805,9 @@
                             document.getElementById('matching-column-a').style.pointerEvents = 'none';
                             document.getElementById('matching-column-b').style.pointerEvents = 'none';
                         } else {
-                            // Reset matching state
-                            document.getElementById('matching-column-a').innerHTML = '';
-                            document.getElementById('matching-column-b').innerHTML = '';
-                            document.getElementById('matching-svg-canvas').innerHTML = '';
+                            // 🚀 FIX: 不要在這裡清空容器！
+                            // setupMatchingUI 會在需要時自己清空並重新填充
+                            // 如果這裡清空，會導致在後續快照更新時（settingsChanged=false）容器被清空但不重新渲染
                             document.getElementById('matching-column-a').style.pointerEvents = 'auto';
                             document.getElementById('matching-column-b').style.pointerEvents = 'auto';
                             submitMatchingBtn.disabled = false;
@@ -3711,16 +3952,19 @@
         /**
          * Displays a custom message box.
          * @param {string} message - The message to display.
-         * @param {'info' | 'success' | 'error'} type - The message type, influencing its color.
+         * @param {'info' | 'success' | 'error' | 'warning'} type - The message type, influencing its color.
          */
         function showMessage(message, type = 'info') {
             const msgBox = document.getElementById('message-box');
             const msgContent = document.getElementById('message-content');
             msgContent.textContent = message;
-            msgBox.className = 'fixed top-4 left-1/2 -translate-x-1/2 px-6 py-3 rounded-lg shadow-lg z-50 transition-all duration-300 transform text-white';
+            // Use z-index 10001 to ensure message appears above all modals (modals use z-index up to 10000)
+            msgBox.className = 'fixed top-4 left-1/2 -translate-x-1/2 px-6 py-3 rounded-lg shadow-lg transition-all duration-300 transform text-white font-semibold';
+            msgBox.style.zIndex = '10001';
             switch (type) {
                 case 'success': msgBox.classList.add('bg-green-500'); break;
                 case 'error': msgBox.classList.add('bg-red-500'); break;
+                case 'warning': msgBox.classList.add('bg-yellow-500'); break;
                 case 'info': msgBox.classList.add('bg-blue-500'); break;
                 default: msgBox.classList.add('bg-blue-500'); break;
             }
@@ -3728,6 +3972,25 @@
             setTimeout(() => {
                 msgBox.classList.add('hidden');
             }, 3000); // Auto-hide after 3 seconds.
+        }
+
+        /**
+         * 生成統一的檔案名稱（包含教室代碼和時間戳記）
+         * @param {string} baseName - 檔案基礎名稱（例如：'學生回應'、'是非題統計'）
+         * @param {string} extension - 檔案副檔名（例如：'csv'、'zip'）
+         * @returns {string} 完整檔名（格式：教室代碼_檔案名稱_YYYYMMDD_HHMMSS.副檔名）
+         */
+        function generateFilename(baseName, extension) {
+            const now = new Date();
+            const timestamp = now.getFullYear() +
+                            String(now.getMonth() + 1).padStart(2, '0') +
+                            String(now.getDate()).padStart(2, '0') + '_' +
+                            String(now.getHours()).padStart(2, '0') +
+                            String(now.getMinutes()).padStart(2, '0') +
+                            String(now.getSeconds()).padStart(2, '0');
+            
+            const classroomPrefix = classroomCode ? `${classroomCode}_` : '';
+            return `${classroomPrefix}${baseName}_${timestamp}.${extension}`;
         }
 
         /**
@@ -4144,20 +4407,31 @@
          * @param {object} [options={}] - Optional settings for the mode, e.g., custom questions.
          */
         async function setInteractionMode(mode, options = {}) {
-            console.log(`[Teacher] Setting mode to: ${mode}`);
+            console.log(`[Teacher] Setting mode to: ${mode}, forceReset: ${options.forceReset || false}`);
             currentInteractionMode = mode; 
             // Use classroomCode in the Firestore path
             const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
             const showStatisticsBtn = document.getElementById('show-statistics-btn');
+            
+            // 🚀 NEW: Setup teacher answer listener for matching and sequencing modes
+            if (mode === 'matching' || mode === 'sequencing') {
+                setupTeacherAnswerListener();
+            }
             const downloadMediaBtn = document.getElementById('download-media-btn');
             const aiTextSummaryBtn = document.getElementById('ai-text-summary-btn');
             const showUnsubmittedStudentsBtn = document.getElementById('show-unsubmitted-students-btn'); // NEW
             const viewQuestionsBtn = document.getElementById('view-questions-btn'); // NEW
             const viewReadingQuestionsBtn = document.getElementById('view-reading-questions-btn'); // NEW
             const downloadResponsesBtn = document.getElementById('download-responses-btn'); // NEW
+            const showMatchingAnswerBtn = document.getElementById('show-matching-answer-btn'); // NEW
+            const showSequencingAnswerBtn = document.getElementById('show-sequencing-answer-btn'); // NEW
 
             // MODIFIED: Show statistics button for true_false, multiple_choice, and reading_comprehension
             showStatisticsBtn.classList.toggle('hidden', mode !== 'true_false' && mode !== 'multiple_choice' && mode !== 'reading_comprehension');
+            
+            // NEW: Show answer buttons for matching and sequencing modes
+            showMatchingAnswerBtn.classList.toggle('hidden', mode !== 'matching');
+            showSequencingAnswerBtn.classList.toggle('hidden', mode !== 'sequencing');
 
             // NEW: Show view questions button only for multiple_choice with custom questions
             const hasCustomQuestions = mode === 'multiple_choice' && options.customQuestions && options.customQuestions.length > 0;
@@ -4222,8 +4496,15 @@
                     backgroundImage: teacherUploadedBackgroundImageDataURL || null,
                     teacherId: userId, // Store teacher ID
                     isPaused: isResponsePaused, // Use current local pause state
-                    lastDrawnStudent: null // <-- 在此新增 (清除上次抽籤紀錄)
+                    lastDrawnStudent: null, // <-- 在此新增 (清除上次抽籤紀錄)
+                    showMatchingAnswer: false, // Reset matching answer display
+                    showSequencingAnswer: false, // Reset sequencing answer display
+                    // 🚀 NEW: Force UI reset with monotonic token when options.forceReset is true
+                    modeResetToken: options.forceReset ? Date.now() : (window.lastModeResetToken || 0)
                 };
+                
+                // Store the token globally for comparison
+                window.lastModeResetToken = payload.modeResetToken;
 
                 // MODIFIED: Add combined dispatch settings if in that mode.
                 if (mode === 'url_dispatch') {
@@ -4372,10 +4653,9 @@
                         if (eventTimestamp && eventTimestamp !== lastTimestamp) {
                             lastTimestamp = eventTimestamp;
                             
-                            // 如果學生不在搶答模式中，則顯示抽籤結果
-                            if (currentInteractionMode !== 'quick_answer') {
-                                showLotteryWinner(drawnStudent.name);
-                            }
+                            // 🚀 FIX: 移除搶答模式的限制，讓所有模式都能顯示抽籤結果
+                            console.log('[Lottery] Showing lottery winner:', drawnStudent.name);
+                            showLotteryWinner(drawnStudent.name);
                         }
                     }
                 }
@@ -4539,6 +4819,8 @@
                 const newIsResponsePaused = data.isPaused || false;
                 const newBackgroundImage = data.backgroundImage || null;
                 const newMultipleChoiceQuestions = data.multiple_choice_questions || null;
+                const newResetTimestamp = data.resetTimestamp || null;
+                const newModeResetToken = data.modeResetToken || 0;
 
                 // Determine if the interaction mode itself has changed
                 const modeChanged = (currentInteractionMode !== newMode);
@@ -4546,6 +4828,10 @@
                 const pauseStateChanged = (currentInteractionMode === newMode && isResponsePaused !== newIsResponsePaused);
                 // Determine if we are resuming from a pause (mode is same, was paused, now not paused)
                 const isResumingFromPause = (currentInteractionMode === newMode) && isResponsePaused && !newIsResponsePaused;
+                // 🎯 NEW: Determine if teacher clicked "Reset Answers" button
+                const resetRequested = (window.lastResetTimestamp !== newResetTimestamp && newResetTimestamp !== null);
+                // 🚀 NEW: Determine if teacher forced a mode reset (e.g., quick answer restart)
+                const modeResetTokenChanged = (window.lastStudentModeResetToken !== newModeResetToken && newModeResetToken !== 0);
 
 
                 // Update global states *before* acting on them
@@ -4553,9 +4839,11 @@
                 isResponsePaused = newIsResponsePaused;
                 teacherUploadedBackgroundImageDataURL = newBackgroundImage; // Update teacher background image
                 currentMultipleChoiceQuestions = newMultipleChoiceQuestions; // Update custom MC questions
+                window.lastResetTimestamp = newResetTimestamp; // Track reset timestamp
+                window.lastStudentModeResetToken = newModeResetToken; // Track mode reset token
 
 
-                console.log(`[Student] Detected mode: ${currentInteractionMode}, Paused: ${isResponsePaused}, Mode Changed: ${modeChanged}, pauseStateChanged: ${pauseStateChanged}`);
+                console.log(`[Student] Detected mode: ${currentInteractionMode}, Paused: ${isResponsePaused}, Mode Changed: ${modeChanged}, pauseStateChanged: ${pauseStateChanged}, resetRequested: ${resetRequested}, modeResetTokenChanged: ${modeResetTokenChanged}`);
 
                 if (currentInteractionMode === 'waiting') {
                     showView('studentWaiting');
@@ -4563,16 +4851,30 @@
                 } else {
                     showView('studentInteraction');
 
-                    // Call showInteractionUI if mode changed OR if this is the first time entering this mode
+                    // Call showInteractionUI if mode changed OR token changed OR if this is the first time entering this mode
                     // We determine "first time" by checking if any interaction UI is currently visible
                     const anyUIVisible = Object.values(interactionUIs).some(ui => !ui.classList.contains('hidden'));
 
-                    if (modeChanged || !anyUIVisible) {
+                    if (modeChanged || modeResetTokenChanged || !anyUIVisible) {
+                        console.log(`[Student] Calling showInteractionUI (modeChanged: ${modeChanged}, tokenChanged: ${modeResetTokenChanged}, firstTime: ${!anyUIVisible})`);
+                        
+                        // 🚀 FIX: Unsubscribe old quick answer listener when restarting
+                        if (modeResetTokenChanged && currentInteractionMode === 'quick_answer' && quickAnswerUnsubscribe) {
+                            console.log('[Student] Unsubscribing old quick answer listener before restart');
+                            quickAnswerUnsubscribe();
+                            quickAnswerUnsubscribe = null;
+                        }
+                        
                         showInteractionUI(currentInteractionMode, false); // Not resuming from pause if mode changed
                     }
                     // If mode hasn't changed and a UI is already visible, we don't need to call showInteractionUI
                     // This preserves the DOM state (including content) during pause/resume
 
+                    // 🎯 NEW: If teacher clicked "Reset Answers", reset student UI state
+                    if (resetRequested && currentInteractionMode !== 'waiting') {
+                        console.log('[Student] Teacher reset all answers, resetting UI state');
+                        resetStudentUIState(currentInteractionMode, false);
+                    }
 
                     console.log('[Student] Setting pause overlay, isResponsePaused:', isResponsePaused);
                     if (isResponsePaused) {
@@ -4617,13 +4919,82 @@
                         }
                     } else if (currentInteractionMode === 'sequencing') {
                         const sequencingSettings = data.sequencingSettings;
-                        if (sequencingSettings && modeChanged) {
-                            setupSequencingUI(sequencingSettings);
+                        const showSequencingAnswer = data.showSequencingAnswer || false;
+                        console.log('[Student] Sequencing mode detected, settings:', sequencingSettings, 'showAnswer:', showSequencingAnswer, 'modeChanged:', modeChanged);
+                        if (sequencingSettings) {
+                            // 🚀 FIX: 智能變更檢測 - 只在設置真的改變時才重新渲染UI
+                            // 這樣可以：
+                            // 1. 支持晚加入的學生和頁面刷新
+                            // 2. 避免在其他快照更新時清空學生的進度
+                            const settingsChanged = JSON.stringify(sequencingSettings) !== JSON.stringify(lastSequencingSettings);
+                            console.log('[Student] Sequencing settings changed:', settingsChanged);
+                            
+                            if (settingsChanged) {
+                                console.log('[Student] Setting up sequencing UI with new data:', sequencingSettings);
+                                setupSequencingUI(sequencingSettings);
+                                lastSequencingSettings = JSON.parse(JSON.stringify(sequencingSettings)); // Deep clone
+                            } else {
+                                console.log('[Student] Sequencing settings unchanged, keeping current UI');
+                            }
+                            
+                            // 🚀 NEW: 顯示正確答案的順序，或在重新開始時恢復原始介面
+                            if (showSequencingAnswer && !window.lastShowSequencingAnswer) {
+                                // 狀態從 false 變為 true：顯示答案
+                                console.log('[Student] Showing sequencing correct answers');
+                                displaySequencingCorrectAnswers(sequencingSettings);
+                            } else if (!showSequencingAnswer && window.lastShowSequencingAnswer) {
+                                // 狀態從 true 變為 false：重新開始，恢復原始介面
+                                console.log('[Student] Resetting sequencing UI (teacher clicked reset)');
+                                setupSequencingUI(sequencingSettings);
+                            }
+                            window.lastShowSequencingAnswer = showSequencingAnswer;
+                        } else {
+                            console.warn('[Student] Sequencing mode active but no settings provided');
+                            lastSequencingSettings = null;
                         }
                     } else if (currentInteractionMode === 'matching') {
                         const matchingSettings = data.matchingSettings;
-                        if (matchingSettings && modeChanged) {
-                            setupMatchingUI(matchingSettings);
+                        const showMatchingAnswer = data.showMatchingAnswer || false;
+                        console.log('[Student] Matching mode detected, settings:', matchingSettings, 'showAnswer:', showMatchingAnswer, 'modeChanged:', modeChanged);
+                        if (matchingSettings) {
+                            // 🚀 FIX: 智能變更檢測 - 只在設置真的改變時才重新渲染UI
+                            // 這樣可以：
+                            // 1. 支持晚加入的學生和頁面刷新
+                            // 2. 避免在其他快照更新時清空學生的進度
+                            const settingsChanged = JSON.stringify(matchingSettings) !== JSON.stringify(lastMatchingSettings);
+                            console.log('[Student] Matching settings changed:', settingsChanged);
+                            
+                            if (settingsChanged) {
+                                console.log('[Student] Setting up matching UI with new data:', matchingSettings);
+                                setupMatchingUI(matchingSettings);
+                                lastMatchingSettings = JSON.parse(JSON.stringify(matchingSettings)); // Deep clone
+                            } else {
+                                console.log('[Student] Matching settings unchanged, keeping current UI');
+                            }
+                            
+                            // 🚀 NEW: 顯示正確答案的連線，或在重新開始時恢復原始介面
+                            if (showMatchingAnswer && !window.lastShowMatchingAnswer) {
+                                // 狀態從 false 變為 true：顯示答案
+                                console.log('[Student] Showing matching correct answers');
+                                // 🚀 FIX: Wait for DOM to be ready before displaying answers
+                                (async () => {
+                                    try {
+                                        await waitForMatchingDomReady(matchingSettings);
+                                        displayMatchingCorrectAnswers(matchingSettings);
+                                    } catch (error) {
+                                        console.error('[Student] Failed to display matching answers:', error);
+                                        showMessage('無法顯示配對答案，DOM未準備好。', 'error');
+                                    }
+                                })();
+                            } else if (!showMatchingAnswer && window.lastShowMatchingAnswer) {
+                                // 狀態從 true 變為 false：重新開始，恢復原始介面
+                                console.log('[Student] Resetting matching UI (teacher clicked reset)');
+                                setupMatchingUI(matchingSettings);
+                            }
+                            window.lastShowMatchingAnswer = showMatchingAnswer;
+                        } else {
+                            console.warn('[Student] Matching mode active but no settings provided');
+                            lastMatchingSettings = null;
                         }
                     } else if (currentInteractionMode === 'reading_comprehension') {
                         const readingData = data.readingComprehensionData;
@@ -4926,7 +5297,7 @@
          * @param {string | object} answer - The student's answer.
          * @returns {Promise<boolean>} Returns true if successful, false if failed
          */
-        async function submitAnswer(answer) {
+        async function submitAnswer(answer, extraFields = {}) {
             // NEW: Prevent submission if paused
             if (isResponsePaused) {
                 showMessage('老師已暫停回覆，無法送出答案。', 'error');
@@ -4945,9 +5316,10 @@
                     name: studentName,
                     answer: answer,
                     interactionMode: currentInteractionMode, // 🎯 CRITICAL FIX: 儲存互動模式，讓 resetStudentUIState 能正確檢查提交狀態
-                    timestamp: new Date()
+                    timestamp: new Date(),
+                    ...extraFields // 🔥 NEW: Allow adding extra fields like modeResetToken
                 }, { merge: true });
-                console.log(`[Student] ${studentName} submitted answer:`, answer, 'mode:', currentInteractionMode);
+                console.log(`[Student] ${studentName} submitted answer:`, answer, 'mode:', currentInteractionMode, 'extraFields:', extraFields);
                 return true;
             } catch (error) {
                 console.error("送出答案失敗:", error);
@@ -5639,14 +6011,7 @@
                     csvData.push(`${studentName},${responseText}`);
                 });
                 
-                const now = new Date();
-                const timestamp = now.getFullYear() + 
-                                String(now.getMonth() + 1).padStart(2, '0') + 
-                                String(now.getDate()).padStart(2, '0') + '_' +
-                                String(now.getHours()).padStart(2, '0') + 
-                                String(now.getMinutes()).padStart(2, '0') + 
-                                String(now.getSeconds()).padStart(2, '0');
-                filename = `學生回應_${timestamp}.csv`;
+                filename = generateFilename('學生回應', 'csv');
                 
             } else if (currentInteractionMode === 'multiple_choice' && currentMultipleChoiceQuestions) {
                 // 自訂選擇題模式
@@ -5715,14 +6080,7 @@
                     csvData.push(row);
                 });
                 
-                const now = new Date();
-                const timestamp = now.getFullYear() +
-                                String(now.getMonth() + 1).padStart(2, '0') +
-                                String(now.getDate()).padStart(2, '0') + '_' +
-                                String(now.getHours()).padStart(2, '0') +
-                                String(now.getMinutes()).padStart(2, '0') +
-                                String(now.getSeconds()).padStart(2, '0');
-                filename = `選擇題結果_${timestamp}.csv`;
+                filename = generateFilename('選擇題結果', 'csv');
 
             } else if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData.questions) {
                 // 閱讀測驗模式
@@ -5806,14 +6164,7 @@
                     csvData.push(row);
                 });
 
-                const now2 = new Date();
-                const timestamp2 = now2.getFullYear() +
-                                String(now2.getMonth() + 1).padStart(2, '0') +
-                                String(now2.getDate()).padStart(2, '0') + '_' +
-                                String(now2.getHours()).padStart(2, '0') +
-                                String(now2.getMinutes()).padStart(2, '0') +
-                                String(now2.getSeconds()).padStart(2, '0');
-                filename = `閱讀測驗結果_${timestamp2}.csv`;
+                filename = generateFilename('閱讀測驗結果', 'csv');
 
             } else {
                 showMessage('目前模式不支援下載功能。', 'warning');
@@ -6401,14 +6752,27 @@
 
         // --- Sequencing Question Logic ---
         function setupSequencingUI(data) {
+            console.log('[setupSequencingUI] Setting up sequencing UI with data:', data);
             const questionText = document.getElementById('sequencing-question-text');
             const container = document.getElementById('sequencing-items-container');
+
+            if (!questionText || !container) {
+                console.error('[setupSequencingUI] DOM elements not found!');
+                return;
+            }
 
             questionText.textContent = data.question || '請依照正確順序排列以下項目';
             container.innerHTML = '';
 
+            if (!data.correctOrder || !Array.isArray(data.correctOrder) || data.correctOrder.length === 0) {
+                console.error('[setupSequencingUI] Invalid or empty correctOrder array:', data.correctOrder);
+                container.innerHTML = '<p class="text-red-500 text-center">無法載入排序項目</p>';
+                return;
+            }
+
             // Shuffle items
             const shuffled = [...data.correctOrder].sort(() => Math.random() - 0.5);
+            console.log('[setupSequencingUI] Shuffled items:', shuffled);
 
             shuffled.forEach((text, index) => {
                 const item = document.createElement('div');
@@ -6486,19 +6850,32 @@
 
         // --- Matching Question Logic ---
         function setupMatchingUI(data) {
+            console.log('[setupMatchingUI] Setting up matching UI with data:', data);
             const questionText = document.getElementById('matching-question-text');
             const columnA = document.getElementById('matching-column-a');
             const columnB = document.getElementById('matching-column-b');
             const svg = document.getElementById('matching-svg-canvas');
+
+            if (!questionText || !columnA || !columnB || !svg) {
+                console.error('[setupMatchingUI] DOM elements not found!');
+                return;
+            }
 
             questionText.textContent = data.question || '請將左右兩側相關的項目配對';
             columnA.innerHTML = '';
             columnB.innerHTML = '';
             svg.innerHTML = '';
 
+            if (!data.pairs || !Array.isArray(data.pairs) || data.pairs.length === 0) {
+                console.error('[setupMatchingUI] Invalid or empty pairs array:', data.pairs);
+                columnA.innerHTML = '<p class="text-red-500">無法載入配對項目</p>';
+                return;
+            }
+
             // Shuffle items
             const leftItems = data.pairs.map(p => p.left).sort(() => Math.random() - 0.5);
             const rightItems = data.pairs.map(p => p.right).sort(() => Math.random() - 0.5);
+            console.log('[setupMatchingUI] Left items:', leftItems, 'Right items:', rightItems);
 
             leftItems.forEach((text, index) => {
                 const item = document.createElement('div');
@@ -6506,6 +6883,8 @@
                 item.dataset.side = 'left';
                 item.dataset.text = text;
                 item.dataset.index = index;
+                // ✨ Add safe ID for reliable element selection (avoids special character issues)
+                item.id = `matching-left-${index}`;
                 item.textContent = text;
                 item.addEventListener('click', () => handleMatchingClick(item));
                 columnA.appendChild(item);
@@ -6517,6 +6896,8 @@
                 item.dataset.side = 'right';
                 item.dataset.text = text;
                 item.dataset.index = index;
+                // ✨ Add safe ID for reliable element selection (avoids special character issues)
+                item.id = `matching-right-${index}`;
                 item.textContent = text;
                 item.addEventListener('click', () => handleMatchingClick(item));
                 columnB.appendChild(item);
@@ -6596,6 +6977,55 @@
             svg.setAttribute('width', rect.width);
             svg.setAttribute('height', rect.height);
 
+            // 🎨 Add SVG gradients for beautiful connecting lines
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            
+            // Pink gradient for default matching lines
+            const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            gradient.setAttribute('id', 'lineGradient');
+            gradient.setAttribute('x1', '0%');
+            gradient.setAttribute('y1', '0%');
+            gradient.setAttribute('x2', '100%');
+            gradient.setAttribute('y2', '0%');
+            gradient.innerHTML = `
+                <stop offset="0%" style="stop-color:#ec4899;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#f472b6;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#ec4899;stop-opacity:1" />
+            `;
+            defs.appendChild(gradient);
+
+            // Green gradient for correct matches
+            const gradientCorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            gradientCorrect.setAttribute('id', 'lineGradientCorrect');
+            gradientCorrect.setAttribute('x1', '0%');
+            gradientCorrect.setAttribute('y1', '0%');
+            gradientCorrect.setAttribute('x2', '100%');
+            gradientCorrect.setAttribute('y2', '0%');
+            gradientCorrect.innerHTML = `
+                <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#34d399;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+            `;
+            defs.appendChild(gradientCorrect);
+
+            // Red gradient for incorrect matches
+            const gradientIncorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            gradientIncorrect.setAttribute('id', 'lineGradientIncorrect');
+            gradientIncorrect.setAttribute('x1', '0%');
+            gradientIncorrect.setAttribute('y1', '0%');
+            gradientIncorrect.setAttribute('x2', '100%');
+            gradientIncorrect.setAttribute('y2', '0%');
+            gradientIncorrect.innerHTML = `
+                <stop offset="0%" style="stop-color:#ef4444;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#f87171;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#ef4444;stop-opacity:1" />
+            `;
+            defs.appendChild(gradientIncorrect);
+
+            svg.appendChild(defs);
+
+            // Draw matching lines with smooth curves
+            let lineIndex = 0;
             document.querySelectorAll('.matching-item.matched[data-side="left"]').forEach(leftItem => {
                 const rightText = leftItem.dataset.matchedWith;
                 const rightItem = document.querySelector(`.matching-item[data-side="right"][data-text="${rightText}"]`);
@@ -6609,13 +7039,307 @@
                     const x2 = rightRect.left - rect.left;
                     const y2 = rightRect.top + rightRect.height / 2 - rect.top;
 
+                    // 🎨 Create smooth Bezier curve with gradient stroke
+                    const controlPointX = (x1 + x2) / 2;
                     const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                    const d = `M ${x1} ${y1} C ${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2} ${y2}`;
+                    const d = `M ${x1} ${y1} C ${controlPointX} ${y1}, ${controlPointX} ${y2}, ${x2} ${y2}`;
                     line.setAttribute('d', d);
                     line.setAttribute('class', 'matching-line');
+                    
+                    // ✨ Explicitly set stroke with gradient
+                    line.setAttribute('stroke', 'url(#lineGradient)');
+                    line.setAttribute('stroke-width', window.innerWidth >= 768 ? '5' : '4');
+                    line.setAttribute('fill', 'none');
+                    line.setAttribute('stroke-linecap', 'round');
+                    
+                    // 🎬 Stagger animation for visual appeal
+                    line.style.animationDelay = `${lineIndex * 0.1}s`;
+                    lineIndex++;
+                    
                     svg.appendChild(line);
                 }
             });
+        }
+
+        /**
+         * 🚀 NEW: Wait for matching DOM elements to be ready
+         * @param {object} settings - The matching settings
+         * @returns {Promise} Resolves when DOM is ready, rejects after timeout
+         */
+        async function waitForMatchingDomReady(settings) {
+            const timeout = 500; // 500ms timeout
+            const startTime = Date.now();
+            
+            return new Promise((resolve, reject) => {
+                const checkDom = () => {
+                    // Check if first left and right items exist
+                    const leftItem = document.getElementById('matching-left-0');
+                    const rightItem = document.getElementById('matching-right-0');
+                    
+                    if (leftItem && rightItem) {
+                        console.log('[waitForMatchingDomReady] DOM ready, elements found');
+                        resolve();
+                    } else {
+                        const elapsed = Date.now() - startTime;
+                        if (elapsed > timeout) {
+                            console.error('[waitForMatchingDomReady] Timeout after', elapsed, 'ms, DOM not ready');
+                            reject(new Error('Matching DOM timeout'));
+                        } else {
+                            console.log('[waitForMatchingDomReady] Waiting for DOM... elapsed:', elapsed, 'ms');
+                            requestAnimationFrame(checkDom);
+                        }
+                    }
+                };
+                
+                requestAnimationFrame(checkDom);
+            });
+        }
+
+        /**
+         * 🚀 NEW: Display correct answers for matching questions
+         * @param {object} matchingSettings - The matching settings with correct pairs
+         */
+        function displayMatchingCorrectAnswers(matchingSettings) {
+            if (!matchingSettings || !matchingSettings.pairs || !Array.isArray(matchingSettings.pairs)) {
+                console.error('[displayMatchingCorrectAnswers] Invalid matching settings:', matchingSettings);
+                return;
+            }
+
+            console.log('[displayMatchingCorrectAnswers] Displaying correct answers for matching');
+
+            // 1. Clear existing selections and matches (清除學生的配對狀態)
+            document.querySelectorAll('.matching-item').forEach(item => {
+                item.classList.remove('selected', 'matched');
+                delete item.dataset.matchedWith;
+            });
+
+            // 2. ✨ Find items by text content (since they're shuffled, we can't use fixed indices)
+            // 只畫綠色連線就好，這樣視覺上更清晰
+            matchingSettings.pairs.forEach(pair => {
+                // Use Array.from to find items by text content (more reliable than querySelector with special chars)
+                const leftItems = Array.from(document.querySelectorAll('.matching-item[data-side="left"]'));
+                const rightItems = Array.from(document.querySelectorAll('.matching-item[data-side="right"]'));
+                
+                const leftItem = leftItems.find(item => item.dataset.text === pair.left);
+                const rightItem = rightItems.find(item => item.dataset.text === pair.right);
+
+                if (leftItem && rightItem) {
+                    // 只標記 data-matchedWith 和 ID 用於畫線，不添加 matched 類
+                    leftItem.dataset.matchedWith = rightItem.id;
+                    rightItem.dataset.matchedWith = leftItem.id;
+                    // 添加特殊類以區分這是答案顯示模式
+                    leftItem.classList.add('answer-revealed');
+                    rightItem.classList.add('answer-revealed');
+                    console.log(`[displayMatchingCorrectAnswers] Paired: ${leftItem.id} ↔ ${rightItem.id}`);
+                } else {
+                    console.warn(`[displayMatchingCorrectAnswers] Could not find items for pair:`, pair);
+                }
+            });
+
+            // 3. Redraw lines with correct answer gradient
+            const svg = document.getElementById('matching-svg-canvas');
+            svg.innerHTML = '';
+
+            const container = document.querySelector('.matching-container');
+            const rect = container.getBoundingClientRect();
+            svg.setAttribute('width', rect.width);
+            svg.setAttribute('height', rect.height);
+            svg.setAttribute('style', 'pointer-events: none; z-index: 10;');
+
+            // Add gradients and drop shadow for visual depth
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            
+            // Gradient for correct answers
+            const gradientCorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+            gradientCorrect.setAttribute('id', 'lineGradientCorrect');
+            gradientCorrect.setAttribute('x1', '0%');
+            gradientCorrect.setAttribute('y1', '0%');
+            gradientCorrect.setAttribute('x2', '100%');
+            gradientCorrect.setAttribute('y2', '0%');
+            gradientCorrect.innerHTML = `
+                <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#34d399;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+            `;
+            defs.appendChild(gradientCorrect);
+            
+            // Drop shadow for depth
+            const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+            filter.setAttribute('id', 'dropShadow');
+            filter.innerHTML = `<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>`;
+            defs.appendChild(filter);
+            
+            svg.appendChild(defs);
+
+            // Draw correct answer lines using matched IDs
+            let lineIndex = 0;
+            document.querySelectorAll('.matching-item[data-side="left"].answer-revealed').forEach(leftItem => {
+                const rightId = leftItem.dataset.matchedWith;
+                const rightItem = document.getElementById(rightId);
+
+                if (rightItem) {
+                    const leftRect = leftItem.getBoundingClientRect();
+                    const rightRect = rightItem.getBoundingClientRect();
+
+                    const x1 = leftRect.right - rect.left;
+                    const y1 = leftRect.top + leftRect.height / 2 - rect.top;
+                    const x2 = rightRect.left - rect.left;
+                    const y2 = rightRect.top + rightRect.height / 2 - rect.top;
+
+                    const controlPointX = (x1 + x2) / 2;
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    const d = `M ${x1} ${y1} C ${controlPointX} ${y1}, ${controlPointX} ${y2}, ${x2} ${y2}`;
+                    line.setAttribute('d', d);
+                    line.setAttribute('class', 'matching-line');
+                    line.setAttribute('stroke', 'url(#lineGradientCorrect)');
+                    line.setAttribute('stroke-width', window.innerWidth >= 768 ? '5' : '4');
+                    line.setAttribute('fill', 'none');
+                    line.setAttribute('stroke-linecap', 'round');
+                    line.setAttribute('filter', 'url(#dropShadow)');
+                    line.style.animationDelay = `${lineIndex * 0.1}s`;
+                    lineIndex++;
+
+                    svg.appendChild(line);
+                    console.log(`[displayMatchingCorrectAnswers] Drew line from ${leftItem.id} to ${rightId}`);
+                }
+            });
+
+            console.log(`[displayMatchingCorrectAnswers] Drew ${lineIndex} lines total`);
+
+            // 4. Disable interaction - remove click handlers by blocking pointer events
+            const matchingContainer = document.querySelector('.matching-container');
+            if (matchingContainer) {
+                matchingContainer.style.pointerEvents = 'none';
+            }
+
+            // 5. Show message to student
+            showMessage('老師已顯示正確答案！', 'info');
+        }
+
+        /**
+         * 🚀 NEW: Display correct answers for sequencing questions
+         * @param {object} sequencingSettings - The sequencing settings with correct order
+         */
+        function displaySequencingCorrectAnswers(sequencingSettings) {
+            if (!sequencingSettings || !sequencingSettings.correctOrder || !Array.isArray(sequencingSettings.correctOrder)) {
+                console.error('[displaySequencingCorrectAnswers] Invalid sequencing settings:', sequencingSettings);
+                return;
+            }
+
+            console.log('[displaySequencingCorrectAnswers] Displaying correct answers for sequencing');
+
+            const container = document.getElementById('sequencing-items-container');
+            if (!container) {
+                console.error('[displaySequencingCorrectAnswers] Container not found');
+                return;
+            }
+
+            // 1. Clear existing items
+            container.innerHTML = '';
+
+            // 2. Render items in correct order with visual indicators
+            sequencingSettings.correctOrder.forEach((text, index) => {
+                const item = document.createElement('div');
+                item.className = 'sequencing-item correct-answer';
+                item.draggable = false;
+                item.innerHTML = `
+                    <div class="sequencing-item-number text-xs sm:text-sm md:text-base px-2 sm:px-2.5 py-1 sm:py-1.5 rounded">${index + 1}</div>
+                    <div class="sequencing-item-text flex-1 text-base sm:text-lg md:text-xl">${text}</div>
+                    <div class="sequencing-item-check">
+                        <svg class="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+
+            // 3. Disable interaction - freeze drag handlers
+            const items = container.querySelectorAll('.sequencing-item');
+            items.forEach(item => {
+                item.draggable = false;
+                item.style.pointerEvents = 'none';
+            });
+
+            // 4. Disable submit button
+            const submitBtn = document.getElementById('submit-sequencing-btn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.5';
+            }
+
+            // 5. Show message to student
+            showMessage('老師已顯示正確答案！', 'info');
+        }
+
+        /**
+         * 🚀 NEW: Teacher listener for answer display flags
+         */
+        let teacherAnswerUnsubscribe = null; // Track listener to prevent duplicates
+        
+        function setupTeacherAnswerListener() {
+            if (!classroomCode) return;
+            
+            // 🔥 Unsubscribe existing listener to prevent memory leak
+            if (teacherAnswerUnsubscribe) {
+                console.log('[setupTeacherAnswerListener] Unsubscribing existing listener');
+                teacherAnswerUnsubscribe();
+                teacherAnswerUnsubscribe = null;
+            }
+            
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            teacherAnswerUnsubscribe = onSnapshot(controlRef, (docSnap) => {
+                if (!docSnap.exists()) return;
+                const data = docSnap.data();
+                
+                // Display matching answer if flag is true
+                if (data.showMatchingAnswer && data.matchingSettings) {
+                    displayTeacherMatchingAnswer(data.matchingSettings);
+                }
+                
+                // Display sequencing answer if flag is true
+                if (data.showSequencingAnswer && data.sequencingSettings) {
+                    displayTeacherSequencingAnswer(data.sequencingSettings);
+                }
+            });
+            
+            console.log('[setupTeacherAnswerListener] New listener registered');
+        }
+
+        /**
+         * 🚀 NEW: Display correct answers for teacher (matching questions)
+         */
+        function displayTeacherMatchingAnswer(matchingSettings) {
+            const display = document.getElementById('teacher-answer-display');
+            const content = document.getElementById('teacher-answer-content');
+            const title = document.getElementById('teacher-answer-title');
+            
+            if (!matchingSettings || !matchingSettings.pairs) return;
+            
+            title.textContent = '配對題正確答案';
+            content.innerHTML = '<ol class="list-decimal list-inside space-y-2 text-lg">' + 
+                matchingSettings.pairs.map((pair, i) => 
+                    `<li><strong>${pair.left}</strong> → ${pair.right}</li>`
+                ).join('') + '</ol>';
+            display.classList.remove('hidden');
+        }
+
+        /**
+         * 🚀 NEW: Display correct answers for teacher (sequencing questions)
+         */
+        function displayTeacherSequencingAnswer(sequencingSettings) {
+            const display = document.getElementById('teacher-answer-display');
+            const content = document.getElementById('teacher-answer-content');
+            const title = document.getElementById('teacher-answer-title');
+            
+            if (!sequencingSettings || !sequencingSettings.correctOrder) return;
+            
+            title.textContent = '排序題正確答案';
+            content.innerHTML = '<ol class="list-decimal list-inside space-y-2 text-lg">' + 
+                sequencingSettings.correctOrder.map((item, i) => 
+                    `<li>${item}</li>`
+                ).join('') + '</ol>';
+            display.classList.remove('hidden');
         }
 
         // --- Drawing Board Logic ---
@@ -6790,6 +7514,43 @@
             localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
             showMessage('AI 設定已儲存！', 'success');
             hideAISettingsModal();
+        }
+
+        /**
+         * 檢查 API KEY 是否已設定並符合基本格式要求
+         * 如果未設定或格式明顯錯誤，顯示警告訊息並打開 AI 設定模態框
+         * @returns {boolean} 如果 API KEY 通過基本檢查返回 true，否則返回 false
+         */
+        function checkAPIKey() {
+            const apiKey = aiSettings.geminiApiKey?.trim();
+            
+            // 檢查是否為空或預設值
+            if (!apiKey || apiKey === '12345678') {
+                const errorMsg = '⚠️ 請先在 AI 設定中填寫您的 Google AI Studio API Key！';
+                console.error('[API KEY 驗證]', errorMsg, { currentKey: apiKey || '(空值)' });
+                showMessage(errorMsg, 'warning');
+                // 顯示訊息後立即打開設定框（訊息 z-index 更高，不會被遮擋）
+                showAISettingsModal();
+                return false;
+            }
+            
+            // 檢查基本格式：Google API Key 通常至少 30 字符
+            if (apiKey.length < 30) {
+                const errorMsg = `❌ API KEY 格式錯誤！通常至少需要 30 個字符，您只輸入了 ${apiKey.length} 個字符。`;
+                console.error('[API KEY 驗證] 格式檢查失敗:', {
+                    errorType: 'KEY_TOO_SHORT',
+                    expectedMinLength: 30,
+                    actualLength: apiKey.length,
+                    keyPreview: apiKey.substring(0, 10) + '...',
+                    message: errorMsg
+                });
+                showMessage(errorMsg, 'error');
+                // 顯示訊息後立即打開設定框（訊息 z-index 更高，不會被遮擋）
+                showAISettingsModal();
+                return false;
+            }
+            
+            return true;
         }
 
         function loadAISettings() {
@@ -7069,48 +7830,81 @@
             clearAllQuestionBanks(); // Clear question banks from memory
             showMessage('正在結束課程並清空資料...', 'info');
 
-            if (interactionModeUnsubscribe) interactionModeUnsubscribe();
-            if (studentResponsesUnsubscribe) studentResponsesUnsubscribe();
-            if (lotteryUnsubscribe) lotteryUnsubscribe(); // <-- 在此新增
-            if (classroomPresenceUnsubscribe) { // Only unsubscribe presence here
-                classroomPresenceUnsubscribe();
-                classroomPresenceUnsubscribe = null;
-            }
-            interactionModeUnsubscribe = studentResponsesUnsubscribe = null; // Reset others
+            // 🚀 OPTIMIZED: 使用 ListenerManager 統一清理所有監聽器
+            ListenerManager.clearAll();
+            
+            // 🚀 CRITICAL: 清空所有全局狀態（防止殘留數據）
+            interactionModeUnsubscribe = null;
+            studentResponsesUnsubscribe = null;
+            lotteryUnsubscribe = null;
+            classroomPresenceUnsubscribe = null;
 
             try {
                 // Delete the entire classroom subcollection for the current classroomCode
                 if (classroomCode) {
-                    const classroomRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
-                    const responsesSnapshot = await getDocs(classroomRef);
-                    for (const doc of responsesSnapshot.docs) {
-                        await deleteDoc(doc.ref);
-                    }
-
-                    const presenceRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
-                    const presenceSnapshot = await getDocs(presenceRef);
-                    for (const doc of presenceSnapshot.docs) {
-                        await deleteDoc(doc.ref);
-                    }
-
-                    const settingsDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
-                    await deleteDoc(settingsDocRef); // Delete the control document
+                    console.log(`[Teacher] Starting cleanup for classroom: ${classroomCode}`);
                     
-                    console.log(`[Teacher] Cleared all data for classroom: ${classroomCode}`);
+                    // 🚀 FIX: 分別捕獲每個刪除操作的錯誤，避免單一失敗導致整個流程中斷
+                    try {
+                        const classroomRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                        const responsesSnapshot = await getDocs(classroomRef);
+                        console.log(`[Teacher] Deleting ${responsesSnapshot.docs.length} student responses...`);
+                        for (const docSnap of responsesSnapshot.docs) {
+                            await deleteDoc(docSnap.ref);
+                        }
+                        console.log('[Teacher] ✓ Student responses deleted');
+                    } catch (error) {
+                        console.error('[Teacher] ✗ Failed to delete student responses:', error);
+                        // 繼續執行，不中斷
+                    }
+
+                    try {
+                        const presenceRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+                        const presenceSnapshot = await getDocs(presenceRef);
+                        console.log(`[Teacher] Deleting ${presenceSnapshot.docs.length} presence records...`);
+                        for (const docSnap of presenceSnapshot.docs) {
+                            await deleteDoc(docSnap.ref);
+                        }
+                        console.log('[Teacher] ✓ Presence records deleted');
+                    } catch (error) {
+                        console.error('[Teacher] ✗ Failed to delete presence records:', error);
+                        // 繼續執行，不中斷
+                    }
+
+                    try {
+                        const settingsDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                        console.log('[Teacher] Deleting control document...');
+                        await deleteDoc(settingsDocRef);
+                        console.log('[Teacher] ✓ Control document deleted');
+                    } catch (error) {
+                        console.error('[Teacher] ✗ Failed to delete control document:', error);
+                        // 繼續執行，不中斷
+                    }
+                    
+                    console.log(`[Teacher] ✓ Cleanup completed for classroom: ${classroomCode}`);
                 }
                 
                 classroomCode = null; // Clear the classroom code after ending session
                 localStorage.removeItem('teacherClassroomCode'); // Clear from local storage
 
+                // 🚀 CRITICAL: 清空所有全局狀態變量
                 studentName = null;
                 currentRole = null;
                 currentInteractionMode = null;
                 allStudentResponses = [];
-                activeStudentNames = []; // NEW: Clear active student names
+                activeStudentNames = [];
+                activeStudentsPresenceMap.clear(); // 🚀 FIX: 清空學生分心狀態 Map
                 lastSelectedStudentCard = null;
-                lastSelectedModalStudent = null; // NEW: Clear modal lottery highlight
-                isResponsePaused = false; // NEW: Reset pause state
-                currentMultipleChoiceQuestions = null; // NEW: Clear custom MC questions
+                lastSelectedModalStudent = null;
+                isResponsePaused = false;
+                currentMultipleChoiceQuestions = null;
+                readingComprehensionData = {text: '', questions: []}; // 🚀 NEW: 清空閱讀測驗資料
+                sequencingData = {question: '', correctOrder: []}; // 🚀 NEW: 清空排序題資料
+                matchingData = {question: '', pairs: []}; // 🚀 NEW: 清空配對題資料
+                quickPollOptions = []; // 🚀 NEW: 清空快速投票選項
+                quickPollData = null; // 🚀 NEW: 清空快速投票數據
+                quickPollActive = false; // 🚀 NEW: 重置快速投票狀態
+                quickPollVotesUnsubscribe = null; // 🚀 NEW: 清空快速投票監聽器
 
                 document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
                 document.getElementById('active-student-count').textContent = '0';
@@ -7189,6 +7983,164 @@
                 togglePauseBtn.classList.add('bg-gray-500', 'hover:bg-gray-600');
                 togglePauseBtnText.textContent = '暫停回覆';
                 togglePauseBtn.querySelector('i').classList.replace('fa-play', 'fa-pause');
+            }
+        }
+
+        /**
+         * NEW: End current interaction and optionally clean up all settings.
+         * @param {Object} options - Configuration options
+         * @param {boolean} options.fullReset - If true, clears peer review, dispatch settings, etc. Default: true
+         * @param {boolean} options.navigateToMenu - If true, navigates to teacher menu view. Default: true
+         */
+        async function endInteraction({ fullReset = true, navigateToMenu = true } = {}) {
+            console.log(`[endInteraction] Called with fullReset=${fullReset}, navigateToMenu=${navigateToMenu}`);
+            
+            if (fullReset) {
+                // Clear peer review data when ending interaction
+                try {
+                    const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+                    await setDoc(peerReviewRef, { active: false });
+                    
+                    const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
+                    const votesSnapshot = await getDocs(votesRef);
+                    const deletePromises = votesSnapshot.docs.map(doc => deleteDoc(doc.ref));
+                    await Promise.all(deletePromises);
+                    
+                    peerReviewActive = false;
+                    document.getElementById('peer-review-stats-container').classList.add('hidden');
+                    
+                    const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
+                    startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
+                    
+                    allPeerReviewVotes = {};
+                    studentVotedWorks.clear();
+                    savedCanvasState = null;
+                    
+                    if (peerReviewUnsubscribe) {
+                        peerReviewUnsubscribe();
+                        peerReviewUnsubscribe = null;
+                    }
+                } catch (error) {
+                    console.error('Error clearing peer review data:', error);
+                }
+            }
+            
+            // Set mode to waiting
+            await setInteractionMode('waiting');
+            lastSelectedStudentCard = null;
+            
+            if (fullReset) {
+                // Clear sequencing and matching input fields
+                document.getElementById('sequencing-items-textarea').value = '';
+                document.getElementById('matching-pairs-textarea').value = '';
+                
+                // Clear URL/HTML settings and teacher background image
+                clearDispatchSettings();
+                teacherUploadedBackgroundImageDataURL = null;
+                document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+                document.getElementById('teacher-image-preview').src = '';
+                document.getElementById('teacher-image-preview-container').classList.add('hidden');
+                isResponsePaused = false;
+                updateTeacherPauseButtonUI();
+                customMultipleChoiceQuestions = [];
+            }
+            
+            if (navigateToMenu) {
+                showView('teacherMenu');
+                manualRefreshCounts();
+            }
+            
+            console.log('[endInteraction] Completed');
+        }
+
+        /**
+         * NEW: Reset all student answers to allow starting a new question without exiting the interaction mode.
+         * Triggers student UI reset by updating the control document's resetTimestamp.
+         */
+        async function resetAllAnswers() {
+            console.log('[resetAllAnswers] 🔄 CALLED - Starting reset process');
+            
+            if (!classroomCode) {
+                console.log('[resetAllAnswers] ❌ No classroom code');
+                showMessage('請先開啟一個教室！', 'error');
+                return;
+            }
+            
+            console.log('[resetAllAnswers] Classroom code:', classroomCode);
+            
+            // 🚀 NEW: Hide teacher answer display and clear content
+            const teacherAnswerDisplay = document.getElementById('teacher-answer-display');
+            const teacherAnswerContent = document.getElementById('teacher-answer-content');
+            if (teacherAnswerDisplay) {
+                teacherAnswerDisplay.classList.add('hidden');
+            }
+            if (teacherAnswerContent) {
+                teacherAnswerContent.innerHTML = '';
+            }
+            
+            try {
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                const controlDoc = await getDoc(controlRef);
+                const currentMode = controlDoc.exists() ? controlDoc.data().active_mode : null;
+                console.log('[resetAllAnswers] Current mode:', currentMode);
+                
+                // 🎯 STEP 1: 清除所有學生答案（所有模式都需要）
+                const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                const querySnapshot = await getDocs(studentsColRef);
+                
+                const updatePromises = [];
+                querySnapshot.forEach((docSnapshot) => {
+                    const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', docSnapshot.id);
+                    updatePromises.push(
+                        updateDoc(studentRef, {
+                            answer: deleteField(),
+                            interactionMode: deleteField(),
+                            timestamp: deleteField()
+                        })
+                    );
+                });
+                
+                if (updatePromises.length > 0) {
+                    await Promise.all(updatePromises);
+                }
+                
+                // 🎯 STEP 2: 清除答案顯示標誌（所有模式都需要）
+                await setDoc(controlRef, { 
+                    resetTimestamp: new Date(),
+                    showMatchingAnswer: false,
+                    showSequencingAnswer: false
+                }, { merge: true });
+                
+                // 🚀 NEW UX FIX: 搶答模式自動重啟 - 先徹底結束再重新開始，避免競態條件
+                if (currentMode === 'quick_answer') {
+                    console.log('[resetAllAnswers] 🎯 Quick answer mode detected: starting auto-restart sequence');
+                    // STEP 1: 輕量級結束互動（不清除背景圖片、派送設定等）
+                    console.log('[resetAllAnswers] STEP 1: Calling endInteraction() with lightweight options...');
+                    await endInteraction({ fullReset: false, navigateToMenu: false });
+                    console.log('[resetAllAnswers] STEP 1: ✓ endInteraction() completed');
+                    
+                    // STEP 2: 短暫延遲確保狀態完全清理
+                    console.log('[resetAllAnswers] STEP 2: Waiting 300ms for cleanup...');
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    console.log('[resetAllAnswers] STEP 2: ✓ Wait completed');
+                    
+                    // STEP 3: 重新開始搶答模式
+                    console.log('[resetAllAnswers] STEP 3: Calling setInteractionMode(quick_answer)...');
+                    await setInteractionMode('quick_answer');
+                    console.log('[resetAllAnswers] STEP 3: ✓ setInteractionMode completed');
+                    
+                    showMessage(`✓ 已重新開始搶答！`, 'success');
+                    console.log('[resetAllAnswers] ✅ Quick answer auto-restart completed successfully');
+                    return;
+                }
+                
+                // 其他模式：顯示一般成功訊息
+                showMessage(`✓ 已清除所有學生答案，可以開始下一題！`, 'success');
+                
+            } catch (error) {
+                console.error("清除學生答案失敗:", error);
+                console.error("錯誤詳情 - message:", error.message, "code:", error.code, "stack:", error.stack);
+                showMessage(`清除答案失敗：${error.message || '未知錯誤'}`, "error");
             }
         }
 
@@ -7517,58 +8469,7 @@
 
             // End interaction button.
             document.getElementById('end-interaction-btn').addEventListener('click', async () => {
-                // NEW: Clear peer review data when ending interaction (not just stopping)
-                try {
-                    // Clear peer review settings
-                    const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
-                    await setDoc(peerReviewRef, { active: false });
-                    
-                    // Clear all votes - THIS IS THE KEY DIFFERENCE FROM STOPPING
-                    const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
-                    const votesSnapshot = await getDocs(votesRef);
-                    const deletePromises = votesSnapshot.docs.map(doc => deleteDoc(doc.ref));
-                    await Promise.all(deletePromises);
-                    
-                    peerReviewActive = false;
-                    document.getElementById('peer-review-stats-container').classList.add('hidden');
-                    
-                    // Reset peer review button text
-                    const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
-                    startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
-                    
-                    // Clear student voted works
-                    allPeerReviewVotes = {};
-                    studentVotedWorks.clear();
-                    
-                    // Clear saved canvas state
-                    savedCanvasState = null;
-                    
-                    if (peerReviewUnsubscribe) {
-                        peerReviewUnsubscribe();
-                        peerReviewUnsubscribe = null;
-                    }
-                } catch (error) {
-                    console.error('Error clearing peer review data:', error);
-                }
-                
-                await setInteractionMode('waiting');
-                lastSelectedStudentCard = null;
-
-                // Clear sequencing and matching input fields
-                document.getElementById('sequencing-items-textarea').value = '';
-                document.getElementById('matching-pairs-textarea').value = '';
-
-                showView('teacherMenu');
-                manualRefreshCounts(); // This will refresh the count display, but the listener is already active.
-                // Clear URL/HTML settings and teacher background image when ending interaction
-                clearDispatchSettings(); // Use the combined clear function
-                teacherUploadedBackgroundImageDataURL = null;
-                document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
-                document.getElementById('teacher-image-preview').src = '';
-                document.getElementById('teacher-image-preview-container').classList.add('hidden');
-                isResponsePaused = false; // NEW: Reset pause state
-                updateTeacherPauseButtonUI(); // NEW: Update pause button UI
-                customMultipleChoiceQuestions = []; // NEW: Clear custom MC questions on end interaction
+                await endInteraction(); // Use the new endInteraction function with default options (full reset)
             });
             
             // Student answer buttons for default multiple choice.
@@ -7783,6 +8684,10 @@
                     loadBackgroundImage();
                     loadStudentImage();
                 }
+                // 🎨 Redraw matching lines on window resize
+                if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.matching.classList.contains('hidden')) {
+                    redrawMatchingLines();
+                }
             });
 
             // Drawing tool controls.
@@ -7857,6 +8762,45 @@
             // NEW: Download Responses Button
             document.getElementById('download-responses-btn').addEventListener('click', downloadStudentResponses);
             
+            // NEW: Show Answer Buttons for Matching and Sequencing
+            document.getElementById('show-matching-answer-btn').addEventListener('click', async () => {
+                try {
+                    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                    const docSnap = await getDoc(controlRef);
+                    const matchingSettings = docSnap.data()?.matchingSettings;
+                    
+                    await setDoc(controlRef, { showMatchingAnswer: true }, { merge: true });
+                    showMessage('答案已顯示給學生！', 'success');
+                    
+                    // 🚀 NEW: Display answer on teacher side too
+                    if (matchingSettings) {
+                        displayTeacherMatchingAnswer(matchingSettings);
+                    }
+                } catch (error) {
+                    console.error('Error showing matching answer:', error);
+                    showMessage('顯示答案失敗！', 'error');
+                }
+            });
+            
+            document.getElementById('show-sequencing-answer-btn').addEventListener('click', async () => {
+                try {
+                    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                    const docSnap = await getDoc(controlRef);
+                    const sequencingSettings = docSnap.data()?.sequencingSettings;
+                    
+                    await setDoc(controlRef, { showSequencingAnswer: true }, { merge: true });
+                    showMessage('答案已顯示給學生！', 'success');
+                    
+                    // 🚀 NEW: Display answer on teacher side too
+                    if (sequencingSettings) {
+                        displayTeacherSequencingAnswer(sequencingSettings);
+                    }
+                } catch (error) {
+                    console.error('Error showing sequencing answer:', error);
+                    showMessage('顯示答案失敗！', 'error');
+                }
+            });
+            
             // NEW: Start Peer Review Button
             document.getElementById('start-peer-review-btn').addEventListener('click', startPeerReview);
             
@@ -7878,23 +8822,42 @@
             document.getElementById('refresh-student-count-btn').addEventListener('click', manualRefreshCounts);
             // Original lottery button in monitor view
             document.getElementById('draw-lottery-btn').addEventListener('click', () => {
-                if (allStudentResponses.length === 0) return showMessage('目前沒有學生提交答案可供抽籤。', 'info');
-                if (lastSelectedStudentCard) lastSelectedStudentCard.classList.remove('selected-student-border');
-                const randomIndex = Math.floor(Math.random() * allStudentResponses.length);
-                const selectedStudentName = allStudentResponses[randomIndex].name;
-                const studentCards = document.querySelectorAll('#student-responses-container .student-response-item');
-                // 🚀 FIX: 使用 data-student-name 屬性查找學生卡片，而不是 textContent
-                const foundCard = Array.from(studentCards).find(card => card.getAttribute('data-student-name') === selectedStudentName);
-                if (foundCard) {
-                    foundCard.classList.add('selected-student-border');
-                    lastSelectedStudentCard = foundCard;
-                    foundCard.scrollIntoView({ behavior: 'smooth', block: 'center' }); // 滾動到選中的卡片
-                    showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
-                    announceDrawnStudent(selectedStudentName);
+                // 🚀 FIX: 抽籤邏輯改良 - 優先從已作答學生中抽籤，若無則從所有在線學生中抽籤
+                let selectedStudentName;
+                let isFromResponses = false;
+                
+                // 嘗試從已作答學生中抽籤
+                if (allStudentResponses.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * allStudentResponses.length);
+                    selectedStudentName = allStudentResponses[randomIndex].name;
+                    isFromResponses = true;
+                    console.log('[Lottery] Drawing from student responses:', selectedStudentName);
+                } else if (activeStudentNames.length > 0) {
+                    // 若無作答學生，從所有在線學生中抽籤（適用於搶答模式）
+                    const randomIndex = Math.floor(Math.random() * activeStudentNames.length);
+                    selectedStudentName = activeStudentNames[randomIndex];
+                    console.log('[Lottery] Drawing from online students:', selectedStudentName);
                 } else {
-                    console.warn('[Lottery] Student card not found:', selectedStudentName);
-                    showMessage(`抽中學生：${selectedStudentName}（卡片未找到）`, 'info');
+                    return showMessage('目前沒有學生在線可供抽籤。', 'info');
                 }
+                
+                // 清除上次高亮
+                if (lastSelectedStudentCard) lastSelectedStudentCard.classList.remove('selected-student-border');
+                
+                // 嘗試在學生卡片中找到並高亮
+                if (isFromResponses) {
+                    const studentCards = document.querySelectorAll('#student-responses-container .student-response-item');
+                    const foundCard = Array.from(studentCards).find(card => card.getAttribute('data-student-name') === selectedStudentName);
+                    if (foundCard) {
+                        foundCard.classList.add('selected-student-border');
+                        lastSelectedStudentCard = foundCard;
+                        foundCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+                
+                // 顯示抽籤結果並通知學生
+                showMessage(`🎲 恭喜！抽中學生：${selectedStudentName}`, 'success');
+                announceDrawnStudent(selectedStudentName);
             });
             // NEW: Lottery button inside the student list modal
             document.getElementById('modal-draw-lottery-btn').addEventListener('click', () => {
@@ -7987,7 +8950,8 @@
 
                 try {
                     const content = await zip.generateAsync({type:"blob"});
-                    saveAs(content, `${filenamePrefix}_${new Date().toLocaleDateString('zh-TW')}.zip`);
+                    const filename = generateFilename(filenamePrefix, 'zip');
+                    saveAs(content, filename);
                     showMessage(`已成功打包 ${mediaResponses.length} 個檔案並開始下載。`, 'success');
                 } catch (error) {
                     console.error("打包媒體失敗:", error);
@@ -7999,6 +8963,9 @@
             
             // AI-related buttons and modals.
             document.getElementById('ai-text-summary-btn').addEventListener('click', async () => {
+                // 🚀 UX: 檢查 API KEY 是否已設定
+                if (!checkAPIKey()) return;
+                
                 const textResponses = allStudentResponses.filter(r => currentInteractionMode === 'text_input' && r.answer && r.answer.trim()).map(r => r.answer);
                 if (textResponses.length === 0) return showMessage('目前沒有文字回答可供 AI 分析。', 'info');
                 const aiSummaryModal = document.getElementById('ai-summary-modal');
@@ -8015,7 +8982,16 @@
                     };
                     const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : "";
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                    if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+                    
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`[AI 文字分析] API 錯誤 ${response.status}:`, errorBody);
+                        if (response.status === 400) {
+                            throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                        }
+                        throw new Error(`API request failed: ${response.status}`);
+                    }
+                    
                     const result = await response.json();
                     aiLoadingSpinner.classList.add('hidden');
                     const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -8032,7 +9008,9 @@
                 } catch (error) {
                     console.error("AI 文字分析失敗:", error);
                     aiLoadingSpinner.classList.add('hidden');
-                    aiSummaryResultList.innerHTML = '<li class="error-message">AI 分析失敗，請檢查 API Key 或網路連線。</li>';
+                    const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 分析失敗，請檢查 API Key 或網路連線。';
+                    aiSummaryResultList.innerHTML = `<li class="error-message">${errorMsg}</li>`;
+                    showMessage(errorMsg, 'error');
                 }
             });
             document.getElementById('ai-summary-modal-close-btn').addEventListener('click', () => document.getElementById('ai-summary-modal').classList.add('hidden'));
@@ -8216,6 +9194,17 @@
             // NEW: Toggle Pause Button Event Listener
             togglePauseBtn.addEventListener('click', toggleResponsePause);
 
+            // NEW: Reset Answers Button Event Listener
+            const resetAnswersBtn = document.getElementById('reset-answers-btn');
+            if (resetAnswersBtn) {
+                resetAnswersBtn.addEventListener('click', () => {
+                    console.log('🔄 Reset button clicked!');
+                    resetAllAnswers();
+                });
+                console.log('✓ Reset answers button event listener attached');
+            } else {
+                console.error('❌ Reset answers button not found!');
+            }
 
             // End Class Session Buttons.
             document.getElementById('end-class-session-menu-btn').addEventListener('click', endClassSession);
@@ -8320,6 +9309,9 @@
 
             // AI Question Generation Button Listener
             aiGenerateMcBtn.addEventListener('click', async () => {
+                // 🚀 UX: 檢查 API KEY 是否已設定
+                if (!checkAPIKey()) return;
+                
                 const topic = aiMcTopicTextarea.value.trim();
                 const count = parseInt(aiMcCountInput.value);
 
@@ -8354,6 +9346,11 @@
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
                     if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`[AI 選擇題生成] API 錯誤 ${response.status}:`, errorBody);
+                        if (response.status === 400) {
+                            throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                        }
                         throw new Error(`AI API request failed with status ${response.status}`);
                     }
 
@@ -8370,8 +9367,9 @@
                     }
 
                 } catch (error) {
-                    console.error("AI 題目生成失敗:", error);
-                    showMessage('AI 題目生成失敗，請檢查 API Key 或網路連線。', 'error');
+                    console.error("AI 選擇題生成失敗:", error);
+                    const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 題目生成失敗，請檢查 API Key 或網路連線。';
+                    showMessage(errorMsg, 'error');
                 } finally {
                     // Hide loading state
                     aiGenerateMcBtn.disabled = false;
@@ -8391,6 +9389,9 @@
             const aiSeqLoadingSpinner = document.getElementById('ai-seq-loading-spinner');
 
             aiGenerateSeqBtn.addEventListener('click', async () => {
+                // 🚀 UX: 檢查 API KEY 是否已設定
+                if (!checkAPIKey()) return;
+                
                 const topic = aiSeqTopicTextarea.value.trim();
                 const count = parseInt(aiSeqCountInput.value);
 
@@ -8424,6 +9425,11 @@
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
                     if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`[AI 排序題生成] API 錯誤 ${response.status}:`, errorBody);
+                        if (response.status === 400) {
+                            throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                        }
                         throw new Error(`AI API request failed with status ${response.status}`);
                     }
 
@@ -8440,7 +9446,8 @@
 
                 } catch (error) {
                     console.error("AI 排序題生成失敗:", error);
-                    showMessage('AI 排序題生成失敗，請檢查 API Key 或網路連線。', 'error');
+                    const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 排序題生成失敗，請檢查 API Key 或網路連線。';
+                    showMessage(errorMsg, 'error');
                 } finally {
                     // Hide loading state
                     aiGenerateSeqBtn.disabled = false;
@@ -8460,6 +9467,9 @@
             const aiMatchLoadingSpinner = document.getElementById('ai-match-loading-spinner');
 
             aiGenerateMatchBtn.addEventListener('click', async () => {
+                // 🚀 UX: 檢查 API KEY 是否已設定
+                if (!checkAPIKey()) return;
+                
                 const topic = aiMatchTopicTextarea.value.trim();
                 const count = parseInt(aiMatchCountInput.value);
 
@@ -8494,6 +9504,11 @@
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
                     if (!response.ok) {
+                        const errorBody = await response.text();
+                        console.error(`[AI 配對題生成] API 錯誤 ${response.status}:`, errorBody);
+                        if (response.status === 400) {
+                            throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                        }
                         throw new Error(`AI API request failed with status ${response.status}`);
                     }
 
@@ -8510,7 +9525,8 @@
 
                 } catch (error) {
                     console.error("AI 配對題生成失敗:", error);
-                    showMessage('AI 配對題生成失敗，請檢查 API Key 或網路連線。', 'error');
+                    const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 配對題生成失敗，請檢查 API Key 或網路連線。';
+                    showMessage(errorMsg, 'error');
                 } finally {
                     // Hide loading state
                     aiGenerateMatchBtn.disabled = false;
@@ -9378,57 +10394,122 @@
         let quickAnswerWinnerDisplayed = false;
 
         function startQuickAnswer() {
+            console.log('[startQuickAnswer] Function called - starting quick answer round');
             quickAnswerActive = true;
             quickAnswerWinner = null;
             quickAnswerWinnerDisplayed = false;
 
             // Update status text
-            document.getElementById('quick-answer-status-text').textContent = '搶答開始！快點擊按鈕！';
+            const statusText = document.getElementById('quick-answer-status-text');
+            statusText.textContent = '搶答開始！快點擊按鈕！';
+            console.log('[startQuickAnswer] Status text updated to:', statusText.textContent);
 
-            // Generate random position for the button
             const container = document.getElementById('quick-answer-button-container');
             container.innerHTML = '';
             container.classList.remove('pointer-events-none');
+            console.log('[startQuickAnswer] Container cleared and pointer events enabled');
 
-            // Create the quick answer button
-            const button = document.createElement('button');
-            button.className = 'quick-answer-btn';
-            button.textContent = '快點我';
+            // 🚀 FIX: 使用 requestAnimationFrame 確保容器已經渲染完成再生成按鈕
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    // Double RAF ensures layout is complete
+                    console.log('[Quick Answer] Generating random button...');
+                    
+                    // Create the quick answer button
+                    const button = document.createElement('button');
+                    button.className = 'quick-answer-btn';
+                    button.textContent = '快點我';
 
-            // Calculate random position (ensure button is fully visible)
-            const containerRect = container.getBoundingClientRect();
-            const buttonSize = 200; // 200px width and height
-            const maxLeft = containerRect.width - buttonSize;
-            const maxTop = containerRect.height - buttonSize;
+                    // Calculate random position (ensure button is fully visible)
+                    const containerRect = container.getBoundingClientRect();
+                    const buttonSize = 200; // 200px width and height
+                    
+                    // 🚀 FIX: 驗證容器尺寸，如果無效則使用 viewport 尺寸
+                    let containerWidth = containerRect.width;
+                    let containerHeight = containerRect.height;
+                    
+                    if (containerWidth < buttonSize || containerHeight < buttonSize) {
+                        console.warn('[Quick Answer] Container size invalid, using viewport dimensions');
+                        containerWidth = window.innerWidth;
+                        containerHeight = window.innerHeight;
+                    }
+                    
+                    console.log(`[Quick Answer] Container size: ${containerWidth}x${containerHeight}`);
+                    
+                    const maxLeft = containerWidth - buttonSize;
+                    const maxTop = containerHeight - buttonSize;
 
-            const randomLeft = Math.random() * Math.max(0, maxLeft);
-            const randomTop = Math.random() * Math.max(0, maxTop);
+                    const randomLeft = Math.random() * Math.max(0, maxLeft);
+                    const randomTop = Math.random() * Math.max(0, maxTop);
 
-            button.style.left = randomLeft + 'px';
-            button.style.top = randomTop + 'px';
+                    button.style.left = randomLeft + 'px';
+                    button.style.top = randomTop + 'px';
+                    
+                    console.log(`[Quick Answer] Button position: left=${randomLeft}px, top=${randomTop}px`);
 
-            // Add click handler
-            button.addEventListener('click', handleQuickAnswerClick);
+                    // Add click handler
+                    button.addEventListener('click', handleQuickAnswerClick);
 
-            container.appendChild(button);
+                    container.appendChild(button);
+                    console.log('[startQuickAnswer] Button added to DOM successfully');
+                    console.log('[startQuickAnswer] Current container HTML:', container.innerHTML.substring(0, 100));
+                });
+            });
         }
 
         async function handleQuickAnswerClick() {
             if (!quickAnswerActive || quickAnswerWinner) return;
 
             try {
-                // Submit the quick answer to Firebase
+                // 🔥 FIX: Submit with current modeResetToken using submitAnswer to preserve validations
                 const response = `搶答成功：${studentName}`;
-                console.log('Submitting quick answer:', response);
-                await submitAnswer(response);
-                console.log('Quick answer submitted successfully');
+                const currentToken = window.lastStudentModeResetToken || 0;
+                console.log('[handleQuickAnswerClick] Submitting quick answer with token:', currentToken);
+                
+                // Use submitAnswer with token in extraFields to preserve pause/validation logic
+                await submitAnswer(response, { modeResetToken: currentToken });
+                
+                console.log('[handleQuickAnswerClick] Quick answer submitted successfully with token:', currentToken);
+
+                // 🎉 Mark this student as the winner
+                quickAnswerWinner = studentName;
 
                 // Show success message
                 document.getElementById('quick-answer-result').classList.remove('hidden');
                 document.getElementById('quick-answer-status-text').textContent = '你搶答成功了！';
+                document.getElementById('quick-answer-locked').classList.add('hidden');
+
+                // 🎊 Trigger confetti celebration
+                if (typeof confetti !== 'undefined') {
+                    const duration = 3000;
+                    const animationEnd = Date.now() + duration;
+                    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 10000 };
+
+                    function randomInRange(min, max) {
+                        return Math.random() * (max - min) + min;
+                    }
+
+                    const interval = setInterval(function() {
+                        const timeLeft = animationEnd - Date.now();
+
+                        if (timeLeft <= 0) {
+                            return clearInterval(interval);
+                        }
+
+                        const particleCount = 50 * (timeLeft / duration);
+                        confetti(Object.assign({}, defaults, {
+                            particleCount,
+                            origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+                        }));
+                        confetti(Object.assign({}, defaults, {
+                            particleCount,
+                            origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+                        }));
+                    }, 250);
+                }
 
                 // Lock the button
-                lockQuickAnswerButton();
+                lockQuickAnswerButton(true);
 
             } catch (error) {
                 console.error('Failed to submit quick answer:', error);
@@ -9436,7 +10517,7 @@
             }
         }
 
-        function lockQuickAnswerButton() {
+        function lockQuickAnswerButton(isWinner = false) {
             const button = document.querySelector('.quick-answer-btn');
             if (button) {
                 button.classList.add('locked');
@@ -9444,37 +10525,72 @@
                 button.removeEventListener('click', handleQuickAnswerClick);
             }
 
-            // Show locked message for other students
-            document.getElementById('quick-answer-locked').classList.remove('hidden');
-            document.getElementById('quick-answer-result').classList.add('hidden');
+            // 🚀 FIX: Only show "locked" message to students who DIDN'T win
+            if (!isWinner) {
+                document.getElementById('quick-answer-locked').classList.remove('hidden');
+                document.getElementById('quick-answer-result').classList.add('hidden');
+            }
         }
 
         // Listen for quick answer winner updates
         function listenToQuickAnswerUpdates() {
             if (currentRole !== 'student' || currentInteractionMode !== 'quick_answer') return;
 
+            // 🚀 FIX: Capture current token to ignore stale snapshots
+            const capturedToken = window.lastStudentModeResetToken || 0;
+            console.log(`[listenToQuickAnswerUpdates] Starting listener with token: ${capturedToken}`);
+
             const responsesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
-            onSnapshot(responsesRef, (snapshot) => {
-                if (snapshot.empty) return;
+            const unsubscribe = onSnapshot(responsesRef, (snapshot) => {
+                // 🚀 FIX: Ignore snapshots from old rounds
+                if (window.lastStudentModeResetToken !== capturedToken) {
+                    console.log(`[listenToQuickAnswerUpdates] Ignoring stale snapshot (current token: ${window.lastStudentModeResetToken}, captured: ${capturedToken})`);
+                    return;
+                }
+
+                // 🔥 NEW FIX: Ignore empty snapshots or reset-state snapshots after mode restart
+                // After teacher clicks restart, the snapshot will be empty or contain only cleared responses
+                // We should NOT rewrite the UI back to "waiting" state - keep the fresh button visible
+                if (snapshot.empty) {
+                    console.log(`[listenToQuickAnswerUpdates] Ignoring empty snapshot after restart (token: ${capturedToken})`);
+                    return;
+                }
 
                 const responses = [];
                 snapshot.forEach(doc => {
                     const data = doc.data();
-                    if (data.answer && data.answer.includes('搶答成功')) {
+                    // 🔥 CRITICAL FIX: Only process responses from the CURRENT session
+                    // Ignore responses without token or with mismatched token
+                    const responseToken = data.modeResetToken || 0;
+                    if (data.answer && data.answer.includes('搶答成功') && responseToken === capturedToken) {
                         responses.push(data);
+                        console.log(`[listenToQuickAnswerUpdates] Valid response found from ${data.name} with matching token ${responseToken}`);
+                    } else if (data.answer && data.answer.includes('搶答成功')) {
+                        console.log(`[listenToQuickAnswerUpdates] Ignoring response from ${data.name} with stale token ${responseToken} (expected: ${capturedToken})`);
                     }
                 });
+
+                // 🔥 NEW FIX: If no valid quick-answer responses found with matching token, don't reset the UI
+                // This prevents the race condition where reset clears responses but listener overwrites the fresh button
+                if (responses.length === 0) {
+                    console.log(`[listenToQuickAnswerUpdates] No valid quick-answer responses with matching token found, keeping current UI (token: ${capturedToken})`);
+                    return;
+                }
 
                 // If someone already answered and it's not this student, lock the button
                 if (responses.length > 0 && !quickAnswerWinner) {
                     const winner = responses[0];
                     if (winner.name !== studentName) {
+                        console.log(`[listenToQuickAnswerUpdates] ${winner.name} won the quick answer, locking button`);
                         quickAnswerWinner = winner.name;
                         lockQuickAnswerButton();
                         document.getElementById('quick-answer-status-text').textContent = `${winner.name} 搶答成功！`;
                     }
                 }
             });
+
+            // 🚀 FIX: Save unsubscribe function globally
+            quickAnswerUnsubscribe = unsubscribe;
         }
 
         function showQuickAnswerWinner(winnerName) {
@@ -9975,7 +11091,7 @@
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `快速投票結果_${new Date().toISOString().slice(0,10)}.csv`;
+            link.download = generateFilename('快速投票結果', 'csv');
             link.click();
 
             showMessage('投票結果已下載！', 'success');
@@ -10025,7 +11141,7 @@
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
-                link.download = `是非題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                link.download = generateFilename('是非題統計', 'csv');
                 link.click();
 
                 showMessage('是非題統計已下載！', 'success');
@@ -10093,7 +11209,7 @@
                     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
-                    link.download = `自訂選擇題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                    link.download = generateFilename('自訂選擇題統計', 'csv');
                     link.click();
 
                     showMessage('自訂選擇題統計已下載！', 'success');
@@ -10133,7 +11249,7 @@
                     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
-                    link.download = `選擇題統計_${new Date().toISOString().slice(0,10)}.csv`;
+                    link.download = generateFilename('選擇題統計', 'csv');
                     link.click();
 
                     showMessage('選擇題統計已下載！', 'success');
@@ -10611,6 +11727,9 @@
          * AI generate PIRLS reading questions
          */
         async function generatePIRLSQuestions() {
+            // 🚀 UX: 檢查 API KEY 是否已設定
+            if (!checkAPIKey()) return;
+            
             const aiTopicTextarea = document.getElementById('ai-reading-topic-textarea');
             const readingTextTextarea = document.getElementById('reading-text-textarea');
             const questionsTextarea = document.getElementById('reading-questions-textarea');
@@ -10682,6 +11801,11 @@ ${existingText}
                 });
 
                 if (!response.ok) {
+                    const errorBody = await response.text();
+                    console.error(`[AI 閱讀測驗生成] API 錯誤 ${response.status}:`, errorBody);
+                    if (response.status === 400) {
+                        throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                    }
                     throw new Error(`AI API request failed with status ${response.status}`);
                 }
 
@@ -10708,7 +11832,8 @@ ${existingText}
 
             } catch (error) {
                 console.error("AI 閱讀測驗生成失敗:", error);
-                showMessage('AI 生成失敗，請檢查 API Key 或網路連線。', 'error');
+                const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 生成失敗，請檢查 API Key 或網路連線。';
+                showMessage(errorMsg, 'error');
             } finally {
                 aiBtn.disabled = false;
                 aiText.textContent = 'AI 開始出題';
