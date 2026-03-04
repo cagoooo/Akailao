@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>剛好學：課堂互動so easy</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2061,7 +2063,8 @@
             <div class="text-center mt-4 sm:mt-3 text-gray-600 space-y-2 sm:space-y-2">
                 <p class="text-xs px-2 truncate hidden">App ID: <span id="app-id-display"></span> <span
                         class="hidden sm:inline">&nbsp;&bull;&nbsp;</span> <span class="sm:hidden">•</span> User ID:
-                    <span id="user-id-display" class="break-all"></span></p>
+                    <span id="user-id-display" class="break-all"></span>
+                </p>
                 <div class="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 px-2">
                     <a href="https://kentxchang.blogspot.tw" target="_blank" rel="noopener noreferrer"
                         class="w-full sm:w-auto px-4 py-2 sm:px-5 sm:py-2 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 text-sm sm:text-base font-semibold transition-colors shadow-sm">
@@ -17375,8 +17378,8 @@ ${existingText}
 
                 const optionBtn = document.createElement('button');
                 optionBtn.className = `w-full p-3 text-left rounded-lg border-2 transition-all duration-200 ${isCurrentAnswer
-                        ? 'bg-green-50 border-green-400 hover:bg-green-100'
-                        : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                    ? 'bg-green-50 border-green-400 hover:bg-green-100'
+                    : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
                     }`;
                 optionBtn.dataset.optionNumber = optionNumber;
 
@@ -17464,8 +17467,8 @@ ${existingText}
                 const btnOptionNumber = parseInt(btn.dataset.optionNumber);
                 const isCurrentAnswer = btnOptionNumber === question.correctAnswer;
                 btn.className = `w-full p-3 text-left rounded-lg border-2 transition-all duration-200 ${isCurrentAnswer
-                        ? 'bg-green-50 border-green-400 hover:bg-green-100'
-                        : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+                    ? 'bg-green-50 border-green-400 hover:bg-green-100'
+                    : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
                     }`;
             });
 
