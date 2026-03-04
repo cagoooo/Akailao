@@ -1,0 +1,40 @@
+# 環境變數（嚴禁上傳）
+.env
+.env.*
+*.env
+
+# Replit 平台快取（大量二進位快取，不需上傳）
+.local/
+.config/
+.replit
+replit.md
+
+# 開發截圖與測試資產
+attached_assets/
+
+# 開發紀錄文件（非使用者文件）
+OPTIMIZATION_PLAN.md
+DETAILED_VERIFICATION_REPORT.md
+FINAL_VERIFICATION_REPORT.md
+GIVE_POINTS_OPTIMIZATION.md
+IMPLEMENTATION_VERIFICATION.md
+IMPLEMENTATION_VERIFICATION_v2.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
