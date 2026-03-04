@@ -12558,13 +12558,7 @@
         function setupEventListeners() {
             // Entry screen.
             document.getElementById('teacher-entry-btn').addEventListener('click', () => {
-                // Check if passwd=no parameter is present in URL
-                const urlParams = new URLSearchParams(window.location.search);
-                if (urlParams.get('passwd') === 'no') {
-                    showView('teacherClassroomCode');
-                } else {
-                    document.getElementById('teacher-password-modal').classList.remove('hidden');
-                }
+                showView('teacherClassroomCode');
             });
             document.getElementById('student-entry-btn').addEventListener('click', () => {
                 currentRole = 'student';
@@ -13612,38 +13606,7 @@
             loadQuestionBankBtn.addEventListener('click', loadQuestionBankFromFile);
             saveQuestionBankBtn.addEventListener('click', saveQuestionBankFromTextarea);
 
-            // Teacher Password Modal Event Listeners
-            const teacherPasswordModal = document.getElementById('teacher-password-modal');
-            const teacherPasswordModalCloseBtn = document.getElementById('teacher-password-modal-close-btn');
-            const teacherPasswordInput = document.getElementById('teacher-password-input');
-            const teacherPasswordSubmitBtn = document.getElementById('teacher-password-submit-btn');
-            const teacherPasswordCancelBtn = document.getElementById('teacher-password-cancel-btn');
-
-            teacherPasswordModalCloseBtn.addEventListener('click', () => {
-                teacherPasswordModal.classList.add('hidden');
-                teacherPasswordInput.value = '';
-            });
-            teacherPasswordCancelBtn.addEventListener('click', () => {
-                teacherPasswordModal.classList.add('hidden');
-                teacherPasswordInput.value = '';
-            });
-            teacherPasswordSubmitBtn.addEventListener('click', () => {
-                const password = teacherPasswordInput.value.trim();
-                if (password === 'smessmes') {
-                    teacherPasswordModal.classList.add('hidden');
-                    teacherPasswordInput.value = '';
-                    showView('teacherClassroomCode');
-                } else {
-                    showMessage('密碼錯誤！', 'error');
-                    teacherPasswordInput.value = '';
-                    teacherPasswordInput.focus();
-                }
-            });
-            teacherPasswordInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    teacherPasswordSubmitBtn.click();
-                }
-            });
+            // Teacher Password Modal 已移除（不再需要密碼驗證）
 
             mcQuestionTypeRadios.forEach(radio => {
                 radio.addEventListener('change', (e) => {
