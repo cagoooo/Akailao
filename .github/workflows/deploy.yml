@@ -29,6 +29,8 @@ jobs:
 
       - name: ⚙️ 設定 GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
