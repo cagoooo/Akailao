@@ -17778,31 +17778,17 @@ ${existingText}
                 }
             });
 
-            // 🚀 NEW: 修改前提示「影響範圍」
-            const affectRangeMsg = isGivePoints ?
-                `這將使全班 ${affectedStudentsCount} 名學生在第 ${questionIndex + 1} 題都獲得滿分。` :
-                `這將影響 ${affectedStudentsCount} 名已提交的學生的成績。`;
+            // 🚀 FIX: 移除 window.confirm()（在 Service Worker 環境會被封鎖）
+            // 改為用 toast 顯示影響範圍，直接執行修改
+            const affectRangeMsg = isGivePoints
+                ? `正在處理：將第 ${questionIndex + 1} 題設為送分題，${affectedStudentsCount} 名學生將獲得滿分`
+                : `正在處理：第 ${questionIndex + 1} 題答案修改，影響 ${affectedStudentsCount} 名已提交學生`;
+            showMessage(affectRangeMsg, 'info');
 
-            if (!confirm(`${affectRangeMsg}\n\n確定要繼續修改嗎？`)) {
-                return;
-            }
-
-            // 🚀 NEW: 如果答案沒有改變，直接返回
+            // 🚀 FIX: 如果答案沒有改變，直接返回
             if (!isGivePoints && newAnswer === oldAnswer) {
                 showMessage('新答案與原答案相同，無需修改', 'info');
                 hideEditAnswerDialog();
-                return;
-            }
-
-            // 🚀 NEW: 顯示確認對話框
-            let confirmMessage = '';
-            if (isGivePoints) {
-                confirmMessage = `確定要將第 ${questionIndex + 1} 題設為送分題嗎？\n\n這將使全班學生在這題都獲得滿分，並自動重新計算所有學生的總成績。`;
-            } else {
-                confirmMessage = `確定要將第 ${questionIndex + 1} 題的答案從選項 ${oldAnswer} 修改為選項 ${newAnswer} 嗎？\n\n這將自動重新計算所有已提交學生的成績。`;
-            }
-
-            if (!confirm(confirmMessage)) {
                 return;
             }
 
