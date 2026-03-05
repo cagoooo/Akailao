@@ -565,6 +565,121 @@
             white-space: nowrap;
         }
 
+        /* 🤖 AI 出題進度條 */
+        #ai-gen-progress-wrap {
+            margin-top: 12px;
+            display: none;
+        }
+
+        #ai-gen-progress-wrap.visible {
+            display: block;
+        }
+
+        #ai-gen-progress-track {
+            height: 10px;
+            background: #ede9fe;
+            border-radius: 99px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #ai-gen-progress-fill {
+            height: 100%;
+            border-radius: 99px;
+            background: linear-gradient(90deg, #7c3aed, #a855f7, #7c3aed);
+            background-size: 200% 100%;
+            animation: ai-shimmer 1.6s linear infinite;
+            transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            width: 0%;
+        }
+
+        @keyframes ai-shimmer {
+            0% {
+                background-position: 100% 0;
+            }
+
+            100% {
+                background-position: -100% 0;
+            }
+        }
+
+        #ai-gen-steps {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+        }
+
+        .ai-gen-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            flex: 1;
+        }
+
+        .ai-gen-step-dot {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #ede9fe;
+            border: 2px solid #c4b5fd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: #a78bfa;
+            transition: all 0.4s ease;
+        }
+
+        .ai-gen-step.done .ai-gen-step-dot {
+            background: #7c3aed;
+            border-color: #7c3aed;
+            color: #fff;
+        }
+
+        .ai-gen-step.active .ai-gen-step-dot {
+            background: #a855f7;
+            border-color: #7c3aed;
+            color: #fff;
+            box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2);
+            animation: ai-step-pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes ai-step-pulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 0 7px rgba(124, 58, 237, 0.08);
+            }
+        }
+
+        .ai-gen-step-label {
+            font-size: 9px;
+            color: #9ca3af;
+            text-align: center;
+            line-height: 1.2;
+            transition: color 0.3s;
+        }
+
+        .ai-gen-step.done .ai-gen-step-label,
+        .ai-gen-step.active .ai-gen-step-label {
+            color: #7c3aed;
+            font-weight: 600;
+        }
+
+        #ai-gen-status-text {
+            font-size: 11px;
+            color: #7c3aed;
+            text-align: center;
+            margin-top: 6px;
+            min-height: 16px;
+            font-weight: 600;
+        }
+
         .peer-review-work-item {
             background-color: white;
             border-radius: 0.75rem;
@@ -3892,6 +4007,32 @@
                                     class="hidden flex items-center justify-center text-purple-600 pt-2">
                                     <i class="fas fa-spinner fa-spin mr-2"></i>
                                     <span>AI 思考中，請稍候...</span>
+                                </div>
+
+                                <!-- 🤖 AI 出題進度條（新版） -->
+                                <div id="ai-gen-progress-wrap">
+                                    <div id="ai-gen-progress-track">
+                                        <div id="ai-gen-progress-fill"></div>
+                                    </div>
+                                    <div id="ai-gen-steps">
+                                        <div class="ai-gen-step" id="ai-step-0">
+                                            <div class="ai-gen-step-dot">⚙️</div>
+                                            <div class="ai-gen-step-label">準備<br>中</div>
+                                        </div>
+                                        <div class="ai-gen-step" id="ai-step-1">
+                                            <div class="ai-gen-step-dot">📝</div>
+                                            <div class="ai-gen-step-label">生成<br>文本</div>
+                                        </div>
+                                        <div class="ai-gen-step" id="ai-step-2">
+                                            <div class="ai-gen-step-dot">❓</div>
+                                            <div class="ai-gen-step-label">生成<br>題目</div>
+                                        </div>
+                                        <div class="ai-gen-step" id="ai-step-3">
+                                            <div class="ai-gen-step-dot">✅</div>
+                                            <div class="ai-gen-step-label">整理<br>完成</div>
+                                        </div>
+                                    </div>
+                                    <div id="ai-gen-status-text">🤖 AI 正在思考中...</div>
                                 </div>
                             </div>
                         </div>
@@ -17608,12 +17749,33 @@
             // 清除後，existingText 永遠為空，每次都生成新文本和題目
             const existingText = '';
 
-            // Show loading
+            // 🎯 進度條輔助函數
+            const progressWrap = document.getElementById('ai-gen-progress-wrap');
+            const progressFill = document.getElementById('ai-gen-progress-fill');
+            const statusText = document.getElementById('ai-gen-status-text');
+            const stepPcts = [10, 35, 80, 100]; // 各步驟對應進度百分比
+            const stepMsgs = ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
+
+            function setAiStep(stepIndex) {
+                for (let i = 0; i < 4; i++) {
+                    const el = document.getElementById(`ai-step-${i}`);
+                    if (!el) continue;
+                    el.classList.remove('active', 'done');
+                    if (i < stepIndex) el.classList.add('done');
+                    else if (i === stepIndex) el.classList.add('active');
+                }
+                if (progressFill) progressFill.style.width = `${stepPcts[stepIndex]}%`;
+                if (statusText) statusText.textContent = stepMsgs[stepIndex];
+            }
+
+            // 顯示進度條，隱藏舊 spinner
             aiBtn.disabled = true;
             aiText.textContent = '生成中...';
             aiIcon.classList.remove('fa-magic');
             aiIcon.classList.add('fa-spinner', 'fa-spin');
-            aiSpinner.classList.remove('hidden');
+            aiSpinner.classList.add('hidden'); // 保留但隱藏舊 spinner
+            if (progressWrap) progressWrap.classList.add('visible');
+            setAiStep(0); // 步驟0：準備中
 
             try {
                 const prompt = existingText
@@ -17644,6 +17806,8 @@ ${existingText}
 請先輸出文本，然後輸出「---題目---」，再按照以下格式輸出題目，每行一題：
 題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)`;
 
+                setAiStep(1); // 步驟1：生成文本
+
                 const payload = {
                     contents: [{ role: "user", parts: [{ text: prompt }] }],
                     generationConfig: { temperature: 0.7 }
@@ -17669,6 +17833,10 @@ ${existingText}
                 const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
                 if (generatedText) {
+                    setAiStep(2); // 步驟2：解析題目中
+                    await new Promise(r => setTimeout(r, 300));
+                    setAiStep(3); // 步驟3：整理完成
+                    await new Promise(r => setTimeout(r, 600));
                     if (!existingText) {
                         // Parse text and questions
                         const parts = generatedText.split('---題目---');
@@ -17699,6 +17867,16 @@ ${existingText}
                 aiIcon.classList.add('fa-magic');
                 aiIcon.classList.remove('fa-spinner', 'fa-spin');
                 aiSpinner.classList.add('hidden');
+                // 重置進度條（延遲0.8秒後隱藏，讓用戶看到完成狀態）
+                setTimeout(() => {
+                    if (progressWrap) progressWrap.classList.remove('visible');
+                    if (progressFill) progressFill.style.width = '0%';
+                    for (let i = 0; i < 4; i++) {
+                        const el = document.getElementById(`ai-step-${i}`);
+                        if (el) el.classList.remove('active', 'done');
+                    }
+                    if (statusText) statusText.textContent = '🤖 AI 正在思考中...';
+                }, 800);
             }
         }
 
