@@ -13485,9 +13485,13 @@
                 } catch (error) {
                     console.error("AI 文字分析失敗:", error);
                     aiLoadingSpinner.classList.add('hidden');
-                    const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 分析失敗，請檢查 API Key 或網路連線。';
-                    aiSummaryResultList.innerHTML = `<li class="error-message">${errorMsg}</li>`;
-                    showMessage(errorMsg, 'error');
+                    if (error.message && error.message.includes('API KEY')) {
+                        showApiKeyGuide();
+                    } else {
+                        const errorMsg = error.message || 'AI 分析失敗，請檢查 API Key 或網路連線。';
+                        aiSummaryResultList.innerHTML = `<li class="error-message">${errorMsg}</li>`;
+                        showMessage(errorMsg, 'error');
+                    }
                 }
             });
             document.getElementById('ai-summary-modal-close-btn').addEventListener('click', () => document.getElementById('ai-summary-modal').classList.add('hidden'));
@@ -17376,8 +17380,11 @@ ${existingText}
 
             } catch (error) {
                 console.error("AI 閱讀測驗生成失敗:", error);
-                const errorMsg = error.message.includes('API KEY') ? error.message : 'AI 生成失敗，請檢查 API Key 或網路連線。';
-                showMessage(errorMsg, 'error');
+                if (error.message && error.message.includes('API KEY')) {
+                    showApiKeyGuide();
+                } else {
+                    showMessage(error.message || 'AI 生成失敗，請檢查 API Key 或網路連線。', 'error');
+                }
             } finally {
                 aiBtn.disabled = false;
                 aiText.textContent = 'AI 開始出題';
