@@ -11746,10 +11746,8 @@
         const saveAiSettingsBtn = document.getElementById('save-ai-settings-btn');
 
         function showAISettingsModal() {
-            aiSourceSelect.value = aiSettings.aiSource;
-            geminiApiKeyInput.value = aiSettings.geminiApiKey;
-            geminiApiKeyGroup.classList.toggle('hidden', aiSettings.aiSource !== 'gemini-custom');
-            aiSettingsModal.classList.remove('hidden');
+            // 使用新的引導 Modal 取代舊的 AI 設定 Modal
+            showApiKeyGuide();
         }
 
         function hideAISettingsModal() {
