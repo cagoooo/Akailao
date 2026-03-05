@@ -470,6 +470,101 @@
             font-size: 11px;
         }
 
+        /* ⚠️ 閱讀測驗最後30秒：按鈕警示震動動畫 */
+        @keyframes reading-submit-warn {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.5);
+            }
+
+            50% {
+                transform: scale(1.04);
+                box-shadow: 0 0 0 8px rgba(234, 88, 12, 0);
+            }
+
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);
+            }
+        }
+
+        .reading-submit-warning {
+            background: linear-gradient(135deg, #f97316, #dc2626) !important;
+            border-color: #dc2626 !important;
+            color: #fff !important;
+            animation: reading-submit-warn 0.9s ease-in-out infinite;
+        }
+
+        /* 💬 教師快速評語 toast */
+        #teacher-comment-toast {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-80px);
+            z-index: 9999;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: #fff;
+            padding: 14px 24px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.4);
+            font-size: 15px;
+            font-weight: 700;
+            text-align: center;
+            min-width: 220px;
+            max-width: 90vw;
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #teacher-comment-toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* 📊 班級作答進度條 */
+        #class-progress-bar-wrapper {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 990;
+            background: rgba(255, 255, 255, 0.95);
+            border-top: 1px solid #e5e7eb;
+            padding: 6px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+            backdrop-filter: blur(6px);
+        }
+
+        #class-progress-bar-wrapper.hidden {
+            display: none;
+        }
+
+        #class-progress-bar-track {
+            flex: 1;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        #class-progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #34d399, #10b981);
+            border-radius: 8px;
+            transition: width 0.5s ease;
+        }
+
+        #class-progress-bar-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+
         .peer-review-work-item {
             background-color: white;
             border-radius: 0.75rem;
@@ -8300,6 +8395,8 @@
                         // 啟動排行榜監聽（如果尚未啟動）
                         if (modeChanged) {
                             listenToReadingLeaderboard();
+                            setupClassProgressBar();  // 📊 功能1: 班級作答進度條
+                            listenTeacherComment();   // 💬 功能3延伸: 教師評語接收
                         }
                     } else if (currentInteractionMode === 'quick_poll') {
                         if (modeChanged) {
@@ -9054,6 +9151,15 @@
                 : '';
             const cardBgClass = isDistracted ? 'bg-red-50 border-2 border-red-400' : '';
 
+            // 📢 快速評語按鈕 HTML
+            const quickCommentBtns = `
+                <div class="flex gap-1 mt-1 flex-wrap">
+                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-green-100 hover:bg-green-200 text-green-800 font-semibold transition" data-comment="💪 讚！老師說你很棒！" data-student="${student.name}">💪 讚！</button>
+                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-semibold transition" data-comment="⭐ 加油！繼續努力！" data-student="${student.name}">⭐ 加油！</button>
+                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-red-100 hover:bg-red-200 text-red-800 font-semibold transition" data-comment="📝 再檢查一次看看！" data-student="${student.name}">📝 再試試</button>
+                </div>
+            `;
+
             card.className = `student-response-item ${cardBgClass}`;
 
             // 📖 閱讀測驗模式：動態切換容器為較少欄數（讓卡片更寬）
@@ -9077,6 +9183,7 @@
                 <div class="answer-box">
                     ${answerContentHTML}
                 </div>
+                ${quickCommentBtns}
             `;
             container.appendChild(card);
 
@@ -9105,6 +9212,25 @@
                     });
                 }
             }
+
+            // 📢 快速評語按鈕事件（功能3）
+            card.querySelectorAll('.quick-comment-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const targetStudent = e.currentTarget.dataset.student;
+                    const commentText = e.currentTarget.dataset.comment;
+                    if (!targetStudent || !classroomCode) return;
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', targetStudent);
+                        await setDoc(studentRef, { teacherComment: { text: commentText, ts: Date.now() } }, { merge: true });
+                        btn.classList.add('opacity-50', 'scale-90');
+                        setTimeout(() => btn.classList.remove('opacity-50', 'scale-90'), 800);
+                        console.log(`[QuickComment] ✓ 評語「${commentText}」已送給 ${targetStudent}`);
+                    } catch (err) {
+                        console.error('[QuickComment] 送出評語失敗:', err);
+                    }
+                });
+            });
         }
 
         /**
@@ -16776,7 +16902,14 @@
                     const totalSeconds = Math.ceil(remainingMs / 1000);
                     const minutes = Math.floor(totalSeconds / 60);
                     const seconds = totalSeconds % 60;
-                    submitBtn.textContent = `⏳ 請先閱讀... (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                    if (remainingMs <= 30000) {
+                        // ⚠️ 最後30秒：警示樣式 + 震動
+                        submitBtn.textContent = `⚠️ 即將開放 (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                        submitBtn.classList.add('reading-submit-warning');
+                    } else {
+                        submitBtn.textContent = `⏳ 請先閱讀... (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                        submitBtn.classList.remove('reading-submit-warning');
+                    }
                 }
             };
 
@@ -17212,6 +17345,36 @@
                 // 當教師修改答案後，學生端可以即時看到更新後的成績
                 setupStudentScoreListener();
 
+                // 🎉 功能2: confetti慶祝 + 顯示名次
+                try {
+                    const studentsColRef2 = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                    const rankSnap = await getDocs(studentsColRef2);
+                    let submittedCount = 0;
+                    rankSnap.forEach(d => { if (d.data().answer) submittedCount++; });
+                    // 本人是第 submittedCount 位（已包含剛提交的自己）
+                    const myRank = submittedCount;
+                    const rankMsg = myRank === 1 ? '🥇 你是全班第一位完成的同學！' :
+                        myRank === 2 ? `🥈 你是第 ${myRank} 位完成的同學！` :
+                            myRank === 3 ? `🥉 你是第 ${myRank} 位完成的同學！` :
+                                `🎉 你是第 ${myRank} 位完成的同學！`;
+
+                    // 🎊 confetti 動畫
+                    if (typeof confetti === 'function') {
+                        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+                        confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.3, y: 0.6 } }));
+                        confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.7, y: 0.6 } }));
+                    }
+
+                    // 彈出名次提示（用 showMessage）
+                    setTimeout(() => {
+                        showMessage(`✅ 答案已提交！${rankMsg}`, 'success', 5000);
+                    }, 400);
+                    console.log(`[confetti] 已顯示慶祝，名次: ${myRank}`);
+                } catch (rankErr) {
+                    console.warn('[confetti] 取得名次失敗:', rankErr);
+                    showMessage('✅ 答案已提交！', 'success', 4000);
+                }
+
                 // 不要清空 currentReadingAnswers，以便暫停恢復時保留
                 // currentReadingAnswers = []; // REMOVED
             } catch (error) {
@@ -17354,6 +17517,66 @@
 
             ListenerManager.register('studentScoreUpdate', unsubscribe);
             console.log('[setupStudentScoreListener] Listener registered for student:', studentName);
+        }
+
+        /**
+         * 📊 功能1: 班級作答進度條（學生端）
+         * 監聽 studentResponses 集合，計算已提交人數，更新底部進度條
+         */
+        function setupClassProgressBar() {
+            if (!classroomCode || !db) return;
+            if (ListenerManager.has('classProgressBar')) return;
+
+            const wrapper = document.getElementById('class-progress-bar-wrapper');
+            const fill = document.getElementById('class-progress-bar-fill');
+            const label = document.getElementById('class-progress-bar-label');
+            if (!wrapper || !fill || !label) return;
+
+            wrapper.classList.remove('hidden');
+
+            const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const unsubscribeProgress = onSnapshot(colRef, (snapshot) => {
+                const total = snapshot.size;
+                let answered = 0;
+                snapshot.forEach(d => { if (d.data().answer) answered++; });
+                const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
+                fill.style.width = `${pct}%`;
+                label.textContent = `班級進度 ${answered}/${total}`;
+            });
+
+            ListenerManager.register('classProgressBar', unsubscribeProgress);
+            console.log('[classProgressBar] 進度條監聽已啟動');
+        }
+
+        /**
+         * 💬 功能3延伸: 學生端監聽教師評語，顯示 toast
+         */
+        function listenTeacherComment() {
+            if (!classroomCode || !studentName || !db) return;
+            if (ListenerManager.has('teacherCommentListener')) return;
+
+            const toast = document.getElementById('teacher-comment-toast');
+            const toastText = document.getElementById('teacher-comment-toast-text');
+            if (!toast || !toastText) return;
+
+            let lastTs = null;
+            const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+            const unsubComment = onSnapshot(studentRef, (snap) => {
+                if (!snap.exists()) return;
+                const comment = snap.data().teacherComment;
+                if (!comment || !comment.text || !comment.ts) return;
+                if (lastTs === comment.ts) return; // 避免重複顯示
+                lastTs = comment.ts;
+
+                // 顯示 toast
+                toastText.textContent = `👨‍🏫 老師說：${comment.text}`;
+                toast.classList.add('show');
+                setTimeout(() => toast.classList.remove('show'), 4500);
+                console.log('[teacherComment] 收到老師評語:', comment.text);
+            });
+
+            ListenerManager.register('teacherCommentListener', unsubComment);
+            console.log('[teacherComment] 評語監聽已啟動');
         }
 
         /**
@@ -19005,6 +19228,21 @@ ${existingText}
         setupEventListeners(); // Call setupEventListeners only once here.
 
     </script>
+
+    <!-- 📊 班級作答進度條（學生端全局固定底部） -->
+    <div id="class-progress-bar-wrapper" class="hidden">
+        <span style="font-size:13px;">📊</span>
+        <div id="class-progress-bar-track">
+            <div id="class-progress-bar-fill" style="width:0%"></div>
+        </div>
+        <span id="class-progress-bar-label">班級進度 0/0</span>
+    </div>
+
+    <!-- 💬 教師快速評語 Toast（學生端全局浮動） -->
+    <div id="teacher-comment-toast">
+        <div id="teacher-comment-toast-text">老師說：讚！</div>
+    </div>
+
 </body>
 
 </html>
