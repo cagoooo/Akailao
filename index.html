@@ -3534,6 +3534,70 @@
     </div>
 
 
+    <!-- API Key 引導模態框 -->
+    <div id="api-key-guide-modal"
+        class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div class="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-5 flex items-center gap-3">
+                <span class="text-3xl">🔑</span>
+                <div class="flex-1">
+                    <h2 class="text-xl font-bold text-white">需要設定 Gemini API Key</h2>
+                    <p class="text-blue-100 text-sm">免費申請，3 步驟完成設定</p>
+                </div>
+                <button id="api-key-guide-close-btn"
+                    class="text-white opacity-70 hover:opacity-100 text-3xl leading-none font-light">&times;</button>
+            </div>
+            <div class="p-6 space-y-3">
+                <!-- 步驟 1 -->
+                <div class="flex items-start gap-3 p-3 bg-blue-50 rounded-xl">
+                    <span
+                        class="flex-shrink-0 w-7 h-7 bg-blue-600 text-white text-sm font-bold rounded-full flex items-center justify-center">1</span>
+                    <div>
+                        <p class="font-semibold text-gray-800 text-sm">前往 Google AI Studio 取得免費 API Key</p>
+                        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
+                            class="inline-flex items-center gap-1.5 mt-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm">
+                            <i class="fas fa-external-link-alt"></i> 開啟 Google AI Studio
+                        </a>
+                    </div>
+                </div>
+                <!-- 步驟 2 -->
+                <div class="flex items-center gap-3 p-3 bg-purple-50 rounded-xl">
+                    <span
+                        class="flex-shrink-0 w-7 h-7 bg-purple-600 text-white text-sm font-bold rounded-full flex items-center justify-center">2</span>
+                    <p class="text-sm text-gray-700">點擊「<strong>Create API key</strong>」→ 複製產生的 API Key</p>
+                </div>
+                <!-- 步驟 3 -->
+                <div class="flex items-start gap-3 p-3 bg-green-50 rounded-xl">
+                    <span
+                        class="flex-shrink-0 w-7 h-7 bg-green-600 text-white text-sm font-bold rounded-full flex items-center justify-center">3</span>
+                    <div class="flex-1 min-w-0">
+                        <p class="font-semibold text-gray-800 text-sm mb-2">貼上您的 API Key</p>
+                        <div class="flex gap-2">
+                            <input type="password" id="api-key-guide-input" placeholder="貼上 API Key（AIzaSy...）"
+                                class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-mono">
+                            <button id="api-key-guide-toggle-btn"
+                                class="px-3 py-2 text-gray-500 hover:text-gray-700 border-2 border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex-shrink-0">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <!-- 按鈕 -->
+                <div class="flex gap-3 pt-1">
+                    <button id="api-key-guide-cancel-btn"
+                        class="flex-1 py-2.5 border-2 border-gray-300 text-gray-600 font-semibold rounded-xl hover:bg-gray-50 transition-colors text-sm">
+                        取消
+                    </button>
+                    <button id="api-key-guide-save-btn"
+                        class="flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md text-sm">
+                        <i class="fas fa-save mr-1"></i> 儲存並繼續
+                    </button>
+                </div>
+                <p class="text-center text-xs text-gray-400">🔒 API Key 僅儲存於您的瀏覽器本地，不會上傳至任何伺服器</p>
+            </div>
+        </div>
+    </div>
+
     <!-- 下課確認模態框 -->
     <div id="end-class-confirm-modal"
         class="hidden fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
@@ -11700,6 +11764,71 @@
         }
 
         /**
+         * 顯示 API Key 引導模態框，讓使用者快速設定 API Key。
+         * @param {Function} [retryCallback] - 儲存成功後要執行的回呼（可用於重試 AI 操作）
+         */
+        function showApiKeyGuide(retryCallback) {
+            const modal = document.getElementById('api-key-guide-modal');
+            const input = document.getElementById('api-key-guide-input');
+            const saveBtn = document.getElementById('api-key-guide-save-btn');
+            const cancelBtn = document.getElementById('api-key-guide-cancel-btn');
+            const closeBtn = document.getElementById('api-key-guide-close-btn');
+            const toggleBtn = document.getElementById('api-key-guide-toggle-btn');
+
+            // 預填現有 Key
+            input.value = aiSettings.geminiApiKey || '';
+            input.type = 'password';
+            toggleBtn.innerHTML = '<i class="fas fa-eye"></i>';
+
+            const hide = () => {
+                modal.classList.add('hidden');
+                saveBtn.removeEventListener('click', onSave);
+                cancelBtn.removeEventListener('click', onCancel);
+                closeBtn.removeEventListener('click', onCancel);
+                toggleBtn.removeEventListener('click', onToggle);
+            };
+
+            const onSave = () => {
+                const key = input.value.trim();
+                if (!key || !key.startsWith('AIzaSy')) {
+                    showMessage('請貼上有效的 Gemini API Key（應以 AIzaSy 開頭）', 'error');
+                    input.focus();
+                    return;
+                }
+                aiSettings.aiSource = 'gemini-custom';
+                aiSettings.geminiApiKey = key;
+                localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+                // 同步更新 AI 設定畫面中的輸入框
+                if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+                hide();
+                showMessage('✅ API Key 已儲存！', 'success');
+                if (typeof retryCallback === 'function') {
+                    setTimeout(retryCallback, 300);
+                }
+            };
+
+            const onCancel = () => hide();
+
+            const onToggle = () => {
+                input.type = input.type === 'password' ? 'text' : 'password';
+                toggleBtn.innerHTML = input.type === 'password'
+                    ? '<i class="fas fa-eye"></i>'
+                    : '<i class="fas fa-eye-slash"></i>';
+            };
+
+            const onKeydown = (e) => { if (e.key === 'Enter') onSave(); };
+
+            saveBtn.addEventListener('click', onSave);
+            cancelBtn.addEventListener('click', onCancel);
+            closeBtn.addEventListener('click', onCancel);
+            toggleBtn.addEventListener('click', onToggle);
+            input.addEventListener('keydown', onKeydown, { once: true });
+
+            modal.classList.remove('hidden');
+            setTimeout(() => input.focus(), 150);
+        }
+
+        /**
          * 檢查 API KEY 是否已設定並符合基本格式要求
          * 如果未設定或格式明顯錯誤，顯示警告訊息並打開 AI 設定模態框
          * @returns {boolean} 如果 API KEY 通過基本檢查返回 true，否則返回 false
@@ -13736,8 +13865,11 @@
 
                 } catch (error) {
                     console.error("AI 選擇題生成失敗:", error);
-                    // 🚀 IMPROVED: 直接顯示詳細的錯誤訊息
-                    showMessage(error.message || 'AI 題目生成失敗，請稍後再試。', 'error');
+                    if (error.message && error.message.includes('API KEY')) {
+                        showApiKeyGuide();
+                    } else {
+                        showMessage(error.message || 'AI 題目生成失敗，請稍後再試。', 'error');
+                    }
                 } finally {
                     // Hide loading state
                     aiGenerateMcBtn.disabled = false;
@@ -13859,8 +13991,11 @@
 
                 } catch (error) {
                     console.error("AI 排序題生成失敗:", error);
-                    // 🚀 IMPROVED: 直接顯示詳細的錯誤訊息
-                    showMessage(error.message || 'AI 排序題生成失敗，請稍後再試。', 'error');
+                    if (error.message && error.message.includes('API KEY')) {
+                        showApiKeyGuide();
+                    } else {
+                        showMessage(error.message || 'AI 排序題生成失敗，請稍後再試。', 'error');
+                    }
                 } finally {
                     // Hide loading state
                     aiGenerateSeqBtn.disabled = false;
@@ -13983,8 +14118,11 @@
 
                 } catch (error) {
                     console.error("AI 配對題生成失敗:", error);
-                    // 🚀 IMPROVED: 直接顯示詳細的錯誤訊息
-                    showMessage(error.message || 'AI 配對題生成失敗，請稍後再試。', 'error');
+                    if (error.message && error.message.includes('API KEY')) {
+                        showApiKeyGuide();
+                    } else {
+                        showMessage(error.message || 'AI 配對題生成失敗，請稍後再試。', 'error');
+                    }
                 } finally {
                     // Hide loading state
                     aiGenerateMatchBtn.disabled = false;
