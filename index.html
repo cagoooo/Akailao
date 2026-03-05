@@ -3581,6 +3581,14 @@
                                 <i class="fas fa-eye"></i>
                             </button>
                         </div>
+                        <!-- 測試按鈕 -->
+                        <button id="api-key-guide-test-btn"
+                            class="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-purple-700 bg-purple-100 hover:bg-purple-200 border border-purple-300 rounded-lg transition-colors">
+                            <i class="fas fa-flask"></i> 測試 API Key
+                        </button>
+                        <!-- 測試結果顯示區 -->
+                        <div id="api-key-test-result"
+                            class="hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg"></div>
                     </div>
                 </div>
                 <!-- 按鈕 -->
@@ -11773,11 +11781,15 @@
             const cancelBtn = document.getElementById('api-key-guide-cancel-btn');
             const closeBtn = document.getElementById('api-key-guide-close-btn');
             const toggleBtn = document.getElementById('api-key-guide-toggle-btn');
+            const testBtn = document.getElementById('api-key-guide-test-btn');
+            const testResult = document.getElementById('api-key-test-result');
 
             // 預填現有 Key
             input.value = aiSettings.geminiApiKey || '';
             input.type = 'password';
             toggleBtn.innerHTML = '<i class="fas fa-eye"></i>';
+            testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
+            testResult.innerHTML = '';
 
             const hide = () => {
                 modal.classList.add('hidden');
@@ -11785,6 +11797,7 @@
                 cancelBtn.removeEventListener('click', onCancel);
                 closeBtn.removeEventListener('click', onCancel);
                 toggleBtn.removeEventListener('click', onToggle);
+                testBtn.removeEventListener('click', onTest);
             };
 
             const onSave = () => {
@@ -11815,13 +11828,69 @@
                     : '<i class="fas fa-eye-slash"></i>';
             };
 
+            const onTest = async () => {
+                const key = input.value.trim();
+                if (!key || !key.startsWith('AIzaSy')) {
+                    testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+                    testResult.innerHTML = '<i class="fas fa-times-circle"></i> 請先貼上有效的 API Key（應以 AIzaSy 開頭）';
+                    return;
+                }
+                // 顯示載入中
+                testBtn.disabled = true;
+                testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200';
+                testResult.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在測試連線...';
+
+                const start = Date.now();
+                try {
+                    const res = await fetch(
+                        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+                                generationConfig: { maxOutputTokens: 1 }
+                            })
+                        }
+                    );
+                    const elapsed = Date.now() - start;
+                    if (res.ok) {
+                        testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-green-50 text-green-700 border border-green-200';
+                        testResult.innerHTML = `<i class="fas fa-check-circle"></i> ✅ API Key 有效！回應時間 ${elapsed}ms，可以使用`;
+                        // 自動儲存有效的 Key
+                        aiSettings.aiSource = 'gemini-custom';
+                        aiSettings.geminiApiKey = key;
+                        localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+                        if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+                        saveBtn.textContent = '✅ 已驗證，儲存並繼續';
+                        saveBtn.classList.add('from-green-500', 'to-green-600');
+                        saveBtn.classList.remove('from-blue-600', 'to-purple-600');
+                    } else {
+                        const body = await res.json().catch(() => ({}));
+                        const msg = body?.error?.message || `HTTP ${res.status}`;
+                        testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+                        testResult.innerHTML = `<i class="fas fa-times-circle"></i> ❌ 測試失敗：${msg}`;
+                    }
+                } catch (err) {
+                    testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+                    testResult.innerHTML = '<i class="fas fa-times-circle"></i> ❌ 網路連線失敗，請檢查網路';
+                } finally {
+                    testBtn.disabled = false;
+                }
+            };
+
             const onKeydown = (e) => { if (e.key === 'Enter') onSave(); };
 
             saveBtn.addEventListener('click', onSave);
             cancelBtn.addEventListener('click', onCancel);
             closeBtn.addEventListener('click', onCancel);
             toggleBtn.addEventListener('click', onToggle);
+            testBtn.addEventListener('click', onTest);
             input.addEventListener('keydown', onKeydown, { once: true });
+
+            // 重置儲存按鈕外觀
+            saveBtn.innerHTML = '<i class="fas fa-save mr-1"></i> 儲存並繼續';
+            saveBtn.className = 'flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md text-sm';
 
             modal.classList.remove('hidden');
             setTimeout(() => input.focus(), 150);
