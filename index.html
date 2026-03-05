@@ -8200,10 +8200,9 @@
                             // 🚀 NEW: Attach startedAt timestamp for duration calculation
                             const readingDataWithTime = { ...readingData, startedAt: actualReadingStartedAt };
                             displayReadingComprehensionForStudent(readingDataWithTime);
-                            // Only reset submit button if mode changed (not when resuming from pause)
-                            if (modeChanged) {
-                                document.getElementById('submit-reading-btn').disabled = false;
-                            }
+                            // 🚀 FIX: 不在這裡重新啟用送出按鈕
+                            // displayReadingComprehensionForStudent 內部已有倒數計時器邏輯
+                            // 它會在 180 秒後才啟用送出按鈕，此處不可覆蓋
                         }
                         // 啟動排行榜監聽（如果尚未啟動）
                         if (modeChanged) {
