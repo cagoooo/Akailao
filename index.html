@@ -379,6 +379,34 @@
             /* Blue */
         }
 
+        /* 📖 閱讀測驗模式：教師端容器改為較少欄數，讓卡片更寬更易讀 */
+        .reading-mode-container {
+            grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+        }
+
+        @media (min-width: 640px) {
+            .reading-mode-container {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .reading-mode-container {
+                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            }
+        }
+
+        @media (min-width: 1280px) {
+            .reading-mode-container {
+                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+            }
+        }
+
+        /* 閱讀測驗卡片高度自動延伸 */
+        .reading-mode-container .student-response-item {
+            min-height: auto;
+        }
+
         /* 互評投票相關樣式 */
         .peer-review-work-item {
             background-color: white;
@@ -8843,7 +8871,9 @@
                     const questions = readingComprehensionData.questions;
                     let correctCount = 0;
 
-                    answerContentHTML = `<div class="flex flex-col w-full" style="font-size: 10px; gap: 1px;">`;
+                    answerContentHTML = `<div class="w-full" style="font-size: 12px;">`;
+                    // 📖 改用兩欄 grid 顯示答案，節省空間又清晰
+                    answerContentHTML += `<div class="grid gap-x-2" style="grid-template-columns: 1fr 1fr;">`;
                     studentAnswers.forEach((ans, index) => {
                         if (questions[index]) {
                             // 🚀 CRITICAL FIX: 先判斷送分題再判斷正確，避免邏輯反向
@@ -8854,23 +8884,26 @@
                             // 🚀 FIXED: 正確的優先級 - 送分題優先，然後正確，最後錯誤
                             let readingIconClass = '';
                             if (isGivePointsReading) {
-                                // 送分題：無論學生答什麼都顯示黃色⚠️
-                                readingIconClass = 'fa-exclamation-triangle text-yellow-500'; // 送分題：黃色三角形
+                                readingIconClass = 'fa-exclamation-triangle text-yellow-500';
                             } else if (isCorrect) {
-                                readingIconClass = 'fa-check-circle text-green-500'; // 正確：綠色勾勾
+                                readingIconClass = 'fa-check-circle text-green-500';
                             } else {
-                                readingIconClass = 'fa-times-circle text-red-500'; // 錯誤：紅色叉叉
+                                readingIconClass = 'fa-times-circle text-red-500';
                             }
+                            const wrongHint = !isCorrect && ans > 0 && questions[index].correctAnswer !== 0
+                                ? `<span style="color:#888;font-size:10px;">(✓${questions[index].correctAnswer})</span>`
+                                : '';
                             answerContentHTML += `
-                                <div class="flex items-center whitespace-nowrap" style="gap: 4px; line-height: 1.3;">
-                                    <i class="fas ${readingIconClass}" style="font-size: 11px;"></i>
-                                    <span class="font-bold" style="min-width: 22px;">Q${index + 1}</span>
-                                    <span class="text-gray-700" style="min-width: 32px;">答:${ans || '未'}</span>
-                                    ${!isCorrect && ans > 0 && questions[index].correctAnswer !== 0 ? `<span class="text-gray-500" style="font-size: 9px;">(正確:${questions[index].correctAnswer})</span>` : ''}
+                                <div class="flex items-center" style="gap:3px; padding:1px 0;">
+                                    <i class="fas ${readingIconClass}" style="font-size:11px;flex-shrink:0;"></i>
+                                    <span style="font-weight:600;min-width:20px;">Q${index + 1}</span>
+                                    <span style="color:#0369a1;font-weight:bold;">答${ans || '?'}</span>
+                                    ${wrongHint}
                                 </div>
                             `;
                         }
                     });
+                    answerContentHTML += `</div>`; // close grid
 
                     // 計算正確率和排名
                     const accuracy = Math.round((correctCount / questions.length) * 100);
@@ -8940,13 +8973,14 @@
                         `;
                     }
 
-                    answerContentHTML += `<div class="font-bold mt-1 pt-1 border-t flex items-center justify-between ${correctCount === questions.length ? 'text-green-600' : 'text-gray-700'}" style="font-size: 10px;">
+                    answerContentHTML += `<div style="font-weight:700; margin-top:6px; padding-top:6px; border-top:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:${correctCount === questions.length ? '#16a34a' : '#374151'}">
                         <span>正確: ${correctCount}/${questions.length} (${accuracy}%)</span>
                         ${rankBadge}
                     </div>
                     ${teacherTimeDisplay}
                     ${highlightScoreDisplay}
                     </div>`;
+
                 } catch (e) {
                     answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
                 }
@@ -8965,6 +8999,15 @@
             const cardBgClass = isDistracted ? 'bg-red-50 border-2 border-red-400' : '';
 
             card.className = `student-response-item ${cardBgClass}`;
+
+            // 📖 閱讀測驗模式：動態切換容器為較少欄數（讓卡片更寬）
+            if (container) {
+                if (mode === 'reading_comprehension') {
+                    container.classList.add('reading-mode-container');
+                } else {
+                    container.classList.remove('reading-mode-container');
+                }
+            }
             card.innerHTML = `
                 <div class="name-box flex items-center justify-between">
                     <span>${student.name}</span>
