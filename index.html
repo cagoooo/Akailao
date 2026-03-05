@@ -407,7 +407,69 @@
             min-height: auto;
         }
 
-        /* 互評投票相關樣式 */
+        /* 📚 閱讀測驗排行榜：浮動於畫面右下角，不影響文件流 */
+        #reading-leaderboard {
+            position: fixed;
+            bottom: 80px;
+            right: 16px;
+            z-index: 1000;
+            width: 300px;
+            max-width: calc(100vw - 32px);
+            transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        #reading-leaderboard.hidden {
+            display: block !important;
+            /* 覆寫 hidden 預設行為，改用動画隱藏 */
+            transform: translateX(calc(100% + 32px));
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #reading-leaderboard-inner {
+            background: linear-gradient(135deg, #fffbeb 0%, #ffffff 50%, #fffbeb 100%);
+            border: 2px solid #fbbf24;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        #reading-leaderboard-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: linear-gradient(90deg, #fef3c7, #fde68a);
+            border-bottom: 1px solid #fbbf24;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        #reading-leaderboard-body {
+            padding: 10px;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            max-height: 500px;
+            overflow: hidden;
+        }
+
+        #reading-leaderboard-body.collapsed {
+            max-height: 0;
+            opacity: 0;
+            padding: 0 10px;
+        }
+
+        #reading-leaderboard-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+
+        #reading-leaderboard-list>div {
+            font-size: 11px;
+        }
+
         .peer-review-work-item {
             background-color: white;
             border-radius: 0.75rem;
@@ -2699,20 +2761,23 @@
             <div id="interaction-reading-comprehension" class="hidden p-4">
                 <h3 class="text-2xl font-bold text-center mb-4">閱讀測驗</h3>
 
-                <!-- 前十名排行榜 -->
-                <div id="reading-leaderboard" class="max-w-full mx-auto mb-4 hidden">
-                    <div
-                        class="bg-gradient-to-r from-yellow-50 via-white to-yellow-50 border-2 border-yellow-300 rounded-lg p-3 sm:p-4 shadow-md">
-                        <h4
-                            class="text-base sm:text-lg font-bold text-yellow-700 mb-3 flex items-center justify-center">
-                            <i class="fas fa-trophy mr-2"></i>前十名排行榜 🏆
-                        </h4>
-                        <div id="reading-leaderboard-list"
-                            class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-2 sm:gap-3">
-                            <!-- 排行榜將動態生成在這裡 -->
+                <!-- 前十名排行榜：固定浮動於畫面右下角，不推擠閱讀版面 -->
+                <div id="reading-leaderboard" class="hidden">
+                    <div id="reading-leaderboard-inner">
+                        <div id="reading-leaderboard-header"
+                            onclick="document.getElementById('reading-leaderboard-body').classList.toggle('collapsed'); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-up'); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-down');"
+                            title="點擊收折/展開排行榜">
+                            <span style="font-size:13px; font-weight:700; color:#92400e;">
+                                <i class="fas fa-trophy mr-1 text-yellow-600"></i>前十名排行榜 🏆
+                            </span>
+                            <i class="fas fa-chevron-up lb-chevron text-yellow-700" style="font-size:12px;"></i>
+                        </div>
+                        <div id="reading-leaderboard-body">
+                            <div id="reading-leaderboard-list"></div>
                         </div>
                     </div>
                 </div>
+
 
                 <!-- 響應式左右分欄容器：桌面50/50，平板45/55，手機上下堆疊 -->
                 <div class="flex flex-col md:flex-row gap-4 max-w-full mx-auto">
@@ -8531,16 +8596,7 @@
                 console.log('[updateReadingLeaderboardDisplay] ✅ Rendered', rankedStudents.length, 'students in leaderboard');
                 leaderboardContainer.classList.remove('hidden');
 
-                // 🚀 NEW: 只在學生提交答案後才滾動到排行榜（防止作答時被打斷）
-                if (shouldScrollToTop) {
-                    setTimeout(() => {
-                        leaderboardContainer.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'start'
-                        });
-                        console.log('[Leaderboard] Scrolled to top after submission');
-                    }, 300); // 延遲300ms確保DOM已渲染
-                }
+                // 🚀 FIX: 移除 scrollIntoView，排行榜已是 fixed overlay，不需要跳頁
             } else {
                 // 🚀 FIX: 清空排行榜並隱藏容器，防止顯示舊數據
                 leaderboardList.innerHTML = '';
