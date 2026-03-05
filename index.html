@@ -16615,153 +16615,76 @@
                 });
             }
 
-            // 🚀 CRITICAL FIX: 無條件重新設置180秒倒計時（無論新會議還是重新開始），所有學生統一從服務器時間開始
-            console.log('[displayReadingComprehensionForStudent] Setting up/resetting 3-minute (180-second) countdown timer');
-            console.log('[displayReadingComprehensionForStudent] readingData object:', readingData);
+            // 🚀 FIX: 以學生看到試卷的「本地時間」作為倒數起點，確保每位學生都有完整 3 分鐘
+            // 使用 window.studentReadingLocalStartTime 記錄，若同一測驗已計時則不重置
+            console.log('[displayReadingComprehensionForStudent] Setting up 3-minute (180-second) local countdown timer');
             const submitBtn = document.getElementById('submit-reading-btn');
-            const startTime = readingData.startedAt;
-            console.log('[displayReadingComprehensionForStudent] ⏰ startTime value:', startTime, 'type:', typeof startTime, 'constructor:', startTime?.constructor?.name);
 
-            if (startTime) {
-                // 禁用提交按鈕，直到180秒過去
-                submitBtn.disabled = true;
-                submitBtn.classList.remove('btn-primary');
-                submitBtn.classList.add('btn-gray');
-                submitBtn.textContent = '⏳ 校準計時器中...';
-                console.log('[Timer] ⏰ startTime object:', startTime, 'type:', typeof startTime);
+            // 取得或初始化學生本地起始時間（只在新測驗開始時重置）
+            const serverRefTime = readingData.startedAt;
+            let serverRefMs = null;
+            if (serverRefTime) {
+                if (serverRefTime instanceof Date) {
+                    serverRefMs = serverRefTime.getTime();
+                } else if (serverRefTime && typeof serverRefTime.toMillis === 'function') {
+                    serverRefMs = serverRefTime.toMillis();
+                } else if (serverRefTime && typeof serverRefTime.toDate === 'function') {
+                    serverRefMs = serverRefTime.toDate().getTime();
+                } else if (typeof serverRefTime === 'number') {
+                    serverRefMs = serverRefTime;
+                }
+            }
 
-                // 🚀 CRITICAL FIX: 在啟動計時器前，先等待時間同步完成
-                // 這確保第一次 elapsedMs 計算使用正確的偏移量
-                const startCountdownAfterSync = async () => {
-                    // 🚀 FIX: 捕獲當前 Promise 實例，避免 Promise 被重寫後無法 resolve
-                    const currentSyncPromise = window.serverTimeSyncPromise;
+            // 🚀 KEY: 若已有本地計時且是同一場測驗（serverRefMs 相同），不重置計時器
+            const isSameExam = serverRefMs && window.studentReadingServerRef === serverRefMs;
+            if (!isSameExam) {
+                // 新測驗：記錄學生看到試卷的當下為本地起始時間
+                window.studentReadingLocalStartTime = Date.now();
+                window.studentReadingServerRef = serverRefMs;
+                console.log('[Timer] 🆕 新測驗開始，本地計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+            } else {
+                console.log('[Timer] 🔄 同一測驗重新渲染，保留原計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+            }
 
-                    // 等待時間同步完成（如果 Promise 存在）
-                    if (currentSyncPromise) {
-                        console.log('[Timer] ⏳ 等待時間同步 Promise...');
-                        try {
-                            const syncResult = await Promise.race([
-                                currentSyncPromise,
-                                new Promise((_, reject) => setTimeout(() => reject(new Error('Sync timeout')), 5000))
-                            ]);
-                            console.log('[Timer] ✅ 時間同步完成:', syncResult);
-                        } catch (error) {
-                            console.warn('[Timer] ⚠️ 時間同步超時或失敗:', error.message);
-                            // 設置降級值
-                            if (!window.serverTimeOffsetReady) {
-                                window.serverTimeOffset = 0;
-                                window.serverTimeOffsetReady = true;
-                                showMessage('⚠️ 計時器校準超時，使用本地時間', 'warning');
-                            }
-                        }
-                    } else if (!window.serverTimeOffsetReady) {
-                        // 沒有 Promise 且偏移量未就緒，等待一段時間
-                        console.log('[Timer] ⏳ 等待 serverTimeOffsetReady 標誌...');
-                        for (let i = 0; i < 10; i++) {
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                            if (window.serverTimeOffsetReady) {
-                                console.log('[Timer] ✅ 偏移量已就緒');
-                                break;
-                            }
-                        }
-                        if (!window.serverTimeOffsetReady) {
-                            console.warn('[Timer] ⚠️ 等待偏移量超時，使用本地時間');
-                            window.serverTimeOffset = 0;
-                            window.serverTimeOffsetReady = true;
-                            showMessage('⚠️ 計時器校準超時，使用本地時間', 'warning');
-                        }
-                    }
+            // 清除舊計時器
+            if (window.readingCountdownInterval) {
+                clearInterval(window.readingCountdownInterval);
+                window.readingCountdownInterval = null;
+            }
 
-                    // 現在偏移量已就緒，啟動計時器
-                    console.log('[Timer] 🕐 偏移量:', window.serverTimeOffset, 'ms (', ((window.serverTimeOffset || 0) / 1000).toFixed(1), '秒)');
+            // 禁用提交按鈕，開始倒數
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
 
-                    // 啟動倒計時更新
-                    let firstLogPrinted = false;
-                    const serverOffset = window.serverTimeOffset || 0;
+            const updateCountdown = () => {
+                const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
+                const remainingMs = 180000 - elapsedMs; // 3分鐘 = 180秒 = 180000ms
 
-                    const updateCountdown = () => {
-                        // 使用已確定的偏移量校正本地時間
-                        const localNow = Date.now();
-                        const now = localNow + serverOffset; // 校正後的「伺服器等效時間」
-
-                        let startTimeMs;
-                        // 🚀 ROBUST: 安全地轉換 startTime 為毫秒 - 支援多種Firestore時間戳格式
-                        if (startTime instanceof Date) {
-                            startTimeMs = startTime.getTime();
-                            if (!firstLogPrinted) { console.log('[Timer] ✓ Type: Date object, startTimeMs:', startTimeMs, 'ISO:', new Date(startTimeMs).toISOString()); }
-                        } else if (typeof startTime === 'object' && startTime !== null && startTime.toDate && typeof startTime.toDate === 'function') {
-                            // Firestore Timestamp 物件
-                            startTimeMs = startTime.toDate().getTime();
-                            if (!firstLogPrinted) { console.log('[Timer] ✓ Type: Firestore Timestamp (toDate), startTimeMs:', startTimeMs, 'ISO:', new Date(startTimeMs).toISOString()); }
-                        } else if (typeof startTime === 'object' && startTime !== null && startTime.toMillis && typeof startTime.toMillis === 'function') {
-                            // 另一種 Firestore Timestamp 格式
-                            startTimeMs = startTime.toMillis();
-                            if (!firstLogPrinted) { console.log('[Timer] ✓ Type: Firestore Timestamp (toMillis), startTimeMs:', startTimeMs, 'ISO:', new Date(startTimeMs).toISOString()); }
-                        } else if (typeof startTime === 'number') {
-                            startTimeMs = startTime;
-                            if (!firstLogPrinted) { console.log('[Timer] ✓ Type: Number (ms), startTimeMs:', startTimeMs, 'ISO:', new Date(startTimeMs).toISOString()); }
-                        } else {
-                            console.error('[Timer] ❌ CRITICAL: Cannot convert startTime to milliseconds!', 'startTime:', startTime, 'type:', typeof startTime, 'keys:', Object.keys(startTime || {}));
-                            startTimeMs = now; // 降級：使用當前時間
-                            if (!firstLogPrinted) { console.log('[Timer] ⚠️ Fallback: using current time, will show 3:00'); }
-                        }
-                        const elapsedMs = now - startTimeMs;
-                        const remainingMs = 180000 - elapsedMs; // 3分鐘 = 180秒 = 180000ms
-
-                        // 首次打印詳細日誌（包含時間同步信息）
-                        if (!firstLogPrinted) {
-                            console.log('[Timer] 🕐 時間同步計算:');
-                            console.log('[Timer]   - 本地時間:', new Date(localNow).toISOString());
-                            console.log('[Timer]   - 偏移量:', serverOffset, 'ms');
-                            console.log('[Timer]   - 校正後時間:', new Date(now).toISOString());
-                            console.log('[Timer]   - 開始時間:', new Date(startTimeMs).toISOString());
-                            console.log('[Timer]   - 已過時間:', elapsedMs, 'ms (', (elapsedMs / 1000).toFixed(1), '秒)');
-                            console.log('[Timer]   - 剩餘時間:', remainingMs, 'ms (', (remainingMs / 1000).toFixed(1), '秒)');
-                            firstLogPrinted = true;
-                        }
-
-                        if (remainingMs <= 0) {
-                            // 180秒已過，啟用提交按鈕
-                            console.log('[displayReadingComprehensionForStudent] 180 seconds passed (3 minutes), enabling submit button');
-                            submitBtn.disabled = false;
-                            submitBtn.classList.remove('btn-gray');
-                            submitBtn.classList.add('btn-primary');
-                            submitBtn.textContent = '送出答案 ✉️';
-                            // 停止計時器
-                            if (window.readingCountdownInterval) {
-                                clearInterval(window.readingCountdownInterval);
-                                window.readingCountdownInterval = null;
-                            }
-                        } else {
-                            // 還需要等待，更新倒計時顯示
-                            const totalSeconds = Math.ceil(remainingMs / 1000);
-                            const minutes = Math.floor(totalSeconds / 60);
-                            const seconds = totalSeconds % 60;
-                            submitBtn.textContent = `⏳ 請先閱讀... (${minutes}:${seconds.toString().padStart(2, '0')})`;
-                        }
-                    };
-
-                    // 立即執行一次
-                    updateCountdown();
-
-                    // 清除舊的計時器（如果存在）
+                if (remainingMs <= 0) {
+                    // 180秒已過，啟用提交按鈕
+                    console.log('[Timer] ✅ 3 分鐘已過，啟用送出按鈕');
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('btn-gray');
+                    submitBtn.classList.add('btn-primary');
+                    submitBtn.textContent = '送出答案 ✉️';
                     if (window.readingCountdownInterval) {
                         clearInterval(window.readingCountdownInterval);
+                        window.readingCountdownInterval = null;
                     }
+                } else {
+                    // 更新倒計時顯示
+                    const totalSeconds = Math.ceil(remainingMs / 1000);
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = totalSeconds % 60;
+                    submitBtn.textContent = `⏳ 請先閱讀... (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                }
+            };
 
-                    // 每500ms更新一次倒計時
-                    window.readingCountdownInterval = setInterval(updateCountdown, 500);
-                };
-
-                // 🚀 CRITICAL: 立即調用異步函數啟動計時器
-                startCountdownAfterSync();
-            } else {
-                // 如果沒有 startedAt 時間，直接啟用（向後相容）
-                submitBtn.disabled = false;
-                submitBtn.classList.remove('btn-gray');
-                submitBtn.classList.add('btn-primary');
-                submitBtn.textContent = '送出答案 ✉️';
-            }
+            // 立即執行一次
+            updateCountdown();
+            // 每500ms更新一次倒計時
+            window.readingCountdownInterval = setInterval(updateCountdown, 500);
 
             // 🚀 OPTIMIZATION: 手動觸發排行榜更新（防止題目更新時排行榜不刷新）
             // 這確保了即使沒有新的學生作答，排行榜也會反映最新的題目數據
@@ -16944,19 +16867,15 @@
                 return;
             }
 
-            // 🚀 NEW OPTIMIZATION: 驗證時間限制是否已經過了180秒（3分鐘）（防止亂猜）
-            if (readingComprehensionData && readingComprehensionData.startedAt) {
-                const now = new Date().getTime();
-                const startTimeMs = readingComprehensionData.startedAt instanceof Date
-                    ? readingComprehensionData.startedAt.getTime()
-                    : (readingComprehensionData.startedAt.toDate ? readingComprehensionData.startedAt.toDate().getTime() : readingComprehensionData.startedAt.getTime());
-                const elapsedMs = now - startTimeMs;
-
+            // 🚀 FIX: 使用學生本地計時驗證是否已閱讀 3 分鐘（與 UI 倒數計時一致）
+            if (window.studentReadingLocalStartTime) {
+                const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
                 if (elapsedMs < 180000) {
-                    // 還沒有過180秒（3分鐘），拒絕提交
-                    console.log('[submitReadingAnswer] Time limit not met, elapsed:', elapsedMs, 'ms');
+                    console.log('[submitReadingAnswer] Time limit not met (local), elapsed:', elapsedMs, 'ms');
                     const remainingSeconds = Math.ceil((180000 - elapsedMs) / 1000);
-                    showMessage(`⏳ 請至少花${remainingSeconds}秒閱讀文章！`, 'warning');
+                    const remainingMinutes = Math.floor(remainingSeconds / 60);
+                    const remainingSecs = remainingSeconds % 60;
+                    showMessage(`⏳ 請再閱讀 ${remainingMinutes}:${remainingSecs.toString().padStart(2, '0')}，才能提交答案！`, 'warning');
                     return;
                 }
             }
