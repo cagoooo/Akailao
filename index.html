@@ -325,6 +325,14 @@
             justify-content: center;
         }
 
+        /* 📖 閱讀測驗：answer-box 改為靠上靠左對齊，防止多行內容跑版 */
+        .reading-mode-container .student-response-item .answer-box {
+            align-items: flex-start;
+            justify-content: flex-start;
+            overflow-y: auto;
+            max-height: 320px;
+        }
+
         .student-response-item .answer-box img {
             max-width: 100%;
             /* Make images responsive within the answer box */
@@ -433,7 +441,10 @@
             border: 2px solid #fbbf24;
             border-radius: 12px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
+            overflow: visible;
+            display: flex;
+            flex-direction: column;
+            max-height: calc(100vh - 120px);
         }
 
         #reading-leaderboard-header {
@@ -443,19 +454,24 @@
             padding: 8px 12px;
             background: linear-gradient(90deg, #fef3c7, #fde68a);
             border-bottom: 1px solid #fbbf24;
+            border-radius: 10px 10px 0 0;
             cursor: pointer;
             user-select: none;
+            flex-shrink: 0;
         }
 
         #reading-leaderboard-body {
             padding: 10px;
             transition: max-height 0.3s ease, opacity 0.3s ease;
-            max-height: 500px;
-            overflow: hidden;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+            overflow-x: hidden;
+            border-radius: 0 0 10px 10px;
         }
 
         #reading-leaderboard-body.collapsed {
             max-height: 0;
+            overflow: hidden;
             opacity: 0;
             padding: 0 10px;
         }
