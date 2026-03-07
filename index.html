@@ -15409,7 +15409,17 @@
                         listenToClassroomPresence(); // Ensure presence listener is established here and remains active
                         showView('teacherMenu');
                     } else {
-                        showView('entry');
+                        // 🚀 UX 優化：若 URL 含有 ?classroom= 參數，自動以學生身份進入姓名輸入頁
+                        const _urlParams = new URLSearchParams(window.location.search);
+                        const _classroomParam = _urlParams.get('classroom');
+                        if (_classroomParam) {
+                            document.getElementById('student-classroom-code-input').value = _classroomParam;
+                            currentRole = 'student';
+                            showView('studentName');
+                            console.log('[Auth] ✅ 偵測到 classroom URL 參數，自動跳轉至學生姓名輸入頁:', _classroomParam);
+                        } else {
+                            showView('entry');
+                        }
                     }
                 } else {
                     // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
