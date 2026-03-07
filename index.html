@@ -13178,6 +13178,10 @@
                 if (classroomParam) {
                     document.getElementById('student-classroom-code-input').value = classroomParam;
                     console.log('[Student] ✅ 課堂碼已從 URL 自動填充:', classroomParam);
+                    // 🚀 UX 優化：有 classroom 參數時，自動切換為學生模式，跳過角色選擇畫面
+                    currentRole = 'student';
+                    showView('studentName');
+                    console.log('[Student] ✅ 已自動跳轉至學生姓名輸入頁面，跳過角色選擇');
                 }
             })();
 
