@@ -1,0 +1,357 @@
+
+Matches for submitReadingAnswer:
+14606: document.getElementById('submit-reading-btn')?.addEventListener('click', submitReadingAnswer);
+17262: async function submitReadingAnswer() {
+  17263: const questionsContainer = document.getElementById('reading-questions-container');
+  17264: const submitBtn = document.getElementById('submit-reading-btn');
+  17266: // 🚀 FIX: 防止重複點擊（檢查按鈕是否已被禁用）
+  17267: if (submitBtn.disabled) {
+17268: console.log('[submitReadingAnswer] Button already disabled, ignoring click');
+17277: console.log('[submitReadingAnswer] Time limit not met (local), elapsed:', elapsedMs, 'ms');
+17323: console.log('[submitReadingAnswer] 🔍 DEBUG: classroomCode =', classroomCode, ', storageKey =', storageKey);
+17326: console.log('[submitReadingAnswer] 🔍 DEBUG: localStorage data exists?', !!saved);
+17331: console.log('[submitReadingAnswer] 🔍 DEBUG: Parsed highlights count =', highlights.length);
+17332: console.log('[submitReadingAnswer] 🔍 DEBUG: First 3 highlights =', highlights.slice(0, 3));
+17335: console.log('[submitReadingAnswer] Found', highlights.length, 'highlights, calculating score...');
+17343: console.log('[submitReadingAnswer] 🔍 DEBUG: totalTextLength =', totalTextLength);
+17353: console.log('[submitReadingAnswer] ✅ Highlight score result:', JSON.stringify(scoreResult, null, 2));
+17362: console.log('[submitReadingAnswer] ✅ highlightAnalysis attached to extraFields');
+17364: console.log('[submitReadingAnswer] ⚠️ No highlights found in saveData');
+17384: console.log('[submitReadingAnswer] ⚠️ No saved highlights in localStorage for key:', storageKey);
+17385: console.log('[submitReadingAnswer] 🔍 DEBUG: All localStorage keys:', Object.keys(localStorage));
+17389: console.error('[submitReadingAnswer] ❌ Failed to calculate highlight score:', highlightError);
+17404: console.log(`[submitReadingAnswer] Question ${index} is a give-points question, auto-correct`);
+17418: console.log('[submitReadingAnswer] Calculated scores:', { baseScore, highlightBonus, totalScore });
+17512: console.warn('[submitReadingAnswer] Failed to update leaderboard after submission:', error);
+17553: console.error('[submitReadingAnswer] Submit failed:', error);
+
+Matches for renderReadingLeaderboard:
+
+Matches for renderLeaderboard:
+
+Matches for highlighter:
+2237: .highlighter-btn,
+2238: .teacher-highlighter-btn {
+2253: .highlighter-btn:hover,
+2254: .teacher-highlighter-btn:hover {
+2260: .highlighter-btn.active,
+2261: .teacher-highlighter-btn.active {
+2266: .highlighter-preview {
+2309: .highlighter-btn,
+2310: .teacher-highlighter-btn {
+2315: .highlighter-preview {
+3028: <i class="fas fa-highlighter mr-1"></i><span class="hidden sm:inline">螢光筆</span>
+3030: <button class="highlighter-btn" data-color="yellow" title="黃色螢光筆">
+3031: <span class="highlighter-preview bg-yellow-300"></span>
+3033: <button class="highlighter-btn" data-color="green" title="綠色螢光筆">
+3034: <span class="highlighter-preview bg-green-300"></span>
+3036: <button class="highlighter-btn" data-color="pink" title="粉色螢光筆">
+3037: <span class="highlighter-preview bg-pink-300"></span>
+3039: <button class="highlighter-btn" data-color="blue" title="藍色螢光筆">
+3040: <span class="highlighter-preview bg-blue-300"></span>
+3042: <button class="highlighter-btn" data-color="orange" title="橘色螢光筆">
+3043: <span class="highlighter-preview bg-orange-300"></span>
+3407: <i class="fas fa-highlighter mr-1"></i><span class="hidden sm:inline">螢光筆</span>
+3409: <button class="teacher-highlighter-btn" data-color="yellow" title="黃色螢光筆">
+3410: <span class="highlighter-preview bg-yellow-300"></span>
+3412: <button class="teacher-highlighter-btn" data-color="green" title="綠色螢光筆">
+3413: <span class="highlighter-preview bg-green-300"></span>
+3415: <button class="teacher-highlighter-btn" data-color="pink" title="粉色螢光筆">
+3416: <span class="highlighter-preview bg-pink-300"></span>
+3418: <button class="teacher-highlighter-btn" data-color="blue" title="藍色螢光筆">
+3419: <span class="highlighter-preview bg-blue-300"></span>
+3421: <button class="teacher-highlighter-btn" data-color="orange" title="橘色螢光筆">
+3422: <span class="highlighter-preview bg-orange-300"></span>
+4734: * 螢光筆管理模組 - Highlighter Manager Module
+4737: const HighlighterManager = (function () {
+  4738: // 學生端狀態
+  4739: let studentColor = 'yellow';
+  4740: let studentInitialized = false;
+  4741: let studentEraserMode = false; // 🚀 NEW: 橡皮擦模式狀態
+4895: console.log(`[Highlighter:${mode}] Already initialized`);
+4899: console.log(`[Highlighter:${mode}] Initializing highlighter functionality`);
+  4901: // 設置顏色選擇按鈕事件
+  4902: const colorButtons = document.querySelectorAll(buttonSelector);
+  4903: colorButtons.forEach(btn => {
+  4904: const newBtn = btn.cloneNode(true);
+4922: console.log(`[Highlighter:${mode}] Color changed to:`, colorStateRef.value);
+4934: console.log(`[Highlighter:${mode}] 🔍 Found eraser button, setting up event listener`);
+4944: console.log(`[Highlighter:${mode}] ✓ Eraser mode activated`);
+4952: console.log(`[Highlighter:${mode}] ✓ Eraser mode deactivated`);
+4955: console.log(`[Highlighter:${mode}] ✓ Eraser button initialized`);
+4957: console.warn(`[Highlighter:${mode}] ⚠️ Eraser button NOT found - ID: ${eraserButtonId}`);
+4979: console.log(`[Highlighter:${mode}] ✓ Initialization complete`);
+4987: console.log('[Highlighter] Skip init - not student role');
+4993: console.log('[Highlighter:student] Delayed init started - verifying DOM elements');
+5000: console.warn('[Highlighter:student] eraser-btn-reading not found in DOM');
+5003: console.warn('[Highlighter:student] reading-text-display not found in DOM');
+5010: buttonSelector: '.highlighter-btn',
+5125: buttonSelector: '.teacher-highlighter-btn',
+5165: console.log(`[Highlighter:${mode}] ✓ Erased highlight: ${markText.substring(0, 20)}...`);
+5173: console.log(`[Highlighter:${mode}] ✓ ${erasedCount} highlight(s) erased`);
+5176: console.warn(`[Highlighter:${mode}] Error during erase:`, error);
+5189: console.log(`[Highlighter:${mode}] Text selected:`, selectedText.substring(0, 20) + '...', 'Eraser mode:', eraserModeRef.value);
+5223: console.log(`[Highlighter:${mode}] ✓ Erased: ${mark.textContent.substring(0, 20)}...`);
+5226: console.warn(`[Highlighter:${mode}] Error comparing ranges:`, e);
+5232: console.log(`[Highlighter:${mode}] ✓ Total erased: ${erasedCount}`);
+5252: console.log(`[Highlighter:${mode}] ✓ Highlight applied`);
+5256: console.warn(`[Highlighter:${mode}] Could not process selection:`, error.message);
+5296: console.warn(`[Highlighter:${mode}] Failed to save highlight:`, e);
+5311: console.log(`[Highlighter:${mode}] 🔍 DEBUG: Saving to storageKey =`, storageKey);
+5312: console.log(`[Highlighter:${mode}] 🔍 DEBUG: classroomCode =`, classroomCode);
+5313: console.log(`[Highlighter:${mode}] 🔍 DEBUG: Saving`, highlights.length, 'highlights');
+5316: console.log(`[Highlighter:${mode}] ✅ Saved`, highlights.length, 'highlights (offset-based) with hash:', contentHash);
+5320: console.log(`[Highlighter:${mode}] 🔍 DEBUG: Verification - data saved successfully?`, !!verification);
+5322: console.error(`[Highlighter:${mode}] ❌ Failed to save highlights:`, error);
+5332: console.log(`[Highlighter:${mode}] Skip restore - not student role`);
+5337: console.log(`[Highlighter:${mode}] Skip restore - no reading data`);
+5344: console.log(`[Highlighter:${mode}] No saved highlights found`);
+5353: console.log(`[Highlighter:${mode}] Content hash mismatch, clearing old highlights`);
+5360: console.log(`[Highlighter:${mode}] No highlights to restore`);
+5364: console.log(`[Highlighter:${mode}] Restoring`, highlights.length, 'highlights (version:', saveData.version || 1, ')');
+5377: console.warn(`[Highlighter:${mode}] Skip invalid highlight #${index}:`, h);
+5395: console.log(`[Highlighter:${mode}] ✓ Restored highlight #${index} at offset ${h.startOffset} (${h.text?.substring(0, 20)}...)`);
+5397: console.warn(`[Highlighter:${mode}] Failed to create range for highlight #${index}:`, h);
+5401: console.warn(`[Highlighter:${mode}] Error restoring highlight #${index}:`, err, h);
+5406: console.log(`[Highlighter:${mode}] Restoration summary: ${successCount} succeeded, ${failCount} failed out of ${highlights.length}`);
+5409: console.log(`[Highlighter:${mode}] Using legacy text-based restore`);
+5443: console.warn(`[Highlighter:${mode}] Failed to restore individual highlight:`, err);
+5449: console.log(`[Highlighter:${mode}] ✓ Highlights restored successfully`);
+5451: console.warn(`[Highlighter:${mode}] Failed to restore highlights:`, error);
+5463: console.log(`[Highlighter:${mode}] Clearing all highlights`);
+5479: console.log(`[Highlighter:${mode}] ✓ All highlights cleared`);
+5481: console.warn(`[Highlighter:${mode}] Failed to clear storage:`, error);
+5489: console.log(`[Highlighter:${mode}] Resetting highlighter`);
+5491: const buttonSelector = mode === 'teacher' ? '.teacher-highlighter-btn' : '.highlighter-btn';
+12860: // 🚀 NEW: Clear teacher highlighter data when ending reading comprehension
+12861: console.log('[endInteraction] Clearing teacher highlighter data');
+12862: HighlighterManager.clearTeacherHighlights();
+16859: console.log('[displayReadingComprehensionForStudent] Initializing highlighter');
+16860: HighlighterManager.init();
+16864: HighlighterManager.reset();
+16868: HighlighterManager.restoreHighlights();
+17388: } catch (highlightError) {
+17389: console.error('[submitReadingAnswer] ❌ Failed to calculate highlight score:', highlightError);
+18006: console.log('[showViewReadingQuestionsModal] Initializing teacher highlighter');
+18007: HighlighterManager.initTeacher();
+18013: HighlighterManager.restoreTeacherHighlights();
+
+Matches for bonus score:
+
+Matches for startTime:
+11708: const startTime = Date.now();
+11720: const elapsed = Date.now() - startTime;
+17015: // 使用 window.studentReadingLocalStartTime 記錄，若同一測驗已計時則不重置
+17038: window.studentReadingLocalStartTime = Date.now();
+17040: console.log('[Timer] 🆕 新測驗開始，本地計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+17042: console.log('[Timer] 🔄 同一測驗重新渲染，保留原計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+17057: const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
+17274: if (window.studentReadingLocalStartTime) {
+17275: const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
+17313: const startTimeMs = readingComprehensionData.startedAt.toMillis
+17316: const durationMs = Date.now() - startTimeMs;
+
+Matches for startReading:
+14605: document.getElementById('start-reading-interaction-btn')?.addEventListener('click', startReadingComprehension);
+16736: async function startReadingComprehension() {
+  16737: console.log('[startReadingComprehension] ✓ Button clicked - function initiated');
+  16739: const readingText = document.getElementById('reading-text-textarea').value.trim();
+  16740: const questionsText = document.getElementById('reading-questions-textarea').value.trim();
+  16741: console.log('[startReadingComprehension] Text length:', readingText.length, 'Questions length:', questionsText.length);
+16737: console.log('[startReadingComprehension] ✓ Button clicked - function initiated');
+  16739: const readingText = document.getElementById('reading-text-textarea').value.trim();
+  16740: const questionsText = document.getElementById('reading-questions-textarea').value.trim();
+  16741: console.log('[startReadingComprehension] Text length:', readingText.length, 'Questions length:', questionsText.length);
+16741: console.log('[startReadingComprehension] Text length:', readingText.length, 'Questions length:', questionsText.length);
+16744: console.warn('[startReadingComprehension] ⚠️ Missing text or questions');
+16751: console.warn('[startReadingComprehension] ⚠️ Question parsing failed');
+16756: console.log('[startReadingComprehension] ✓ Questions parsed successfully:', questions.length, 'questions');
+16761: console.log('[startReadingComprehension] ✓ Teacher highlight hash reset for new content');
+16765: console.log('[startReadingComprehension] ✓ Hiding modal...');
+16771: console.log('[startReadingComprehension] ✓ Calling setInteractionMode with reading data...');
+16773: console.log('[startReadingComprehension] ✓ setInteractionMode completed successfully');
+16776: console.log('[startReadingComprehension] ✓ Showing teacherMonitor view...');
+16778: console.log('[startReadingComprehension] ✅ COMPLETE - Teacher monitor view displayed');
+16780: console.error('[startReadingComprehension] ❌ ERROR during setInteractionMode:', error);
+
+Matches for saveReadingAnswer:
+
+Matches for submitQuiz:
+
+Matches for timeSpent:
+
+Matches for bonus:
+8697: let baseScore, highlightBonus, totalScore, correctCount;
+8705: highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+8706: totalScore = student.totalScore || (baseScore + highlightBonus);
+8708: console.log(`[Leaderboard] ✅ Using Firestore scores for ${student.name}:`, { baseScore, highlightBonus, totalScore, correctCount, scoreUpdateToken: student.scoreUpdateToken });
+8718: highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+8719: totalScore = baseScore + highlightBonus;
+8720: console.log(`[Leaderboard] Locally calculated scores for ${student.name}:`, { baseScore, highlightBonus, totalScore, correctCount });
+8732: highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+8827: let bonusDisplay = '';
+8828: if (student.highlightBonus > 0) {
+8829: bonusDisplay = `
+8831: 📝 +${student.highlightBonus}分
+8844: ${bonusDisplay}
+9781: let baseScore, highlightBonus, totalScore;
+9784: highlightBonus = student.highlightAnalysis ? student.highlightAnalysis.score : 0;
+9788: highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+9789: totalScore = baseScore + highlightBonus;
+9798: highlightBonus: highlightBonus,
+10611: const highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+10612: totalScore = baseScore + highlightBonus;
+16380: let accuracy, baseScore, totalScore, highlightBonus;
+16386: highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+16394: highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+16395: totalScore = baseScore + highlightBonus;
+16404: highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+16416: // 🚀 UPDATED: Sort by total score (base + bonus), then duration, then timestamp
+16513: csv += `${student.rank},${student.name},${Math.round(student.totalScore)},${student.baseScore},${student.highlightBonus},${student.correctCount}/${student.totalQuestions},${student.accuracy}%,${durationText},${answerTime}`;
+17412: const highlightBonus = extraFields.highlightAnalysis ? extraFields.highlightAnalysis.score : 0;
+17413: const totalScore = baseScore + highlightBonus;
+17418: console.log('[submitReadingAnswer] Calculated scores:', { baseScore, highlightBonus, totalScore });
+17596: const highlightBonus = (data.highlightAnalysis && data.highlightAnalysis.score) || 0;
+17597: const totalScore = data.totalScore || (baseScore + highlightBonus);
+17606: console.log('[setupStudentScoreListener] Initial snapshot:', { baseScore, highlightBonus, totalScore, scoreUpdateToken });
+17642: <span class="font-bold text-yellow-300">+${highlightBonus} 分</span>
+18409: const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+18412: const totalScore = baseScore + highlightBonus;
+18414: console.log(`[confirmEditAnswer] Student ${studentData.name}: baseScore=${baseScore}, highlightBonus=${highlightBonus}, totalScore=${totalScore}`);
+18871: const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+18872: const totalScore = baseScore + highlightBonus;
+18983: const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+18984: const totalScore = baseScore + highlightBonus;
+
+Matches for 作答:
+258: /* 學生作答結果卡片 */
+268: /* 新增：用於學生作答列表的卡片樣式 */
+541: /* 📊 班級作答進度條 */
+2660: class="btn btn-orange text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">未作答學生
+2708: <p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>
+3240: class="text-lg sm:text-xl md:text-2xl font-bold mb-2 sm:mb-4 text-gray-800 text-center">作答統計</h4>
+3363: <h4 class="text-2xl font-bold mb-4 text-gray-800">未作答學生名單</h4>
+3365: <p class="text-gray-500 text-sm">所有學生皆已作答或無學生在線</p>
+3686: <p class="text-gray-600 text-xs mt-1">💡 提示：請依照正確順序輸入項目，系統會自動打亂給學生作答</p>
+3949: <li>• 所有學生的作答與回應記錄</li>
+7540: document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+8555: setupClassProgressBar();  // 📊 功能1: 班級作答進度條
+8745: // 🚀 UPDATED: 排序邏輯 - 總分降序（基礎分+筆記加分） → 作答時長升序 → 提交時間升序 → 姓名升序
+8751: // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+8755: // 如果只有一方有作答時長，有作答時長的排在前面
+8770: // 🚀 OPTIMIZED: 計算排名 - 每個學生都有唯一排名（基於完整排序，包括作答時長）
+9060: answerContentHTML = `<p class="text-gray-400">尚未作答</p>`;
+9808: // 🚀 CRITICAL FIX: 排序邏輯 - 總分降序（基礎分+筆記加分）→ 作答時長升序 → 提交時間升序 → 姓名升序
+9814: // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+9818: // 如果只有一方有作答時長，有作答時長的排在前面
+9889: showMessage("無法監聽學生作答，請檢查連線。", "error");
+10374: modalUnsubmittedStudentNamesDiv.innerHTML = '<p class="text-gray-500 text-sm col-span-full">所有學生皆已作答或無學生在線</p>';
+10526: row += ',未作答,錯誤';
+10532: row += ',未作答,錯誤';
+10574: // 第三部分：學生答題結果（含排名和作答時長）
+10644: // 🚀 OPTIMIZED: 計算排名 - 每個學生都有唯一排名（基於完整排序，包括作答時長）
+10650: // 建立表頭（包含排名和作答時長）
+10651: let header = '排名,學生姓名,作答時長,提交時間';
+10662: // 🚀 NEW: 格式化作答時長
+10666: durationText = duration.longLabel.replace('作答 ', '');
+10677: // 開始建立行資料：排名、姓名、作答時長、提交時間
+10690: // 🚀 FIX: 送分題未作答也算正確
+10692: row += `,未作答,${result}`;
+10829: showMessage('正確答案已更新並重新批改所有作答！', 'success');
+10965: .text("目前沒有作答資料。");
+11128: .text("目前沒有學生作答任何自訂選擇題。");
+11268: .text("目前沒有學生作答閱讀測驗。");
+12707: document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+12978: showMessage(`✓ 閱讀測驗已重新開始！學生可以重新作答。`, 'success');
+13756: // 🚀 FIX: 抽籤邏輯改良 - 優先從已作答學生中抽籤，若無則從所有在線學生中抽籤
+13760: // 嘗試從已作答學生中抽籤
+13767: // 若無作答學生，從所有在線學生中抽籤（適用於搶答模式）
+15012: showMessage('目前沒有學生作答，無法開始互評！', 'error');
+16212: csv += `是非題作答統計\n`;
+16214: csv += `總作答人數,${totalResponses}\n`;
+16225: csv += `詳細作答記錄\n`;
+16226: csv += `學生姓名,答案,作答時間\n`;
+16247: csv += `自訂選擇題作答統計\n`;
+16249: csv += `總作答人數,${filteredResponses.length}\n`;
+16255: csv += `題號,題目,正確答案,作答人數,答對人數,答對率\n`;
+16277: csv += `學生詳細作答記錄\n`;
+16278: csv += `學生姓名,作答時間`;
+16297: csv += `,未作答,`;
+16318: csv += `選擇題作答統計\n`;
+16320: csv += `總作答人數,${totalResponses}\n`;
+16334: csv += `詳細作答記錄\n`;
+16335: csv += `學生姓名,答案,作答時間\n`;
+16422: // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+16426: // 如果只有一方有作答時長，有作答時長的排在前面
+16447: csv += `總作答人數,${rankedStudents.length}\n`;
+16466: csv += `題號,題目,正確答案,作答人數,答對人數,答對率\n`;
+16479: // 🚀 FIX: 送分題未作答也算正確（且計入作答人數）
+16494: csv += `排名,學生姓名,總分,基礎分,筆記加分,答對題數,答對率,作答時長,提交時間`;
+16509: durationText = duration.longLabel.replace('作答 ', '');
+16523: csv += `,未作答`;
+16883: // 🚀 OPTIMIZED: 如果是新會話，不檢查 Firebase，直接允許重新作答
+17093: // 這確保了即使沒有新的學生作答，排行榜也會反映最新的題目數據
+17122: // 如果全部作答，可以添加視覺提示（可選）
+17162: * @returns {object} { shortLabel: "2:30", longLabel: "作答 2分30秒" }
+17174: const longLabel = `作答 ${minutes}分${seconds}秒`;
+17501: // 這樣可以讓學生立即看到自己的排名，同時不會影響其他正在作答的學生
+17694: * 📊 功能1: 班級作答進度條（學生端）
+19440: <!-- 📊 班級作答進度條（學生端全局固定底部） -->
+
+Matches for 加分:
+3501: <p>修改答案後，系統將自動重新計算所有已提交學生的成績（包括基礎分和總分）。筆記加分不受影響。</p>
+5545: * 分析學生螢光筆標註品質並計算加分
+5701: // 統計資訊（先算覆蓋率，用於決定是否加分）
+5706: // 🚀 防止亂畫加分：如果覆蓋率 > 60%（全選或大部分），不加分
+5715: // 覆蓋率太高 = 亂畫，所有項目都不加分
+5716: console.log(`[calculateScore] 覆蓋率 ${coverageRate.toFixed(1)}% 超過60%，不加分`);
+5725: // 總分（各項加分累計，無上限）
+8688: // 計算每個學生的正確率和總分（基礎分+筆記加分）
+8732: highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+8733: totalScore: totalScore, // 🚀 NEW: 總分（基礎+加分）
+8745: // 🚀 UPDATED: 排序邏輯 - 總分降序（基礎分+筆記加分） → 作答時長升序 → 提交時間升序 → 姓名升序
+8747: // 1. 主要排序：總分高的在前（包含筆記加分）
+8826: // 🚀 NEW: 加分顯示（如果有筆記加分）
+9262: <span class="text-xs font-bold text-purple-700">📝 筆記加分:</span>
+9808: // 🚀 CRITICAL FIX: 排序邏輯 - 總分降序（基礎分+筆記加分）→ 作答時長升序 → 提交時間升序 → 姓名升序
+9810: // 1. 主要排序：總分高的在前（基礎分 + 筆記加分）
+10655: header += ',總分,總題數,正確率,筆記總加分,顏色多樣性分數,精確度分數,分段合理性分數,答案關聯度分數,時間分配分數,筆記顏色數,筆記覆蓋率,筆記段落數,標註時間跨度';
+16404: highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+16418: // 1. 主要排序：總分高的在前（基礎分+筆記加分）
+16492: // Student detailed records (sorted by rank) - 🚀 NEW: 加入筆記加分列
+16494: csv += `排名,學生姓名,總分,基礎分,筆記加分,答對題數,答對率,作答時長,提交時間`;
+16512: // 🚀 NEW: 輸出總分、基礎分、筆記加分
+17431: <div class="text-sm sm:text-base font-bold text-white mb-2">📝 筆記加分：</div>
+17468: 💡 筆記品質越好，加分越多！請點擊右上角 ✕ 關閉
+17641: <span>✨ 筆記加分：</span>
+18408: // 筆記加分保持不變
+
+Matches for 螢光筆:
+2236: /* 螢光筆功能樣式 - 學生端與教師端共用 */
+2274: /* 螢光筆標註效果 */
+3024: <!-- 螢光筆工具列 -->
+3028: <i class="fas fa-highlighter mr-1"></i><span class="hidden sm:inline">螢光筆</span>
+3030: <button class="highlighter-btn" data-color="yellow" title="黃色螢光筆">
+3033: <button class="highlighter-btn" data-color="green" title="綠色螢光筆">
+3036: <button class="highlighter-btn" data-color="pink" title="粉色螢光筆">
+3039: <button class="highlighter-btn" data-color="blue" title="藍色螢光筆">
+3042: <button class="highlighter-btn" data-color="orange" title="橘色螢光筆">
+3403: <!-- 教師端螢光筆工具列 -->
+3407: <i class="fas fa-highlighter mr-1"></i><span class="hidden sm:inline">螢光筆</span>
+3409: <button class="teacher-highlighter-btn" data-color="yellow" title="黃色螢光筆">
+3412: <button class="teacher-highlighter-btn" data-color="green" title="綠色螢光筆">
+3415: <button class="teacher-highlighter-btn" data-color="pink" title="粉色螢光筆">
+3418: <button class="teacher-highlighter-btn" data-color="blue" title="藍色螢光筆">
+3421: <button class="teacher-highlighter-btn" data-color="orange" title="橘色螢光筆">
+4734: * 螢光筆管理模組 - Highlighter Manager Module
+4735: * 管理學生端和教師端閱讀測驗的螢光筆標註功能
+4752: * 獲取螢光筆存儲鍵（基於角色和教室代碼）
+4879: * 通用初始化螢光筆功能
+4983: * 初始化學生端螢光筆功能
+5121: * 初始化教師端螢光筆功能
+5235: // 正常螢光筆標記模式
+5486: * 重置螢光筆狀態
+5522: * 教師端：重置螢光筆
+5545: * 分析學生螢光筆標註品質並計算加分
+16857: // 🚀 NEW: 初始化螢光筆功能（學生端）
+18005: // 🚀 NEW: 初始化教師端螢光筆功能

@@ -3057,6 +3057,13 @@
                             </button>
                         </div>
 
+                        <!-- 🚀 NEW: 學生螢光筆加分提示 -->
+                        <div
+                            class="bg-yellow-50 border-x border-b border-yellow-200 px-3 py-2 text-xs sm:text-sm text-yellow-800 flex items-start gap-2">
+                            <i class="fas fa-lightbulb text-yellow-500 mt-1 sm:mt-0.5"></i>
+                            <span><b>加分秘訣：</b>認真使用上面多種顏色的「螢光筆」畫記文章重點，若剛好與題目答案相關，系統將會根據你的筆記豐富度給予額外的<b>加分</b>喔！</span>
+                        </div>
+
                         <!-- 文章內容滾動區（固定高度） -->
                         <div
                             class="relative flex-1 bg-gray-50 border border-t-0 border-blue-200 rounded-b-lg overflow-hidden">
@@ -3085,10 +3092,11 @@
                             </span>
                         </div>
 
-                        <!-- 題目列表滾動區（固定高度） -->
-                        <div class="flex-1 bg-white border border-t-0 border-green-200 rounded-b-lg overflow-hidden">
+                        <!-- 題目列表滾動區（自動填滿剩餘空間） -->
+                        <div
+                            class="flex-1 bg-white border border-t-0 border-green-200 rounded-b-lg overflow-hidden relative min-h-[40vh] md:min-h-[60vh]">
                             <div id="reading-questions-container"
-                                class="h-[40vh] md:h-[60vh] overflow-y-auto p-4 space-y-4 sm:space-y-6">
+                                class="absolute inset-0 overflow-y-auto p-4 space-y-4 sm:space-y-6">
                                 <!-- 題目將動態生成在這裡 -->
                             </div>
                         </div>
@@ -4332,7 +4340,7 @@
         // Firebase configuration for the classroom interaction app
         // 若要使用自己的 Firebase 資料庫，請修改以下配置
         const __firebase_config = JSON.stringify({
-            apiKey: "AIzaSyDynhVxuEH5jlN3StcIpfiyVBQJBHZEfzo",
+            apiKey: "__FIREBASE_API_KEY__",
             authDomain: "class-4719f.firebaseapp.com",
             projectId: "class-4719f",
             storageBucket: "class-4719f.firebasestorage.app",
@@ -8826,9 +8834,12 @@
                     // 🚀 NEW: 加分顯示（如果有筆記加分）
                     let bonusDisplay = '';
                     if (student.highlightBonus > 0) {
+                        // 將筆記分析資料轉換為安全字串以便傳入 onclick
+                        const analysisJson = student.highlightAnalysis ? JSON.stringify(student.highlightAnalysis).replace(/'/g, "&#39;").replace(/"/g, "&quot;") : "null";
+                        const studentNameEscaped = student.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
                         bonusDisplay = `
-                            <div class="mt-1 text-xs sm:text-sm font-bold text-purple-600">
-                                📝 +${student.highlightBonus}分
+                            <div class="mt-1 text-xs sm:text-sm font-bold text-purple-600 cursor-pointer hover:underline hover:text-purple-800 transition-colors inline-block px-2 py-0.5 rounded-full hover:bg-purple-50" onclick="window.showHighlightBonusDetails('${studentNameEscaped}', '${analysisJson}')" title="點擊查看加分細項">
+                                📝 +${student.highlightBonus}分 <i class="fas fa-info-circle ml-0.5 text-[10px]"></i>
                             </div>
                         `;
                     }
@@ -8857,6 +8868,67 @@
                 leaderboardContainer.classList.add('hidden');
             }
         }
+
+        /**
+         * 🚀 NEW: 顯示筆記加分細項
+         */
+        window.showHighlightBonusDetails = function (studentName, analysisJsonStr) {
+            try {
+                if (analysisJsonStr === "null") {
+                    showMessage('無詳細分析資料', 'warning');
+                    return;
+                }
+                const analysis = JSON.parse(analysisJsonStr);
+                const feedbackMessage = `
+                    <div class="text-left space-y-2 sm:space-y-3 pr-4 sm:pr-8">
+                        <div class="text-base sm:text-lg font-bold text-white mb-2">🏅 ${studentName} 的筆記加分分析</div>
+                        <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
+                            <div class="text-sm sm:text-base font-bold text-yellow-300 mb-2 sm:mb-3">總加分：+${analysis.score} 分</div>
+                            
+                            <div class="space-y-1 text-xs sm:text-sm text-white">
+                                <div class="font-bold mb-1 text-yellow-200">評分明細：</div>
+                                <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                                    <span>🎨 顏色多樣性:</span>
+                                    <span class="font-bold text-yellow-300">+${analysis.breakdown?.colorDiversity || 0}</span>
+                                </div>
+                                <div class="flex justify-between items-center px-2 py-1">
+                                    <span>🎯 精確度 (重點抓取):</span>
+                                    <span class="font-bold text-yellow-300">+${analysis.breakdown?.precision || 0}</span>
+                                </div>
+                                <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                                    <span>📍 分段性 (有組織):</span>
+                                    <span class="font-bold text-yellow-300">+${analysis.breakdown?.segmentation || 0}</span>
+                                </div>
+                                <div class="flex justify-between items-center px-2 py-1">
+                                    <span>🔗 答題關聯 (與答案相符):</span>
+                                    <span class="font-bold text-yellow-300">+${analysis.breakdown?.relevance || 0}</span>
+                                </div>
+                                <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                                    <span>⏱️ 時間分配 (邊讀邊畫):</span>
+                                    <span class="font-bold text-yellow-300">+${analysis.breakdown?.timeDistribution || 0}</span>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3 pt-2 border-t border-white border-opacity-30 text-xs text-white text-opacity-90">
+                                <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                                    <div>標註: ${analysis.stats?.highlightCount || 0} 個</div>
+                                    <div>顏色: ${analysis.stats?.colorCount || 0} 種</div>
+                                    <div>覆蓋: ${Math.round(analysis.stats?.coverageRate || 0)}%</div>
+                                    <div>段落: ${analysis.stats?.segmentCount || 0} 段</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
+                            💡 同學們可以互相學習彼此的筆記技巧喔！請點擊右上角 ✕ 關閉
+                        </div>
+                    </div>
+                `;
+                showMessage(feedbackMessage, 'info', 0, true, true);
+            } catch (e) {
+                console.error('Failed to parse analysis data:', e);
+                showMessage('解析資料失敗', 'error');
+            }
+        };
 
         /**
          * (Student) Listens to all student responses and displays the top 10 leaderboard for reading comprehension.
@@ -17308,8 +17380,12 @@
             try {
                 // 🚀 NEW: Calculate duration if readingStartedAt exists
                 let extraFields = {};
-                if (readingComprehensionData.startedAt) {
-                    // 🚀 FIX: Convert Firestore Timestamp to milliseconds
+                // 🚀 FIX: 改為使用學生實際開始作答的本地時間計算作答時長
+                if (window.studentReadingLocalStartTime) {
+                    const durationMs = Date.now() - window.studentReadingLocalStartTime;
+                    extraFields.durationMs = durationMs;
+                } else if (readingComprehensionData.startedAt) {
+                    // 備用方案：如果本地計時異常，使用教師開啟時間
                     const startTimeMs = readingComprehensionData.startedAt.toMillis
                         ? readingComprehensionData.startedAt.toMillis()
                         : readingComprehensionData.startedAt.getTime();

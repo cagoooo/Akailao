@@ -32,6 +32,11 @@ jobs:
         with:
           enablement: true
 
+      - name: 🔑 注入環境變數
+        run: python .github/inject.py
+        env:
+          FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
         with:
