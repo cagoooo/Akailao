@@ -17,7 +17,7 @@ if os.path.exists('.env'):
                 except ValueError:
                     continue
 
-PORT = 8080
+PORT = 8888
 
 class DevHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
@@ -32,8 +32,11 @@ class DevHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
         parsed_path = urllib.parse.urlparse(self.path)
         clean_path = parsed_path.path
 
-        if clean_path == '/' or clean_path == '/index.html' or clean_path == '/set.html':
-            filepath = 'index.html' if clean_path == '/' else clean_path.lstrip('/')
+        if clean_path.endswith('/') or clean_path.endswith('/index.html') or clean_path.endswith('/set.html'):
+            if clean_path.endswith('/set.html'):
+                filepath = 'set.html'
+            else:
+                filepath = 'index.html'
             
             if os.path.exists(filepath):
                 self.send_response(200)
@@ -53,6 +56,10 @@ class DevHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
         # 其他靜態資源交給原本的類別處理
+        # 如果路徑包含 /Akailao/，我們試著把它切掉以符合本地檔案結構
+        if '/Akailao/' in self.path:
+            self.path = self.path.replace('/Akailao/', '/')
+            
         return super().do_GET()
 
 socketserver.TCPServer.allow_reuse_address = True
