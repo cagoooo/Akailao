@@ -437,6 +437,11 @@
             margin-right: auto;
         }
 
+        /* 🚀 NEW: 閱讀測驗專用寬版模式，釋放桌面端左右空間 */
+        #app-container.reading-test-wide-mode {
+            max-width: 98% !important;
+        }
+
         /* 隱藏列印時的縮放控制 */
         @media print {
             .no-print {
@@ -6307,6 +6312,12 @@
             const body = document.querySelector('body');
             body.classList.remove('initial-view-background');
 
+            // 🚀 NEW: 切換視圖時，除非是互動視圖，否則恢復標準寬度
+            const appContainer = document.getElementById('app-container');
+            if (appContainer && viewName !== 'studentInteraction') {
+                appContainer.classList.remove('reading-test-wide-mode');
+            }
+
             Object.values(views).forEach(view => view.classList.add('hidden'));
             if (views[viewName]) {
                 views[viewName].classList.remove('hidden');
@@ -6325,6 +6336,17 @@
          */
         function showInteractionUI(mode, isResumingFromPause = false) {
             Object.values(interactionUIs).forEach(ui => ui.classList.add('hidden'));
+
+            // 🚀 NEW: 判斷是否為閱讀測驗模式，動態釋放容器寬度限制
+            const appContainer = document.getElementById('app-container');
+            if (appContainer) {
+                if (mode === 'reading_comprehension') {
+                    appContainer.classList.add('reading-test-wide-mode');
+                } else {
+                    appContainer.classList.remove('reading-test-wide-mode');
+                }
+            }
+
             // Clear URL dispatch content if switching to another mode
             if (mode !== 'url_dispatch' && interactionUIs.url_dispatch) {
                 interactionUIs.url_dispatch.innerHTML = ''; // Clear content for URL/HTML dispatch
