@@ -4521,6 +4521,8 @@
             defaultGeminiApiKey: '__GEMINI_API_KEY__' // Placeholder for the fixed key
         };
 
+        const BUILTIN_KEY_MASK = '●●●●●●系統分流服務 (已內建)●●●●●●';
+
         // MODIFIED: Combined Dispatch Settings Global Object
         let dispatchSettings = {
             type: 'url', // 'url' or 'html'
@@ -12334,12 +12336,34 @@
             const testBtn = document.getElementById('api-key-guide-test-btn');
             const testResult = document.getElementById('api-key-test-result');
 
-            // 預填現有 Key
-            input.value = aiSettings.geminiApiKey || '';
-            input.type = 'password';
-            toggleBtn.innerHTML = '<i class="fas fa-eye"></i>';
+            // 預填現有 Key，若是內建則使用遮罩
+            const isBuiltin = !aiSettings.geminiApiKey || aiSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || aiSettings.geminiApiKey === '12345678';
+            if (isBuiltin) {
+                input.value = BUILTIN_KEY_MASK;
+                input.type = 'text'; // 遮罩模式直接顯示文字內容
+                toggleBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                toggleBtn.style.pointerEvents = 'none';
+            } else {
+                input.value = aiSettings.geminiApiKey;
+                input.type = 'password';
+                toggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                toggleBtn.style.pointerEvents = 'auto';
+            }
+            toggleBtn.innerHTML = input.type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
             testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
             testResult.innerHTML = '';
+
+            // 當使用者點擊或輸入時，如果是遮罩則清除
+            const clearMask = () => {
+                if (input.value === BUILTIN_KEY_MASK) {
+                    input.value = '';
+                    input.type = 'text';
+                    toggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    toggleBtn.style.pointerEvents = 'auto';
+                }
+            };
+            input.addEventListener('focus', clearMask);
+            input.addEventListener('input', clearMask);
 
             const hide = () => {
                 modal.classList.add('hidden');
@@ -12348,10 +12372,17 @@
                 closeBtn.removeEventListener('click', onCancel);
                 toggleBtn.removeEventListener('click', onToggle);
                 testBtn.removeEventListener('click', onTest);
+                input.removeEventListener('focus', clearMask);
+                input.removeEventListener('input', clearMask);
             };
 
             const onSave = () => {
-                const key = input.value.trim();
+                let key = input.value.trim();
+                // 如果是遮罩，則代表使用者想使用內建金鑰
+                if (key === BUILTIN_KEY_MASK) {
+                    key = aiSettings.defaultGeminiApiKey;
+                }
+
                 if (!key || !key.startsWith('AIzaSy')) {
                     showMessage('請貼上有效的 Gemini API Key（應以 AIzaSy 開頭）', 'error');
                     input.focus();
@@ -12379,7 +12410,12 @@
             };
 
             const onTest = async () => {
-                const key = input.value.trim();
+                let key = input.value.trim();
+                // 如果是遮罩，測試時使用內建金鑰
+                if (key === BUILTIN_KEY_MASK) {
+                    key = aiSettings.defaultGeminiApiKey;
+                }
+
                 if (!key || !key.startsWith('AIzaSy')) {
                     testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
                     testResult.innerHTML = '<i class="fas fa-times-circle"></i> 請先貼上有效的 API Key（應以 AIzaSy 開頭）';
@@ -12455,7 +12491,10 @@
             const apiKey = aiSettings.geminiApiKey?.trim();
 
             // 檢查是否為空或預設值
-            if (!apiKey || apiKey === '12345678') {
+            if (!apiKey || apiKey === '12345678' || apiKey === aiSettings.defaultGeminiApiKey) {
+                // 如果是預設值或內建值，視為通過檢查（因為是內建的）
+                if (apiKey === aiSettings.defaultGeminiApiKey) return true;
+
                 const errorMsg = '⚠️ 請先在 AI 設定中填寫您的 Google AI Studio API Key！';
                 console.error('[API KEY 驗證]', errorMsg, { currentKey: apiKey || '(空值)' });
                 showMessage(errorMsg, 'warning');
@@ -12490,15 +12529,15 @@
                     const parsedSettings = JSON.parse(savedSettings);
                     if (parsedSettings.aiSource) aiSettings.aiSource = parsedSettings.aiSource;
                     // MODIFIED: If geminiApiKey is empty after loading, set default.
-                    aiSettings.geminiApiKey = parsedSettings.geminiApiKey || '12345678';
+                    aiSettings.geminiApiKey = parsedSettings.geminiApiKey || aiSettings.defaultGeminiApiKey;
                 } catch (e) {
                     console.error("Failed to parse AI settings from localStorage:", e);
                     // If parsing fails, set default API key
-                    aiSettings.geminiApiKey = '12345678';
+                    aiSettings.geminiApiKey = aiSettings.defaultGeminiApiKey;
                 }
             } else {
                 // If no settings are saved at all, set default API key
-                aiSettings.geminiApiKey = '12345678';
+                aiSettings.geminiApiKey = aiSettings.defaultGeminiApiKey;
             }
         }
 
