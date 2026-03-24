@@ -46,11 +46,17 @@ class DevHttpRequestHandler(http.server.SimpleHTTPRequestHandler):
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
                     
-                api_key = os.environ.get('FIREBASE_API_KEY', '')
-                if api_key:
-                    content = content.replace('__FIREBASE_API_KEY__', api_key)
-                else:
-                    print("⚠️ 警告：找不到 FIREBASE_API_KEY 環境變數，請確認 .env 檔案已設定。")
+                firebase_key = os.environ.get('FIREBASE_API_KEY', '')
+                gemini_key = os.environ.get('GEMINI_API_KEY', '')
+                
+                if firebase_key:
+                    content = content.replace('__FIREBASE_API_KEY__', firebase_key)
+                
+                if gemini_key:
+                    content = content.replace('__GEMINI_API_KEY__', gemini_key)
+                
+                if not firebase_key and not gemini_key:
+                    print("⚠️ 警告：找不到 API Key 環境變數，請確認 .env 檔案已設定。")
                     
                 self.wfile.write(content.encode('utf-8'))
                 return

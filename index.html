@@ -3977,12 +3977,8 @@
                     <div class="flex-1 min-w-0">
                         <p class="font-semibold text-gray-800 text-sm mb-2">貼上您的 API Key</p>
                         <div class="flex gap-2">
-                            <input type="password" id="api-key-guide-input" placeholder="貼上 API Key（AIzaSy...）"
+                            <input type="text" id="api-key-guide-input" placeholder="貼上 API Key（AIzaSy...）"
                                 class="flex-1 min-w-0 px-3 py-2 border-2 border-gray-300 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-mono">
-                            <button id="api-key-guide-toggle-btn"
-                                class="px-3 py-2 text-gray-500 hover:text-gray-700 border-2 border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex-shrink-0">
-                                <i class="fas fa-eye"></i>
-                            </button>
                         </div>
                         <!-- 測試按鈕 -->
                         <button id="api-key-guide-test-btn"
@@ -12332,51 +12328,74 @@
             const saveBtn = document.getElementById('api-key-guide-save-btn');
             const cancelBtn = document.getElementById('api-key-guide-cancel-btn');
             const closeBtn = document.getElementById('api-key-guide-close-btn');
-            const toggleBtn = document.getElementById('api-key-guide-toggle-btn');
             const testBtn = document.getElementById('api-key-guide-test-btn');
             const testResult = document.getElementById('api-key-test-result');
 
             // 預填現有 Key，若是內建則使用遮罩
             const currentKey = aiSettings.geminiApiKey?.trim() || '';
-            const isBuiltin = !currentKey ||
-                currentKey === aiSettings.defaultGeminiApiKey ||
-                currentKey === '__GEMINI_API_KEY__' ||
-                currentKey === '12345678' ||
-                aiSettings.aiSource === 'gemini-default';
+
+            // 🚀 MODIFIED v3.5.9: 極致嚴格且寬鬆並存的識別
+            const identifiesAsBuiltin = (val) => {
+                if (!val) return true;
+                const trimmed = val.trim();
+                const defaultKey = aiSettings.defaultGeminiApiKey || '';
+
+                // 1. 完全匹配（含預設佔位符）
+                if (trimmed === defaultKey ||
+                    trimmed === '__' + 'GEMINI_API_KEY' + '__' ||
+                    trimmed === '12345678' ||
+                    trimmed === BUILTIN_KEY_MASK) return true;
+
+                // 2. 前綴匹配（用於偵測環境變數置換後的真實金鑰）
+                // 只要 trimmed 前缀 15 碼與目前的預設值前缀 15 碼相同，即視為內建
+                if (trimmed.length > 20 && defaultKey.length > 20 &&
+                    trimmed.substring(0, 15) === defaultKey.substring(0, 15)) {
+                    return true;
+                }
+
+                return false;
+            };
+
+            const isBuiltin = identifiesAsBuiltin(currentKey) || aiSettings.aiSource === 'gemini-default';
 
             if (isBuiltin) {
                 input.value = BUILTIN_KEY_MASK;
-                input.type = 'text'; // 遮罩模式直接顯示文字內容，不透露長度
-                toggleBtn.classList.add('opacity-0', 'pointer-events-none'); // 徹底隱藏眼睛按鈕
             } else {
                 input.value = currentKey;
-                input.type = 'password';
-                toggleBtn.classList.remove('opacity-0', 'pointer-events-none');
             }
-            toggleBtn.innerHTML = input.type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+            input.type = 'password'; // 🔒 絕對防護：強制鎖定為 password 模式
+
             testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
             testResult.innerHTML = '';
 
-            // 當使用者點擊或輸入時，如果是遮罩則清除
-            const clearMask = () => {
-                if (input.value === BUILTIN_KEY_MASK) {
-                    input.value = '';
-                    input.type = 'text';
-                    toggleBtn.classList.remove('opacity-0', 'pointer-events-none');
+            const handleInput = () => {
+                const val = input.value.trim();
+                if (val === BUILTIN_KEY_MASK || val === '') return;
+
+                const builtin = identifiesAsBuiltin(val);
+                if (builtin && val !== '12345678') {
+                    input.value = BUILTIN_KEY_MASK;
+                    console.log("[AI Key Security] 即時偵測：發現內建金鑰，已加固遮蓋");
                 }
             };
-            input.addEventListener('focus', clearMask);
-            input.addEventListener('input', clearMask);
+
+            const onFocus = () => {
+                if (input.value === BUILTIN_KEY_MASK) {
+                    input.value = '';
+                }
+            };
+
+            input.addEventListener('focus', onFocus);
+            input.addEventListener('input', handleInput);
 
             const hide = () => {
                 modal.classList.add('hidden');
                 saveBtn.removeEventListener('click', onSave);
                 cancelBtn.removeEventListener('click', onCancel);
                 closeBtn.removeEventListener('click', onCancel);
-                toggleBtn.removeEventListener('click', onToggle);
                 testBtn.removeEventListener('click', onTest);
-                input.removeEventListener('focus', clearMask);
-                input.removeEventListener('input', clearMask);
+                input.removeEventListener('focus', onFocus);
+                input.removeEventListener('input', handleInput);
             };
 
             const onSave = () => {
@@ -12391,7 +12410,11 @@
                     input.focus();
                     return;
                 }
-                aiSettings.aiSource = 'gemini-custom';
+                if (key === aiSettings.defaultGeminiApiKey || key === '__GEMINI_API_KEY__') {
+                    aiSettings.aiSource = 'gemini-default';
+                } else {
+                    aiSettings.aiSource = 'gemini-custom';
+                }
                 aiSettings.geminiApiKey = key;
                 localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
                 // 同步更新 AI 設定畫面中的輸入框
@@ -12404,16 +12427,6 @@
             };
 
             const onCancel = () => hide();
-
-            const onToggle = () => {
-                // 只有在非遮罩模式下才允許切換
-                if (input.value === BUILTIN_KEY_MASK) return;
-
-                input.type = input.type === 'password' ? 'text' : 'password';
-                toggleBtn.innerHTML = input.type === 'password'
-                    ? '<i class="fas fa-eye"></i>'
-                    : '<i class="fas fa-eye-slash"></i>';
-            };
 
             const onTest = async () => {
                 let key = input.value.trim();
@@ -12449,8 +12462,12 @@
                     if (res.ok) {
                         testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-green-50 text-green-700 border border-green-200';
                         testResult.innerHTML = `<i class="fas fa-check-circle"></i> ✅ API Key 有效！回應時間 ${elapsed}ms，可以使用`;
-                        // 自動儲存有效的 Key
-                        aiSettings.aiSource = 'gemini-custom';
+                        // 自動儲存有效的 Key，並判斷是否為預設值
+                        if (key === aiSettings.defaultGeminiApiKey || key === '__GEMINI_API_KEY__') {
+                            aiSettings.aiSource = 'gemini-default';
+                        } else {
+                            aiSettings.aiSource = 'gemini-custom';
+                        }
                         aiSettings.geminiApiKey = key;
                         localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
                         if (geminiApiKeyInput) geminiApiKeyInput.value = key;
@@ -12460,8 +12477,17 @@
                     } else {
                         const body = await res.json().catch(() => ({}));
                         const msg = body?.error?.message || `HTTP ${res.status}`;
+
+                        // 🚀 MODIFIED v3.5.5: 針對 403 錯誤提供專項診斷
+                        let diagMsg = msg;
+                        if (res.status === 403) {
+                            diagMsg = `❌ 403 Forbidden: 金鑰可能已被封鎖或洩漏。建議：前往 Google AI Studio 重新生成 Key 並更新專案中的 .env 檔案。`;
+                        } else if (res.status === 401 || res.status === 400) {
+                            diagMsg = `❌ 金鑰格式錯誤或無效，請檢查輸入內容是否完整。`;
+                        }
+
                         testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
-                        testResult.innerHTML = `<i class="fas fa-times-circle"></i> ❌ 測試失敗：${msg}`;
+                        testResult.innerHTML = `<i class="fas fa-times-circle"></i> ${diagMsg}`;
                     }
                 } catch (err) {
                     testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
@@ -12476,7 +12502,6 @@
             saveBtn.addEventListener('click', onSave);
             cancelBtn.addEventListener('click', onCancel);
             closeBtn.addEventListener('click', onCancel);
-            toggleBtn.addEventListener('click', onToggle);
             testBtn.addEventListener('click', onTest);
             input.addEventListener('keydown', onKeydown, { once: true });
 
@@ -12536,6 +12561,10 @@
                     if (parsedSettings.aiSource) aiSettings.aiSource = parsedSettings.aiSource;
                     // MODIFIED: If geminiApiKey is empty after loading, set default.
                     aiSettings.geminiApiKey = parsedSettings.geminiApiKey || aiSettings.defaultGeminiApiKey;
+                    // 自動判斷是否為內建，校正來源狀態
+                    if (!parsedSettings.geminiApiKey || parsedSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || parsedSettings.geminiApiKey === '__GEMINI_API_KEY__') {
+                        aiSettings.aiSource = 'gemini-default';
+                    }
                 } catch (e) {
                     console.error("Failed to parse AI settings from localStorage:", e);
                     // If parsing fails, set default API key
