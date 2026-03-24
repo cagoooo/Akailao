@@ -12337,17 +12337,21 @@
             const testResult = document.getElementById('api-key-test-result');
 
             // 預填現有 Key，若是內建則使用遮罩
-            const isBuiltin = !aiSettings.geminiApiKey || aiSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || aiSettings.geminiApiKey === '12345678';
+            const currentKey = aiSettings.geminiApiKey?.trim() || '';
+            const isBuiltin = !currentKey ||
+                currentKey === aiSettings.defaultGeminiApiKey ||
+                currentKey === '__GEMINI_API_KEY__' ||
+                currentKey === '12345678' ||
+                aiSettings.aiSource === 'gemini-default';
+
             if (isBuiltin) {
                 input.value = BUILTIN_KEY_MASK;
-                input.type = 'text'; // 遮罩模式直接顯示文字內容
-                toggleBtn.classList.add('opacity-50', 'cursor-not-allowed');
-                toggleBtn.style.pointerEvents = 'none';
+                input.type = 'text'; // 遮罩模式直接顯示文字內容，不透露長度
+                toggleBtn.classList.add('opacity-0', 'pointer-events-none'); // 徹底隱藏眼睛按鈕
             } else {
-                input.value = aiSettings.geminiApiKey;
+                input.value = currentKey;
                 input.type = 'password';
-                toggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                toggleBtn.style.pointerEvents = 'auto';
+                toggleBtn.classList.remove('opacity-0', 'pointer-events-none');
             }
             toggleBtn.innerHTML = input.type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
             testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
@@ -12358,8 +12362,7 @@
                 if (input.value === BUILTIN_KEY_MASK) {
                     input.value = '';
                     input.type = 'text';
-                    toggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                    toggleBtn.style.pointerEvents = 'auto';
+                    toggleBtn.classList.remove('opacity-0', 'pointer-events-none');
                 }
             };
             input.addEventListener('focus', clearMask);
@@ -12403,6 +12406,9 @@
             const onCancel = () => hide();
 
             const onToggle = () => {
+                // 只有在非遮罩模式下才允許切換
+                if (input.value === BUILTIN_KEY_MASK) return;
+
                 input.type = input.type === 'password' ? 'text' : 'password';
                 toggleBtn.innerHTML = input.type === 'password'
                     ? '<i class="fas fa-eye"></i>'

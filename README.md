@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 課堂互動 So Easy
 
-> **版本：V3.5.3** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
+> **版本：V3.5.4** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
 
 ---
 
