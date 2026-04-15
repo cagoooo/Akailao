@@ -387,94 +387,131 @@
             /* Blue */
         }
 
-        /* 📖 閱讀測驗模式：教師端容器改為較少欄數，讓卡片更寬更易讀 */
+        /* 📖 閱讀測驗模式：教師端容器改為自適應欄數（auto-fill + minmax） */
+        /* 🆕 MODIFIED [v3.7.6]: 改用 auto-fill，欄數依容器寬度自動計算，卡片寬度穩定不被人數稀釋 */
+        /*    原本 v3.7.5 用固定 repeat(N, 1fr)，在 xl 永遠 4 欄，導致 1 個學生時卡片只佔 1/4，20+ 時又擠在一起 */
         .reading-mode-container {
-            grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)) !important;
         }
 
         @media (min-width: 640px) {
             .reading-mode-container {
-                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)) !important;
             }
         }
 
         @media (min-width: 1024px) {
             .reading-mode-container {
-                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)) !important;
             }
         }
 
-        @media (min-width: 1280px) {
+        @media (min-width: 1440px) {
             .reading-mode-container {
-                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)) !important;
             }
         }
 
-        /* 閱讀測驗卡片高度自動延伸 */
+        /* 閱讀測驗卡片：啟用 container query 精準控制內部排版 */
         .reading-mode-container .student-response-item {
             min-height: 120px;
+            container-type: inline-size;
+            container-name: student-card;
         }
 
-        /* 🆕 NEW [v3.7.5]: 閱讀測驗教師端卡片桌面排版優化
-           問題：Q1-Q10 答題 badges 在 JS render 時被 inline style 硬鎖成 2 欄，
-                 即使卡片在桌機模式變寬，badges 仍擠成 5 列 × 2 欄，閱讀困難
-           解決：桌機（lg+）覆寫 inline style，改為 5 欄橫向排列 + 字體放大 + 更舒適間距
+        /* 🆕 NEW [v3.7.6]: 用 container query 依「卡片實際寬度」精準調整 badges 排版
+           取代 v3.7.5 的 media query（依螢幕寬度判斷）；因為使用 auto-fill 後，
+           卡片寬度 ≠ 螢幕寬度，container query 才是正確工具。
         */
 
-        /* 平板以上（md ≥ 768px）：3 欄 badges，稍微放大 */
-        @media (min-width: 768px) {
-            .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+        /* 卡片 ≥ 320px：Q1-Q10 badges 3 欄，字體稍大 */
+        @container student-card (min-width: 320px) {
+            .answer-box > div[style*="grid-template-columns"] {
                 grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
                 gap: 4px 8px !important;
                 font-size: 12.5px !important;
             }
         }
 
-        /* 桌機（lg ≥ 1024px）：5 欄 badges，字體明顯放大 */
-        @media (min-width: 1024px) {
-            /* Q1-Q10 橫向 5 欄排列（10 題 → 2 列；8 題 → 2 列；5 題 → 1 列） */
-            .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+        /* 卡片 ≥ 400px：badges 5 欄（10 題排成 5×2），卡片內元素全面放大 */
+        @container student-card (min-width: 400px) {
+            .answer-box > div[style*="grid-template-columns"] {
                 grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
                 gap: 6px 10px !important;
                 font-size: 13px !important;
                 padding: 4px 2px !important;
             }
 
-            /* 卡片本身：更舒適的 padding */
-            .reading-mode-container .student-response-item {
-                padding: 1.25rem !important;
-            }
-
-            /* 答題區：提升 max-height 讓 10 題不需捲動 */
-            .reading-mode-container .answer-box {
+            .answer-box {
                 max-height: 420px !important;
             }
 
-            /* icon 字體放大（綠勾 / 紅叉 / 黃驚嘆號） */
-            .reading-mode-container .answer-box .fa-check-circle,
-            .reading-mode-container .answer-box .fa-times-circle,
-            .reading-mode-container .answer-box .fa-exclamation-circle {
+            .answer-box .fa-check-circle,
+            .answer-box .fa-times-circle,
+            .answer-box .fa-exclamation-circle {
                 font-size: 14px !important;
             }
 
-            /* 名字列放大一點 */
-            .reading-mode-container .name-box {
+            .name-box {
                 font-size: 15px !important;
                 padding: 0.5rem 0.75rem !important;
             }
 
-            /* 快速評語按鈕略放大 */
-            .reading-mode-container .quick-comment-btn {
+            .quick-comment-btn {
                 font-size: 12px !important;
                 padding: 3px 10px !important;
             }
         }
 
-        /* 超大螢幕（xl ≥ 1280px）：字體再放大一點 */
-        @media (min-width: 1280px) {
-            .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+        /* 卡片 ≥ 480px：字體與間距再放大一點（超寬卡片時的奢侈版） */
+        @container student-card (min-width: 480px) {
+            .answer-box > div[style*="grid-template-columns"] {
                 font-size: 13.5px !important;
                 gap: 8px 12px !important;
+            }
+        }
+
+        /* 卡片本身 padding 無法用 container query（@container 不能選 container 自身），
+           改用 media query 在桌機以上套用較寬鬆的 padding */
+        @media (min-width: 1024px) {
+            .reading-mode-container .student-response-item {
+                padding: 1.25rem !important;
+            }
+        }
+
+        /* 🛡️ @supports fallback：舊瀏覽器不支援 container query 時，沿用 media query 方案 */
+        @supports not (container-type: inline-size) {
+            @media (min-width: 768px) {
+                .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+                    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                    gap: 4px 8px !important;
+                    font-size: 12.5px !important;
+                }
+            }
+
+            @media (min-width: 1024px) {
+                .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+                    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+                    gap: 6px 10px !important;
+                    font-size: 13px !important;
+                    padding: 4px 2px !important;
+                }
+                .reading-mode-container .answer-box {
+                    max-height: 420px !important;
+                }
+                .reading-mode-container .answer-box .fa-check-circle,
+                .reading-mode-container .answer-box .fa-times-circle,
+                .reading-mode-container .answer-box .fa-exclamation-circle {
+                    font-size: 14px !important;
+                }
+                .reading-mode-container .name-box {
+                    font-size: 15px !important;
+                    padding: 0.5rem 0.75rem !important;
+                }
+                .reading-mode-container .quick-comment-btn {
+                    font-size: 12px !important;
+                    padding: 3px 10px !important;
+                }
             }
         }
 

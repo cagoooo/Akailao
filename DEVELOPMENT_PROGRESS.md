@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.7.5** ｜ 更新時間：2026-04-15
+> **版本：V3.7.6** ｜ 更新時間：2026-04-15
 
 ---
 
@@ -349,6 +349,26 @@
   - **隱藏按鈕持久化**：修正 `clearMask` 邏輯，確保內建金鑰模式下眼睛按鈕永遠不出現（`display: none`）。
   - **403 Forbidden 專項診斷**：在 API 測試失敗時提供針對金鑰洩漏/封鎖的具體修復建議。
   - **本地伺服器強化**：`dev.py` 現在會明確顯示注入金鑰的前 8 碼，方便診斷 `.env` 是否讀取成功。
+
+---
+
+### 🟢 V3.7.6 (2026-04-15) - 閱讀測驗卡片排版再優化：auto-fill grid + Container Query
+*   **🐛 V3.7.5 遺留問題**：V3.7.5 只改善 badge 欄數，但外層容器仍是**固定欄數** (`repeat(N, 1fr)`)：
+    - 1 位學生時：卡片仍被壓成 1/4 欄寬（~470px），但 `@media` 依螢幕寬度判斷 badges 欄數，兩者不同步
+    - 20+ 位學生時：卡片被擠成等分窄欄，閱讀困難
+*   **🎯 核心改變**：從「固定欄數」改為「**尺寸驅動**」的 RWD
+    - Grid 改用 `repeat(auto-fill, minmax(Npx, 1fr))`，讓每張卡片維持合理最小寬度，欄數依容器寬度自動計算
+    - 斷點：`300px`（手機） → `360px`（sm） → `420px`（lg） → `460px`（xl 1440+）
+    - 效果：1 位學生 → 第一欄填滿 `1fr`，其餘空白；20+ 學生 → 容器自動塞入最多欄，不被稀釋
+*   **🔬 啟用 Container Query**：卡片設 `container-type: inline-size` + `container-name: student-card`，用 `@container` 取代 `@media` 判斷
+    - 卡片 ≥ 320px → badges 3 欄（中等舒適）
+    - 卡片 ≥ 400px → badges 5 欄 + 字體 13px + icon 14px + 名字列放大
+    - 卡片 ≥ 480px → 字體 13.5px + gap 加大（超寬時奢侈排版）
+    - **關鍵優勢**：依卡片**實際寬度**決定排版，不再被螢幕寬度誤導（auto-fill 下卡片寬度 ≠ 螢幕寬度）
+*   **🛡️ @supports fallback**：用 `@supports not (container-type: inline-size)` 包裹原 `@media` 規則，舊瀏覽器仍可 fallback 到 V3.7.5 的 media query 方案
+*   **♻️ 向後相容**：
+    - JS render 邏輯完全不動，純 CSS 改動
+    - 非閱讀測驗模式不受影響（所有規則仍以 `.reading-mode-container` 為前綴）
 
 ---
 
