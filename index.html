@@ -1199,6 +1199,162 @@
             background-color: #eee;
         }
 
+        /* 🆕 NEW [v3.7.7]: 可縮放圖片檢視器（ZoomableImageViewer）
+           專門給學生端顯示老師上傳的題目圖片，支援：
+           - 雙指縮放（手機/平板 pinch-to-zoom）
+           - 滑鼠滾輪縮放（桌機）
+           - 拖曳平移（觸控單指 / 滑鼠 drag）
+           - 雙擊切換 1x↔2x
+           - Esc / 點背景關閉
+        */
+        .zoomable-image-viewer {
+            position: fixed;
+            inset: 0;
+            z-index: 2000;
+            background: rgba(0, 0, 0, 0.92);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            touch-action: none;
+            /* 禁止瀏覽器原生 pinch / pan 行為 */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .zoomable-viewer-canvas {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            overflow: hidden;
+        }
+
+        .zoomable-viewer-canvas.dragging {
+            cursor: grabbing;
+        }
+
+        #zoomable-viewer-img {
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+            will-change: transform;
+            transition: transform 0.1s ease-out;
+            /* 預設 transform 由 JS 設定 */
+            transform: translate(0, 0) scale(1);
+            transform-origin: center center;
+            user-select: none;
+            -webkit-user-select: none;
+            pointer-events: none;
+            /* 滑鼠事件由父層 canvas 接收 */
+            -webkit-user-drag: none;
+        }
+
+        /* 正在縮放或拖曳時關閉 transition 提升即時性 */
+        #zoomable-viewer-img.interacting {
+            transition: none;
+        }
+
+        .zoomable-viewer-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            width: 44px;
+            height: 44px;
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            font-size: 28px;
+            font-weight: 300;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.15s;
+            z-index: 10;
+        }
+
+        .zoomable-viewer-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
+        }
+
+        .zoomable-viewer-controls {
+            position: absolute;
+            bottom: 1.25rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 0.5rem 0.85rem;
+            border-radius: 999px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            z-index: 10;
+        }
+
+        .zoomable-viewer-ctrl-btn {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.15s, transform 0.1s;
+        }
+
+        .zoomable-viewer-ctrl-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .zoomable-viewer-ctrl-btn:active {
+            transform: scale(0.92);
+        }
+
+        .zoomable-viewer-scale {
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+            min-width: 52px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .zoomable-viewer-hint {
+            position: absolute;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.75);
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 0.35rem 0.9rem;
+            border-radius: 999px;
+            backdrop-filter: blur(4px);
+            z-index: 10;
+            max-width: 85vw;
+            text-align: center;
+        }
+
+        /* 🆕 標記「可點擊放大」的圖片：加上 hover 提示 */
+        .zoomable-trigger {
+            cursor: zoom-in;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .zoomable-trigger:hover {
+            transform: scale(1.02);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+        }
+
         /* Dropdown styles for drawing tools */
         .drawing-tool-select {
             padding: 0.5rem 1rem;
@@ -3488,6 +3644,30 @@
         <div class="magnified-image-modal-content">
             <button id="magnified-image-modal-close-btn" class="magnified-image-modal-close">×</button>
             <img id="magnified-image" src="" alt="放大繪圖">
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.7.7]: 可縮放圖片檢視器（支援雙指縮放 / 滾輪縮放 / 拖曳平移 / 雙擊切換 1x↔2x） -->
+    <div id="zoomable-image-viewer" class="zoomable-image-viewer hidden">
+        <div class="zoomable-viewer-canvas" id="zoomable-viewer-canvas">
+            <img id="zoomable-viewer-img" src="" alt="題目圖片" draggable="false">
+        </div>
+        <button id="zoomable-viewer-close" class="zoomable-viewer-close" title="關閉（Esc）">×</button>
+        <div class="zoomable-viewer-hint" id="zoomable-viewer-hint">
+            <span class="hidden sm:inline">💡 滾輪縮放 · 拖曳移動 · 雙擊切換 1x/2x · Esc 關閉</span>
+            <span class="sm:hidden">💡 雙指縮放 · 拖曳移動 · 雙擊切換 1x/2x</span>
+        </div>
+        <div class="zoomable-viewer-controls">
+            <button id="zoomable-viewer-zoom-out" class="zoomable-viewer-ctrl-btn" title="縮小">
+                <i class="fas fa-search-minus"></i>
+            </button>
+            <span id="zoomable-viewer-scale-label" class="zoomable-viewer-scale">100%</span>
+            <button id="zoomable-viewer-zoom-in" class="zoomable-viewer-ctrl-btn" title="放大">
+                <i class="fas fa-search-plus"></i>
+            </button>
+            <button id="zoomable-viewer-reset" class="zoomable-viewer-ctrl-btn" title="重置">
+                <i class="fas fa-undo"></i>
+            </button>
         </div>
     </div>
 
@@ -15833,6 +16013,279 @@
             return questions;
         }
 
+        // ==========================================================
+        // 🆕 NEW [v3.7.7]: 可縮放圖片檢視器（ZoomableImageViewer）
+        // ==========================================================
+        // 支援：雙指縮放（pinch）、滑鼠滾輪縮放、拖曳平移、雙擊切換 1x↔2x、Esc 關閉
+        // 公開 API：openZoomableImageViewer(src, alt)
+
+        const ZoomableImageViewer = (() => {
+            const MIN_SCALE = 0.5;
+            const MAX_SCALE = 6;
+            const ZOOM_STEP = 0.25;   // 按鈕縮放單位
+
+            let modalEl, canvasEl, imgEl, scaleLabel, hintEl;
+            let initialized = false;
+
+            // 當前變換狀態
+            let scale = 1;
+            let translateX = 0;
+            let translateY = 0;
+
+            // 互動狀態
+            let isPanning = false;
+            let panStartX = 0, panStartY = 0;
+            let startTX = 0, startTY = 0;
+
+            let isPinching = false;
+            let pinchInitialDist = 0;
+            let pinchInitialScale = 1;
+            let pinchCenterX = 0, pinchCenterY = 0;
+
+            let lastTapTime = 0;
+
+            function applyTransform(immediate = false) {
+                if (!imgEl) return;
+                imgEl.classList.toggle('interacting', immediate);
+                imgEl.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+                if (scaleLabel) scaleLabel.textContent = `${Math.round(scale * 100)}%`;
+            }
+
+            function clampScale(s) {
+                return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+            }
+
+            /**
+             * 以指定中心點縮放（維持該點的螢幕位置不變，避免圖片亂跳）
+             * @param {number} newScale - 目標 scale
+             * @param {number} cx - 縮放中心（螢幕座標 x）
+             * @param {number} cy - 縮放中心（螢幕座標 y）
+             */
+            function zoomAtPoint(newScale, cx, cy) {
+                newScale = clampScale(newScale);
+                if (Math.abs(newScale - scale) < 0.001) return;
+
+                const rect = canvasEl.getBoundingClientRect();
+                // 目標中心相對於 canvas 的位置
+                const relX = cx - rect.left - rect.width / 2;
+                const relY = cy - rect.top - rect.height / 2;
+
+                // 為了讓該點保持不動，調整 translate
+                const ratio = newScale / scale;
+                translateX = relX - (relX - translateX) * ratio;
+                translateY = relY - (relY - translateY) * ratio;
+                scale = newScale;
+                applyTransform(true);
+            }
+
+            function reset() {
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                applyTransform(false);
+            }
+
+            function open(src, alt = '題目圖片') {
+                if (!initialized) init();
+                imgEl.src = src;
+                imgEl.alt = alt;
+                reset();
+                modalEl.classList.remove('hidden');
+                // 鎖定 body 捲動，避免背景跟著捲
+                document.body.style.overflow = 'hidden';
+                // 3 秒後淡化提示（避免擋住內容）
+                if (hintEl) {
+                    hintEl.style.opacity = '1';
+                    hintEl.style.transition = 'opacity 1s ease 2.5s';
+                    requestAnimationFrame(() => { hintEl.style.opacity = '0.25'; });
+                }
+            }
+
+            function close() {
+                if (!modalEl) return;
+                modalEl.classList.add('hidden');
+                document.body.style.overflow = '';
+                // 清空 img src 釋放記憶體
+                setTimeout(() => { if (imgEl) imgEl.src = ''; }, 200);
+            }
+
+            // -------- 事件處理 --------
+            function onWheel(e) {
+                e.preventDefault();
+                const delta = -e.deltaY;
+                const step = delta > 0 ? 1.12 : 1 / 1.12;
+                zoomAtPoint(scale * step, e.clientX, e.clientY);
+            }
+
+            function onMouseDown(e) {
+                if (e.button !== 0) return; // 只處理左鍵
+                isPanning = true;
+                panStartX = e.clientX;
+                panStartY = e.clientY;
+                startTX = translateX;
+                startTY = translateY;
+                canvasEl.classList.add('dragging');
+            }
+
+            function onMouseMove(e) {
+                if (!isPanning) return;
+                translateX = startTX + (e.clientX - panStartX);
+                translateY = startTY + (e.clientY - panStartY);
+                applyTransform(true);
+            }
+
+            function onMouseUp() {
+                if (isPanning) {
+                    isPanning = false;
+                    canvasEl.classList.remove('dragging');
+                }
+            }
+
+            function onDblClick(e) {
+                // 雙擊切換 1x ↔ 2x（以點擊位置為中心）
+                const target = Math.abs(scale - 1) < 0.05 ? 2 : 1;
+                if (target === 1) {
+                    reset();
+                } else {
+                    zoomAtPoint(target, e.clientX, e.clientY);
+                }
+            }
+
+            function getTouchDistance(t1, t2) {
+                const dx = t1.clientX - t2.clientX;
+                const dy = t1.clientY - t2.clientY;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+
+            function getTouchCenter(t1, t2) {
+                return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+            }
+
+            function onTouchStart(e) {
+                if (e.touches.length === 2) {
+                    e.preventDefault();
+                    isPinching = true;
+                    isPanning = false;
+                    pinchInitialDist = getTouchDistance(e.touches[0], e.touches[1]);
+                    pinchInitialScale = scale;
+                    const center = getTouchCenter(e.touches[0], e.touches[1]);
+                    pinchCenterX = center.x;
+                    pinchCenterY = center.y;
+                } else if (e.touches.length === 1) {
+                    const now = Date.now();
+                    if (now - lastTapTime < 300) {
+                        // 模擬雙擊
+                        e.preventDefault();
+                        onDblClick({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+                        lastTapTime = 0;
+                        return;
+                    }
+                    lastTapTime = now;
+
+                    isPanning = true;
+                    isPinching = false;
+                    panStartX = e.touches[0].clientX;
+                    panStartY = e.touches[0].clientY;
+                    startTX = translateX;
+                    startTY = translateY;
+                }
+            }
+
+            function onTouchMove(e) {
+                if (isPinching && e.touches.length === 2) {
+                    e.preventDefault();
+                    const newDist = getTouchDistance(e.touches[0], e.touches[1]);
+                    const ratio = newDist / pinchInitialDist;
+                    const newScale = clampScale(pinchInitialScale * ratio);
+                    zoomAtPoint(newScale, pinchCenterX, pinchCenterY);
+                } else if (isPanning && e.touches.length === 1) {
+                    e.preventDefault();
+                    translateX = startTX + (e.touches[0].clientX - panStartX);
+                    translateY = startTY + (e.touches[0].clientY - panStartY);
+                    applyTransform(true);
+                }
+            }
+
+            function onTouchEnd(e) {
+                if (e.touches.length < 2) isPinching = false;
+                if (e.touches.length === 0) isPanning = false;
+            }
+
+            function onKeyDown(e) {
+                if (!modalEl || modalEl.classList.contains('hidden')) return;
+                if (e.key === 'Escape') close();
+                else if (e.key === '+' || e.key === '=') {
+                    const rect = canvasEl.getBoundingClientRect();
+                    zoomAtPoint(scale + ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                } else if (e.key === '-' || e.key === '_') {
+                    const rect = canvasEl.getBoundingClientRect();
+                    zoomAtPoint(scale - ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                } else if (e.key === '0') {
+                    reset();
+                }
+            }
+
+            function onBackdropClick(e) {
+                // 點擊黑色背景（非 img、非按鈕）關閉
+                if (e.target === modalEl || e.target === canvasEl) {
+                    close();
+                }
+            }
+
+            function init() {
+                modalEl = document.getElementById('zoomable-image-viewer');
+                canvasEl = document.getElementById('zoomable-viewer-canvas');
+                imgEl = document.getElementById('zoomable-viewer-img');
+                scaleLabel = document.getElementById('zoomable-viewer-scale-label');
+                hintEl = document.getElementById('zoomable-viewer-hint');
+
+                if (!modalEl) return;
+
+                // 關閉按鈕
+                document.getElementById('zoomable-viewer-close')?.addEventListener('click', close);
+
+                // 控制列按鈕
+                document.getElementById('zoomable-viewer-zoom-in')?.addEventListener('click', () => {
+                    const rect = canvasEl.getBoundingClientRect();
+                    zoomAtPoint(scale + ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                });
+                document.getElementById('zoomable-viewer-zoom-out')?.addEventListener('click', () => {
+                    const rect = canvasEl.getBoundingClientRect();
+                    zoomAtPoint(scale - ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+                });
+                document.getElementById('zoomable-viewer-reset')?.addEventListener('click', reset);
+
+                // 縮放 & 拖曳事件
+                canvasEl.addEventListener('wheel', onWheel, { passive: false });
+                canvasEl.addEventListener('mousedown', onMouseDown);
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+                canvasEl.addEventListener('dblclick', onDblClick);
+
+                // 觸控事件
+                canvasEl.addEventListener('touchstart', onTouchStart, { passive: false });
+                canvasEl.addEventListener('touchmove', onTouchMove, { passive: false });
+                canvasEl.addEventListener('touchend', onTouchEnd);
+                canvasEl.addEventListener('touchcancel', onTouchEnd);
+
+                // 點背景關閉
+                modalEl.addEventListener('click', onBackdropClick);
+
+                // 鍵盤快捷鍵
+                document.addEventListener('keydown', onKeyDown);
+
+                initialized = true;
+                console.log('[ZoomableImageViewer] 初始化完成');
+            }
+
+            return { open, close, init };
+        })();
+
+        // 公開 API：讓任何圖片可快速呼叫
+        function openZoomableImageViewer(src, alt) {
+            ZoomableImageViewer.open(src, alt);
+        }
+
         /**
          * 🆕 NEW [v3.7.0]: 學生端渲染是非題題目內容（備題模式專用）
          * @param {Object|null} questionContent - { text, images: [{dataUrl}], correctAnswer } 或 null（快速模式）
@@ -15862,14 +16315,29 @@
                 images.forEach((img, idx) => {
                     if (!img || !img.dataUrl) return;
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'rounded-lg overflow-hidden border border-gray-300 shadow-sm';
+                    // 🆕 MODIFIED [v3.7.7]: 加 zoomable-trigger class + click 事件，點擊可開啟可縮放檢視器
+                    wrapper.className = 'rounded-lg overflow-hidden border border-gray-300 shadow-sm zoomable-trigger relative';
                     wrapper.style.maxWidth = '320px';
                     wrapper.style.maxHeight = '280px';
+                    wrapper.title = '點擊可放大 / 手機雙指縮放';
+
                     const imgEl = document.createElement('img');
                     imgEl.src = img.dataUrl;
                     imgEl.alt = `題目圖片 ${idx + 1}`;
                     imgEl.style.cssText = 'width:100%;height:auto;display:block;object-fit:contain;';
                     wrapper.appendChild(imgEl);
+
+                    // 🆕 視覺提示：右下角顯示「🔍」放大 icon（告訴學生可點擊）
+                    const zoomHint = document.createElement('div');
+                    zoomHint.style.cssText = 'position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;padding:3px 8px;border-radius:999px;font-size:12px;pointer-events:none;';
+                    zoomHint.innerHTML = '<i class="fas fa-search-plus"></i> 放大';
+                    wrapper.appendChild(zoomHint);
+
+                    // 🆕 點擊 wrapper 開啟縮放檢視器
+                    wrapper.addEventListener('click', () => {
+                        openZoomableImageViewer(img.dataUrl, `題目圖片 ${idx + 1}`);
+                    });
+
                     imagesEl.appendChild(wrapper);
                 });
                 imagesEl.classList.remove('hidden');
