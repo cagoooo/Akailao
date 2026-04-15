@@ -3886,19 +3886,20 @@
             </div>
 
             <!-- 按鈕區：取消優先（視覺突出） -->
+            <!-- 🆕 MODIFIED [v3.7.8]: 加 whitespace-nowrap + 縮短文字 + icon RWD 隱藏，確保任何寬度都單行 -->
             <div class="flex flex-col sm:flex-row-reverse gap-2 mt-2">
                 <!-- 取消：primary，預設 focus，避免誤按 -->
                 <button id="end-interaction-cancel-btn"
-                    class="btn btn-primary flex-1 h-12 text-base font-bold flex items-center justify-center gap-2"
+                    class="btn btn-primary flex-1 h-12 text-sm sm:text-base font-bold flex items-center justify-center gap-1.5 whitespace-nowrap"
                     autofocus>
-                    <i class="fas fa-arrow-left"></i>
-                    <span>我再檢查一下 ↩️</span>
+                    <i class="fas fa-arrow-left text-xs sm:text-sm"></i>
+                    <span>再檢查一下 ↩️</span>
                 </button>
                 <!-- 確認：警示紅色，需要刻意點擊 -->
                 <button id="end-interaction-confirm-btn"
-                    class="btn bg-red-600 hover:bg-red-700 text-white flex-1 h-12 text-base font-bold flex items-center justify-center gap-2">
-                    <i class="fas fa-door-open"></i>
-                    <span>確認結束互動 🚪</span>
+                    class="btn bg-red-600 hover:bg-red-700 text-white flex-1 h-12 text-sm sm:text-base font-bold flex items-center justify-center gap-1.5 whitespace-nowrap">
+                    <i class="fas fa-door-open text-xs sm:text-sm"></i>
+                    <span>確認結束 🚪</span>
                 </button>
             </div>
         </div>
