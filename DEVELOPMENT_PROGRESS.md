@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.6.0** ｜ 更新時間：2026-04-15
+> **版本：V3.6.1** ｜ 更新時間：2026-04-15
 
 ---
 
@@ -349,6 +349,18 @@
   - **隱藏按鈕持久化**：修正 `clearMask` 邏輯，確保內建金鑰模式下眼睛按鈕永遠不出現（`display: none`）。
   - **403 Forbidden 專項診斷**：在 API 測試失敗時提供針對金鑰洩漏/封鎖的具體修復建議。
   - **本地伺服器強化**：`dev.py` 現在會明確顯示注入金鑰的前 8 碼，方便診斷 `.env` 是否讀取成功。
+
+---
+
+### 🟢 V3.6.1 (2026-04-15) - Gemini API Key 配額保護：下載版本剝除內建金鑰
+*   **🔐 保護作者配額**：透過 `set.html` 下載的教師版 `index.html` 會在下載時主動剝除內建 Gemini API Key（regex 匹配 `defaultGeminiApiKey: 'AIzaSy...'` 替換為 `''`），避免眾多老師共用同一金鑰撞到配額上限。
+*   **🌐 雙版本並存**：線上部署版（`https://cagoooo.github.io/Akailao/`）仍保留內建 Key 以供訪客試用體驗；老師下載的版本則一律不含 Key，需自行申請免費 Gemini Key。
+*   **🛠️ 前端動態過濾**：純前端解決方案，不動 GitHub Actions / `inject.py` / `.env`，改動範圍侷限於 `set.html` 的下載邏輯 + `index.html` 的三個 hook 函數。
+*   **🆕 新增 `hasValidBuiltinKey()` 輔助函數**：統一判斷 bundle 是否內建有效金鑰（長度 ≥ 30 且以 `AIzaSy` 開頭），並同步調整：
+    - `checkAPIKey`：無內建金鑰時強制提示使用者設定
+    - `identifiesAsBuiltin`：無內建金鑰時任何輸入都不視為「內建」
+    - `loadAISettings`：無內建金鑰時預設改為 `gemini-custom` 來源
+*   **📝 set.html UI 全面更新**：版本徽章升到 V3.6.1；AI 區塊文案反轉為「請先準備您自己的 Gemini API Key」，提供 3 步驟申請指引 + 配額說明 + 線上試用連結；下載成功 toast 新增提示訊息。
 
 ---
 

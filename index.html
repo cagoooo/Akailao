@@ -4631,6 +4631,17 @@
 
         const BUILTIN_KEY_MASK = '●●●●●●系統分流服務 (已內建)●●●●●●';
 
+        /**
+         * 🆕 NEW [v3.6.1]: 判斷目前 bundle 是否內建有效的 Gemini API Key
+         * - 線上部署版本：inject.py 會把 '__GEMINI_API_KEY__' 替換成真實金鑰 → 回傳 true
+         * - 透過 set.html 下載的教師版：下載時主動清空為 '' → 回傳 false
+         * - 所有「以內建金鑰通過驗證」的邏輯都要先通過這個檢查
+         */
+        function hasValidBuiltinKey() {
+            const k = (aiSettings.defaultGeminiApiKey || '').trim();
+            return k.length >= 30 && k.startsWith('AIzaSy');
+        }
+
         // MODIFIED: Combined Dispatch Settings Global Object
         let dispatchSettings = {
             type: 'url', // 'url' or 'html'
@@ -12447,7 +12458,11 @@
             const currentKey = aiSettings.geminiApiKey?.trim() || '';
 
             // 🚀 MODIFIED v3.5.9: 極致嚴格且寬鬆並存的識別
+            // 🆕 MODIFIED v3.6.1: 若 bundle 未內建有效金鑰（教師下載版），任何輸入都不視為「內建」
             const identifiesAsBuiltin = (val) => {
+                // 🆕 v3.6.1：無內建金鑰時，不走任何內建識別路徑
+                if (!hasValidBuiltinKey()) return false;
+
                 if (!val) return true;
                 const trimmed = val.trim();
                 const defaultKey = aiSettings.defaultGeminiApiKey || '';
@@ -12468,7 +12483,8 @@
                 return false;
             };
 
-            const isBuiltin = identifiesAsBuiltin(currentKey) || aiSettings.aiSource === 'gemini-default';
+            // 🆕 MODIFIED v3.6.1：下載版本無內建金鑰時，強制 isBuiltin=false，避免 UI 誤顯示遮罩值
+            const isBuiltin = hasValidBuiltinKey() && (identifiesAsBuiltin(currentKey) || aiSettings.aiSource === 'gemini-default');
 
             if (isBuiltin) {
                 input.value = BUILTIN_KEY_MASK;
@@ -12635,8 +12651,10 @@
 
             // 檢查是否為空或預設值
             if (!apiKey || apiKey === '12345678' || apiKey === aiSettings.defaultGeminiApiKey) {
-                // 如果是預設值或內建值，視為通過檢查（因為是內建的）
-                if (apiKey === aiSettings.defaultGeminiApiKey) return true;
+                // 🆕 MODIFIED v3.6.1：只有在 bundle 有有效內建金鑰時，才放行「等於內建值」的情況
+                // - 線上版（部署到 GitHub Pages）：有內建金鑰 → 放行，讓試用者免設定即可用
+                // - 教師下載版（透過 set.html）：無內建金鑰 → 強制提示老師設定自己的 Gemini Key
+                if (hasValidBuiltinKey() && apiKey === aiSettings.defaultGeminiApiKey) return true;
 
                 const errorMsg = '⚠️ 請先在 AI 設定中填寫您的 Google AI Studio API Key！';
                 console.error('[API KEY 驗證]', errorMsg, { currentKey: apiKey || '(空值)' });
@@ -12666,25 +12684,31 @@
         }
 
         function loadAISettings() {
+            // 🆕 v3.6.1：教師下載版無內建金鑰，geminiApiKey 保持空字串，讓 UI 提示設定自己的 Key
+            const fallbackKey = hasValidBuiltinKey() ? aiSettings.defaultGeminiApiKey : '';
+
             const savedSettings = localStorage.getItem('aiSettings');
             if (savedSettings) {
                 try {
                     const parsedSettings = JSON.parse(savedSettings);
                     if (parsedSettings.aiSource) aiSettings.aiSource = parsedSettings.aiSource;
                     // MODIFIED: If geminiApiKey is empty after loading, set default.
-                    aiSettings.geminiApiKey = parsedSettings.geminiApiKey || aiSettings.defaultGeminiApiKey;
+                    aiSettings.geminiApiKey = parsedSettings.geminiApiKey || fallbackKey;
                     // 自動判斷是否為內建，校正來源狀態
                     if (!parsedSettings.geminiApiKey || parsedSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || parsedSettings.geminiApiKey === '__GEMINI_API_KEY__') {
-                        aiSettings.aiSource = 'gemini-default';
+                        // 🆕 v3.6.1：無內建金鑰時改回 custom，避免 UI 誤認已有內建可用
+                        aiSettings.aiSource = hasValidBuiltinKey() ? 'gemini-default' : 'gemini-custom';
                     }
                 } catch (e) {
                     console.error("Failed to parse AI settings from localStorage:", e);
                     // If parsing fails, set default API key
-                    aiSettings.geminiApiKey = aiSettings.defaultGeminiApiKey;
+                    aiSettings.geminiApiKey = fallbackKey;
                 }
             } else {
                 // If no settings are saved at all, set default API key
-                aiSettings.geminiApiKey = aiSettings.defaultGeminiApiKey;
+                aiSettings.geminiApiKey = fallbackKey;
+                // 🆕 v3.6.1：無內建金鑰時預設為 custom
+                if (!hasValidBuiltinKey()) aiSettings.aiSource = 'gemini-custom';
             }
         }
 
