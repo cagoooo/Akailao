@@ -545,6 +545,28 @@
             animation: reading-submit-warn 0.9s ease-in-out infinite;
         }
 
+        /* 🆕 NEW [v3.7.2]: 閱讀測驗未答題警示動畫（捲動後紅框閃爍提醒） */
+        @keyframes reading-unanswered-pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+                border-color: #ef4444;
+            }
+            50% {
+                box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+                border-color: #dc2626;
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+                border-color: #ef4444;
+            }
+        }
+
+        .reading-unanswered-warn {
+            border: 2px solid #ef4444 !important;
+            background: linear-gradient(135deg, #fef2f2, #fee2e2) !important;
+            animation: reading-unanswered-pulse 1s ease-in-out infinite;
+        }
+
         /* 🆕 NEW: 閱讀測驗 AI 出題圖片上傳 - 縮圖預覽樣式 */
         .ai-reading-image-thumb {
             position: relative;
@@ -17933,7 +17955,9 @@
 
             readingData.questions.forEach((q, index) => {
                 const questionDiv = document.createElement('div');
-                questionDiv.className = 'bg-white p-4 rounded-lg border';
+                questionDiv.className = 'bg-white p-4 rounded-lg border reading-question-item';
+                // 🆕 NEW [v3.7.2]: 標記題目索引，方便「必答驗證」時可直接捲動/高亮未答題
+                questionDiv.dataset.questionIndex = String(index);
 
                 // Get answer for this question (if exists)
                 const selectedAnswer = answersToRestore[index] || 0;
@@ -18329,9 +18353,41 @@
                 }
             }
 
-            // 🚀 FIX: 驗證答案（在禁用按鈕之前）
-            if (answers.filter(a => a > 0).length === 0) {
-                showMessage('請至少回答一題！', 'error');
+            // 🆕 MODIFIED [v3.7.2]: 改為「必答驗證」- 所有題目都必須作答才能送出
+            // 原因：避免學生隨便回答一題就送出，失去評量鑑別度
+            const unansweredIndices = answers
+                .map((a, i) => (a === 0 ? i : -1))
+                .filter(i => i !== -1);
+
+            if (unansweredIndices.length > 0) {
+                const totalQ = answers.length;
+                const doneQ = totalQ - unansweredIndices.length;
+                const firstUnanswered = unansweredIndices[0];
+
+                // 列出前 6 題未答題題號，超過則以「...等 N 題」標示
+                const previewList = unansweredIndices.slice(0, 6).map(i => `第 ${i + 1} 題`).join('、');
+                const moreText = unansweredIndices.length > 6
+                    ? `...等共 ${unansweredIndices.length} 題`
+                    : '';
+                showMessage(
+                    `⚠️ 請答完所有題目才能送出！目前進度 ${doneQ}/${totalQ}，尚未作答：${previewList}${moreText}`,
+                    'warning',
+                    5000
+                );
+
+                // 捲動到第一題未答題並閃爍紅框提示
+                const firstEl = document.querySelector(`.reading-question-item[data-question-index="${firstUnanswered}"]`);
+                if (firstEl) {
+                    firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // 所有未答題都閃爍 2.5 秒（容易一眼看到全部未答題）
+                    unansweredIndices.forEach(idx => {
+                        const el = document.querySelector(`.reading-question-item[data-question-index="${idx}"]`);
+                        if (el) {
+                            el.classList.add('reading-unanswered-warn');
+                            setTimeout(() => el.classList.remove('reading-unanswered-warn'), 2500);
+                        }
+                    });
+                }
                 return;
             }
 
