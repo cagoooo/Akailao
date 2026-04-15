@@ -13563,16 +13563,18 @@
                     const hasCustomQs = currentMultipleChoiceQuestions && currentMultipleChoiceQuestions.length > 0;
                     if (hasCustomQs) {
                         hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV，保存每位學生每題作答紀錄');
+                        hints.push('📊 或點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」取得統計摘要 + 詳細作答');
                     } else {
-                        hints.push('📊 點「<strong>顯示統計</strong>」檢視各選項人數，建議截圖存檔');
+                        hints.push('📊 點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」匯出各選項人數 + 每位學生答案');
                     }
                     break;
                 }
                 case 'true_false':
-                    hints.push('📊 點「<strong>顯示統計</strong>」檢視 O / X 人數分布，建議截圖存檔');
+                    hints.push('📊 點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」匯出 O/X 人數分布 + 每位學生答案');
                     break;
                 case 'reading_comprehension':
                     hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV（含每題作答 + PIRLS 四層次分析）');
+                    hints.push('📊 或點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」取得作答統計摘要');
                     hints.push('📖 如需保留題目，可先點「<strong>顯示題目</strong>」檢視');
                     break;
                 case 'quick_answer':
@@ -13580,7 +13582,7 @@
                     break;
                 case 'sequencing':
                 case 'matching':
-                    hints.push('📊 點「<strong>顯示統計</strong>」查看各答案選擇分布');
+                    hints.push('👥 點擊各學生卡片檢視他們的排序／配對結果，確認已掌握作答狀況');
                     hints.push('💡 需要再次展示答案時，可留在此模式下繼續講解');
                     break;
                 case 'recording':
