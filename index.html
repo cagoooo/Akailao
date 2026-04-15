@@ -545,6 +545,70 @@
             animation: reading-submit-warn 0.9s ease-in-out infinite;
         }
 
+        /* 🆕 NEW: 閱讀測驗 AI 出題圖片上傳 - 縮圖預覽樣式 */
+        .ai-reading-image-thumb {
+            position: relative;
+            width: 72px;
+            height: 72px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #c4b5fd;
+            background: #f5f3ff;
+            box-shadow: 0 1px 3px rgba(139, 92, 246, 0.25);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .ai-reading-image-thumb:hover {
+            transform: scale(1.04);
+            box-shadow: 0 4px 10px rgba(139, 92, 246, 0.4);
+        }
+
+        .ai-reading-image-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .ai-reading-image-thumb-remove {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(220, 38, 38, 0.92);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 900;
+            cursor: pointer;
+            border: 1.5px solid #fff;
+            transition: background 0.15s ease, transform 0.15s ease;
+            line-height: 1;
+        }
+
+        .ai-reading-image-thumb-remove:hover {
+            background: #b91c1c;
+            transform: scale(1.15);
+        }
+
+        .ai-reading-image-thumb-index {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(88, 28, 135, 0.85);
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            text-align: center;
+            padding: 1px 0;
+            line-height: 1.4;
+        }
+
         /* 💬 教師快速評語 toast */
         #teacher-comment-toast {
             position: fixed;
@@ -4084,8 +4148,52 @@
                                         class="w-full p-2 border rounded-md text-base focus:outline-none focus:ring-2 focus:ring-purple-500"
                                         placeholder="例如：
 - 根據左方文本生成 PIRLS 閱讀理解題
-- 或直接描述主題，AI 會生成文本+題目"></textarea>
+- 或直接描述主題，AI 會生成文本+題目
+- 或直接上傳課本/講義截圖，AI 會自動辨識"></textarea>
                                 </div>
+
+                                <!-- 🆕 NEW: 圖片/截圖上傳區塊（支援 Gemini Vision） -->
+                                <div id="ai-reading-image-section"
+                                    class="bg-white p-3 rounded border-2 border-dashed border-purple-300">
+                                    <label
+                                        class="block text-gray-700 text-sm font-bold mb-2 flex items-center gap-1">
+                                        <i class="fas fa-image text-purple-600"></i>
+                                        <span>📷 上傳圖片/截圖（選填）</span>
+                                    </label>
+                                    <p class="text-xs text-gray-600 mb-2 leading-relaxed">
+                                        📸 拍攝/截圖課本、講義或文章段落，AI 會自動辨識文字並生成題組。<br>
+                                        <span class="text-purple-600 font-semibold">💡 支援多張圖片、可直接按 Ctrl+V
+                                            貼上截圖。</span>
+                                    </p>
+                                    <div class="flex flex-col sm:flex-row gap-2 mb-2">
+                                        <label for="ai-reading-image-input"
+                                            class="cursor-pointer bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-bold px-3 py-2 rounded border border-purple-300 flex items-center justify-center gap-1 flex-1 transition-all">
+                                            <i class="fas fa-upload"></i>
+                                            <span>選擇圖片</span>
+                                        </label>
+                                        <input type="file" id="ai-reading-image-input"
+                                            accept="image/*" multiple class="hidden">
+                                        <button type="button" id="ai-reading-paste-image-btn"
+                                            class="bg-white hover:bg-gray-50 text-purple-700 text-xs font-bold px-3 py-2 rounded border border-purple-300 flex items-center justify-center gap-1 flex-1 transition-all"
+                                            title="點擊後按 Ctrl+V 貼上剪貼簿的截圖">
+                                            <i class="fas fa-paste"></i>
+                                            <span>貼上截圖</span>
+                                        </button>
+                                        <button type="button" id="ai-reading-clear-images-btn"
+                                            class="hidden bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold px-3 py-2 rounded border border-red-300 flex items-center justify-center gap-1 transition-all"
+                                            title="清除所有已上傳圖片">
+                                            <i class="fas fa-trash"></i>
+                                            <span>清除</span>
+                                        </button>
+                                    </div>
+                                    <div id="ai-reading-image-preview-list"
+                                        class="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                                    </div>
+                                    <p id="ai-reading-image-status" class="text-xs text-gray-500 mt-1 italic">
+                                        尚未上傳圖片
+                                    </p>
+                                </div>
+
                                 <div class="text-sm text-gray-600 bg-white p-2 rounded border">
                                     <p class="font-bold mb-1">PIRLS 四層次配置：</p>
                                     <ul class="list-disc list-inside text-xs space-y-1">
@@ -4509,6 +4617,10 @@
         let lastY = 0;
 
         let teacherUploadedBackgroundImageDataURL = null; // Stores the scaled and compressed background image Data URL from Firestore.
+
+        // 🆕 NEW [v3.6.0]: 閱讀測驗 AI 出題 - 已上傳的圖片列表（支援多圖 + 貼上截圖）
+        // 每個元素形式：{ dataUrl: string, name: string, mimeType: string, base64: string }
+        let readingAiUploadedImages = [];
 
         // AI Settings Global Object
         let aiSettings = {
@@ -14851,6 +14963,54 @@
             document.getElementById('load-reading-files-btn')?.addEventListener('click', loadReadingFiles);
             document.getElementById('save-reading-question-bank-btn')?.addEventListener('click', saveReadingQuestionBank);
 
+            // 🆕 NEW: 閱讀測驗 AI 出題 - 圖片/截圖上傳事件監聽
+            // (1) 選擇檔案
+            document.getElementById('ai-reading-image-input')?.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files || []);
+                files.forEach(f => addReadingAiImage(f));
+                e.target.value = ''; // 重置以便可重複選擇同一檔案
+                if (files.length > 0) {
+                    showMessage(`✅ 已加入 ${files.length} 張圖片`, 'success');
+                }
+            });
+            // (2) 「貼上截圖」按鈕 - 聚焦提示 + 嘗試從 navigator.clipboard 讀取
+            document.getElementById('ai-reading-paste-image-btn')?.addEventListener('click', async () => {
+                // 先嘗試使用 async clipboard API（HTTPS 環境 + 使用者授權）
+                if (navigator.clipboard && navigator.clipboard.read) {
+                    try {
+                        const clipboardItems = await navigator.clipboard.read();
+                        let found = 0;
+                        for (const item of clipboardItems) {
+                            for (const type of item.types) {
+                                if (type.startsWith('image/')) {
+                                    const blob = await item.getType(type);
+                                    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                                    const ext = type.split('/')[1] || 'png';
+                                    addReadingAiImage(blob, `clipboard-${ts}.${ext}`);
+                                    found++;
+                                }
+                            }
+                        }
+                        if (found > 0) {
+                            showMessage(`✅ 已從剪貼簿貼上 ${found} 張圖片`, 'success');
+                            return;
+                        }
+                    } catch (err) {
+                        console.log('[AI Reading] navigator.clipboard.read 失敗，改用 Ctrl+V 方式:', err.message);
+                    }
+                }
+                // 備援提示：請使用者直接按 Ctrl+V
+                showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
+            });
+            // (3) 清除所有圖片
+            document.getElementById('ai-reading-clear-images-btn')?.addEventListener('click', () => {
+                if (readingAiUploadedImages.length === 0) return;
+                clearReadingAiImages();
+                showMessage('🗑️ 已清除所有已上傳圖片', 'info');
+            });
+            // (4) 全域 paste 事件監聽 - 僅在閱讀測驗設定模態框開啟時生效（handler 內自行判斷）
+            document.addEventListener('paste', handleReadingAiPasteEvent);
+
             // 🚀 NEW: Initialize reading scroll-to-top button
             initReadingScrollToTop();
 
@@ -16977,6 +17137,8 @@
             } else {
                 document.getElementById('reading-questions-textarea').value = '';
             }
+            // 🆕 NEW: 每次開啟模態框時重置 AI 出題圖片上傳狀態
+            clearReadingAiImages();
         }
 
         /**
@@ -18054,6 +18216,168 @@
             console.log('[teacherComment] 評語監聽已啟動');
         }
 
+        // ==========================================================
+        // 🆕 NEW: 閱讀測驗 AI 出題 - 圖片/截圖上傳輔助函數
+        // ==========================================================
+
+        /**
+         * 🆕 NEW: 壓縮並加入一張圖片到 AI 出題圖片列表
+         * - 檔案會先被縮放 (最長邊 <= MAX_IMAGE_DIMENSION) 再轉為 JPEG
+         * - 以 base64 儲存，供 Gemini inline_data 使用
+         * @param {File|Blob} file - 圖片檔案或 Blob（來自檔案選擇或剪貼簿）
+         * @param {string} [fallbackName='clipboard-image'] - 若 file 無 name 時使用的名稱
+         */
+        function addReadingAiImage(file, fallbackName = 'clipboard-image') {
+            if (!file || !file.type || !file.type.startsWith('image/')) {
+                showMessage('❌ 僅支援圖片格式（PNG/JPG/WEBP/HEIC 等）', 'error');
+                return;
+            }
+            // 上限保護：避免傳給 Gemini 的 payload 過大
+            const MAX_IMAGES = 8;
+            if (readingAiUploadedImages.length >= MAX_IMAGES) {
+                showMessage(`❌ 最多只能上傳 ${MAX_IMAGES} 張圖片`, 'warning');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    let { width, height } = img;
+                    // 縮放到 MAX_IMAGE_DIMENSION 內（重用現有常數，與全站一致）
+                    if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                        if (width > height) {
+                            height = Math.round(height * (MAX_IMAGE_DIMENSION / width));
+                            width = MAX_IMAGE_DIMENSION;
+                        } else {
+                            width = Math.round(width * (MAX_IMAGE_DIMENSION / height));
+                            height = MAX_IMAGE_DIMENSION;
+                        }
+                    }
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = width;
+                    tempCanvas.height = height;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(img, 0, 0, width, height);
+                    // 統一輸出 JPEG，壓縮後大小可控
+                    const dataUrl = tempCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                    const base64 = dataUrl.split(',')[1] || '';
+
+                    readingAiUploadedImages.push({
+                        dataUrl,
+                        base64,
+                        mimeType: 'image/jpeg',
+                        name: file.name || fallbackName
+                    });
+
+                    renderReadingAiImagesPreview();
+                    console.log(`[AI Reading] 已加入圖片：${file.name || fallbackName}（目前 ${readingAiUploadedImages.length} 張）`);
+                };
+                img.onerror = () => {
+                    showMessage('❌ 無法讀取這張圖片，可能檔案已損毀', 'error');
+                };
+                img.src = event.target.result;
+            };
+            reader.onerror = () => {
+                showMessage('❌ 讀取檔案時發生錯誤', 'error');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * 🆕 NEW: 重新繪製 AI 出題圖片預覽列表（縮圖 + 刪除鈕）
+         */
+        function renderReadingAiImagesPreview() {
+            const list = document.getElementById('ai-reading-image-preview-list');
+            const status = document.getElementById('ai-reading-image-status');
+            const clearBtn = document.getElementById('ai-reading-clear-images-btn');
+            if (!list || !status) return;
+
+            list.innerHTML = '';
+
+            if (readingAiUploadedImages.length === 0) {
+                status.textContent = '尚未上傳圖片';
+                status.classList.remove('text-purple-700', 'font-semibold');
+                status.classList.add('text-gray-500', 'italic');
+                if (clearBtn) clearBtn.classList.add('hidden');
+                return;
+            }
+
+            readingAiUploadedImages.forEach((imgObj, idx) => {
+                const thumb = document.createElement('div');
+                thumb.className = 'ai-reading-image-thumb';
+                thumb.title = imgObj.name;
+
+                const imgEl = document.createElement('img');
+                imgEl.src = imgObj.dataUrl;
+                imgEl.alt = imgObj.name;
+                thumb.appendChild(imgEl);
+
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'ai-reading-image-thumb-remove';
+                removeBtn.textContent = '×';
+                removeBtn.title = '移除這張圖片';
+                removeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    readingAiUploadedImages.splice(idx, 1);
+                    renderReadingAiImagesPreview();
+                });
+                thumb.appendChild(removeBtn);
+
+                const indexLabel = document.createElement('div');
+                indexLabel.className = 'ai-reading-image-thumb-index';
+                indexLabel.textContent = `#${idx + 1}`;
+                thumb.appendChild(indexLabel);
+
+                list.appendChild(thumb);
+            });
+
+            status.textContent = `✅ 已上傳 ${readingAiUploadedImages.length} 張圖片，點「AI 開始出題」即可辨識生成`;
+            status.classList.remove('text-gray-500', 'italic');
+            status.classList.add('text-purple-700', 'font-semibold');
+            if (clearBtn) clearBtn.classList.remove('hidden');
+        }
+
+        /**
+         * 🆕 NEW: 清空所有已上傳的 AI 出題圖片
+         */
+        function clearReadingAiImages() {
+            readingAiUploadedImages = [];
+            renderReadingAiImagesPreview();
+        }
+
+        /**
+         * 🆕 NEW: 處理貼上事件（Ctrl+V），從剪貼簿取出第一張圖片
+         * - 只在閱讀測驗設定模態框可見時才攔截
+         */
+        function handleReadingAiPasteEvent(e) {
+            const modal = document.getElementById('reading-comprehension-settings-modal');
+            if (!modal || modal.classList.contains('hidden')) return; // 模態框關閉時不處理
+
+            const items = (e.clipboardData || window.clipboardData)?.items;
+            if (!items) return;
+
+            let imageCount = 0;
+            for (const item of items) {
+                if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        // 為剪貼簿圖片產生時間戳記名稱，避免重名
+                        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                        addReadingAiImage(blob, `clipboard-${ts}.${(blob.type.split('/')[1] || 'png')}`);
+                        imageCount++;
+                    }
+                }
+            }
+
+            if (imageCount > 0) {
+                e.preventDefault();
+                showMessage(`✅ 已貼上 ${imageCount} 張截圖`, 'success');
+            }
+        }
+
         /**
          * AI generate PIRLS reading questions
          */
@@ -18071,8 +18395,11 @@
 
             const topic = aiTopicTextarea.value.trim();
 
-            if (!topic) {
-                showMessage('請輸入出題要求！', 'error');
+            // 🆕 NEW: 判斷是否有上傳圖片（與文字要求二擇一即可）
+            const hasImages = readingAiUploadedImages && readingAiUploadedImages.length > 0;
+
+            if (!topic && !hasImages) {
+                showMessage('請輸入出題要求或上傳至少一張圖片！', 'error');
                 return;
             }
 
@@ -18088,7 +18415,10 @@
             const progressFill = document.getElementById('ai-gen-progress-fill');
             const statusText = document.getElementById('ai-gen-status-text');
             const stepPcts = [10, 35, 80, 100]; // 各步驟對應進度百分比
-            const stepMsgs = ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
+            // 🆕 NEW: 依模式調整進度條文字（圖片模式下步驟1改為「辨識圖片」）
+            const stepMsgs = hasImages
+                ? ['⚙️ 正在準備圖片與請求...', '🔍 AI 正在辨識圖片中的文字...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！']
+                : ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
 
             function setAiStep(stepIndex) {
                 for (let i = 0; i < 4; i++) {
@@ -18102,6 +18432,19 @@
                 if (statusText) statusText.textContent = stepMsgs[stepIndex];
             }
 
+            // 🆕 NEW: 動態更新步驟1的標籤（圖片模式下顯示為「辨識圖片」）
+            const step1Label = document.querySelector('#ai-step-1 .ai-gen-step-label');
+            const step1Dot = document.querySelector('#ai-step-1 .ai-gen-step-dot');
+            if (step1Label && step1Dot) {
+                if (hasImages) {
+                    step1Label.innerHTML = '辨識<br>圖片';
+                    step1Dot.textContent = '🔍';
+                } else {
+                    step1Label.innerHTML = '生成<br>文本';
+                    step1Dot.textContent = '📝';
+                }
+            }
+
             // 顯示進度條，隱藏舊 spinner
             aiBtn.disabled = true;
             aiText.textContent = '生成中...';
@@ -18112,8 +18455,37 @@
             setAiStep(0); // 步驟0：準備中
 
             try {
-                const prompt = existingText
-                    ? `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+                // 🆕 NEW: 三種 prompt 模式（純文字主題 / 圖片辨識 / 既有文本 - 目前 existingText 永為空）
+                let prompt;
+                if (hasImages) {
+                    // 圖片模式：請 Gemini 從圖片讀取文字，整理成文本後再出題
+                    prompt = `你是一位專業的國小閱讀理解老師，請依照下列步驟完成任務：
+
+【步驟 1：辨識並整理文本】
+- 仔細閱讀下方附上的${readingAiUploadedImages.length}張圖片（圖片來源為課本/講義/文章截圖或照片）。
+- 將圖片中的所有可讀文字完整提取並整理成通順的閱讀文本。
+- 若圖片來自多頁或多張截圖，請依照順序合併為一篇連貫的文章；忽略頁碼、浮水印、廣告、無關的插圖註解等雜訊。
+- 若原文為直書或橫書，統一輸出為橫書；若有錯字或辨識不清的字，請依上下文合理修正。
+- 若文字不足以形成有意義的文本，或完全無法辨識，請直接回覆「⚠️ 無法從圖片辨識到足夠的閱讀文本」。
+
+【步驟 2：依 PIRLS 四層次出 10 題選擇題】
+- 層次1（直接提取資訊）：3題
+- 層次2（直接推論）：3題
+- 層次3（詮釋整合資訊）：2題
+- 層次4（比較評估內容）：2題
+${topic ? `\n【教師補充要求】\n${topic}\n` : ''}
+【輸出格式（嚴格遵守）】
+先輸出完整的閱讀文本（不要加任何標題或說明）。
+接著輸出分隔線：---題目---
+然後每行輸出一題，格式為：
+題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+
+範例：
+主角的名字是什麼?,2,小明,小華,小美,小強,1
+
+注意：所有欄位以半形逗號分隔，選項內不要出現逗號。`;
+                } else if (existingText) {
+                    prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
 層次1（直接提取資訊）：3題
 層次2（直接推論）：3題
 層次3（詮釋整合資訊）：2題
@@ -18128,8 +18500,9 @@ ${existingText}
 題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
 
 範例：
-主角的名字是什麼?,2,小明,小華,小美,小強,1`
-                    : `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+主角的名字是什麼?,2,小明,小華,小美,小強,1`;
+                } else {
+                    prompt = `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
 層次1（直接提取資訊）：3題
 層次2（直接推論）：3題
 層次3（詮釋整合資訊）：2題
@@ -18139,12 +18512,29 @@ ${existingText}
 
 請先輸出文本，然後輸出「---題目---」，再按照以下格式輸出題目，每行一題：
 題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)`;
+                }
 
-                setAiStep(1); // 步驟1：生成文本
+                setAiStep(1); // 步驟1：生成文本 / 辨識圖片
+
+                // 🆕 NEW: 多模態 parts（文字 + 圖片 inline_data）
+                const parts = [{ text: prompt }];
+                if (hasImages) {
+                    readingAiUploadedImages.forEach(img => {
+                        parts.push({
+                            inline_data: {
+                                mime_type: img.mimeType || 'image/jpeg',
+                                data: img.base64
+                            }
+                        });
+                    });
+                }
 
                 const payload = {
-                    contents: [{ role: "user", parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.7 }
+                    contents: [{ role: "user", parts }],
+                    generationConfig: {
+                        temperature: hasImages ? 0.4 : 0.7, // 🆕 圖片模式降低溫度以提升 OCR 準確度
+                        maxOutputTokens: 8192
+                    }
                 };
 
                 const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : aiSettings.defaultGeminiApiKey;
@@ -18158,7 +18548,10 @@ ${existingText}
                     const errorBody = await response.text();
                     console.error(`[AI 閱讀測驗生成] API 錯誤 ${response.status}:`, errorBody);
                     if (response.status === 400) {
-                        throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                        throw new Error('❌ API KEY 無效、格式錯誤或圖片內容不支援，請檢查 API Key 設定或嘗試更換圖片！');
+                    }
+                    if (response.status === 413) {
+                        throw new Error('❌ 圖片檔案過大，請減少圖片數量或使用較小的截圖後再試！');
                     }
                     throw new Error(`AI API request failed with status ${response.status}`);
                 }
@@ -18167,23 +18560,37 @@ ${existingText}
                 const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
                 if (generatedText) {
+                    // 🆕 NEW: 檢查圖片辨識失敗訊息
+                    if (hasImages && generatedText.includes('⚠️ 無法從圖片辨識到足夠的閱讀文本')) {
+                        throw new Error('⚠️ AI 無法從上傳的圖片辨識到足夠的文本內容。請確認圖片清晰、文字完整，或嘗試更換清晰的截圖。');
+                    }
+
                     setAiStep(2); // 步驟2：解析題目中
                     await new Promise(r => setTimeout(r, 300));
                     setAiStep(3); // 步驟3：整理完成
                     await new Promise(r => setTimeout(r, 600));
-                    if (!existingText) {
+
+                    // 🆕 NEW: 圖片模式與主題模式都會返回「文本 + ---題目---+ 題目」的格式
+                    if (hasImages || !existingText) {
                         // Parse text and questions
                         const parts = generatedText.split('---題目---');
                         if (parts.length === 2) {
                             readingTextTextarea.value = parts[0].trim();
                             questionsTextarea.value = parts[1].trim();
                         } else {
-                            questionsTextarea.value = generatedText;
+                            // 若 AI 沒有按照格式輸出分隔線，嘗試用空行拆分作為備援
+                            const fallbackSplit = generatedText.split(/\n\s*\n(?=[^\n]*[,，][^\n]*[,，][^\n]*[,，])/);
+                            if (fallbackSplit.length >= 2) {
+                                readingTextTextarea.value = fallbackSplit[0].trim();
+                                questionsTextarea.value = fallbackSplit.slice(1).join('\n').trim();
+                            } else {
+                                questionsTextarea.value = generatedText;
+                            }
                         }
                     } else {
                         questionsTextarea.value = generatedText;
                     }
-                    showMessage('AI 閱讀測驗已成功生成！', 'success');
+                    showMessage(hasImages ? '✅ AI 已成功辨識圖片並生成閱讀測驗！' : 'AI 閱讀測驗已成功生成！', 'success');
                 } else {
                     throw new Error('AI 未返回有效內容。');
                 }

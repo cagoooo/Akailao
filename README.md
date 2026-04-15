@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 課堂互動 So Easy
 
-> **版本：V3.5.9** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
+> **版本：V3.6.0** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
 
 ---
 
@@ -17,6 +17,7 @@
 | 📱 無需安裝 | 學生只需打開瀏覽器掃 QR Code 即可加入課堂 |
 | 🔒 資料自主 | 所有課堂數據存在您自己的 Firebase，老師完全掌控 |
 | 🤖 AI 輔助 | 內建 Gemini AI 自動生成 PIRLS 閱讀理解題組 |
+| 📷 **[v3.6.0 新] 拍照/截圖 AI 出題** | 教師直接上傳課本頁面、講義截圖，AI 自動辨識文字並產生完整 PIRLS 四層次題組 |
 | 📊 即時監控 | 即時顯示學生作答進度、注意力監控、排行榜 |
 
 ---
@@ -143,9 +144,12 @@ service cloud.firestore {
 
 1. 前往 [Google AI Studio](https://aistudio.google.com/) 取得免費 API Key
 2. 進入系統後，教師模式設定 → 輸入 Gemini API Key
-3. 在閱讀測驗模式中，貼上文章後即可 AI 自動生成 PIRLS 題組
+3. 在閱讀測驗模式中，三種出題方式任選：
+   - 📝 **貼上文字**：將文章貼入文本框 → AI 生成題組
+   - 💭 **描述主題**：在出題要求欄輸入主題描述 → AI 生成文本 + 題組
+   - 📷 **[v3.6.0 新] 上傳圖片/截圖**：拍攝或截圖課本、講義、PDF 頁面（支援多張、可 Ctrl+V 貼上剪貼簿） → Gemini Vision 自動辨識文字並生成 PIRLS 題組
 
-> 使用 `gemini-2.5-flash` 模型，建議免費方案，每分鐘有 quota 限制。
+> 使用 `gemini-2.5-flash` 多模態模型，支援圖文混合輸入。免費方案每分鐘有 quota 限制。
 
 ---
 

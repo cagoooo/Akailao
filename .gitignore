@@ -3,6 +3,9 @@
 .env.*
 *.env
 
+# 本地測試用注入副本（包含注入後的 API Key，絕不可上傳）
+*.local.html
+
 # Replit 平台快取（大量二進位快取，不需上傳）
 .local/
 .config/
