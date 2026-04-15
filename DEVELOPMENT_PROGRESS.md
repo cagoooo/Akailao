@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.6.1** ｜ 更新時間：2026-04-15
+> **版本：V3.7.0** ｜ 更新時間：2026-04-15
 
 ---
 
@@ -349,6 +349,30 @@
   - **隱藏按鈕持久化**：修正 `clearMask` 邏輯，確保內建金鑰模式下眼睛按鈕永遠不出現（`display: none`）。
   - **403 Forbidden 專項診斷**：在 API 測試失敗時提供針對金鑰洩漏/封鎖的具體修復建議。
   - **本地伺服器強化**：`dev.py` 現在會明確顯示注入金鑰的前 8 碼，方便診斷 `.env` 是否讀取成功。
+
+---
+
+### 🟢 V3.7.0 (2026-04-15) - 是非題/選擇題「雙模式切換」：立刻作答 vs. 備題作答
+*   **🎛️ Entry Picker Modal**：老師點擊「是非題」或「選擇題」時，先彈出雙選項卡片式選單：
+    - 🚀 **立刻作答**：學生立即看到答題按鈕（維持原行為，適合搶答、討論後表決）
+    - 📝 **備題作答**：老師先準備題目 → 學生看到題目再答（適合正式測驗）
+*   **📝 是非題備題 Settings Modal（全新）**：
+    - 題目文字輸入框（可貼上）
+    - 📷 圖片/截圖上傳（重用 v3.6.0 infrastructure，支援多圖、Ctrl+V 貼上）
+    - 🤖 AI 辨識文字：一鍵呼叫 Gemini Vision 把圖片轉成題目文字
+    - ✅ 正確答案選填（O/X/討論題三擇一，設定後自動計分）
+*   **✓ 選擇題 Settings Modal 擴充**：
+    - 在「自訂題目出題」區塊新增 📷 圖片 composer + 🤖 AI 辨識出題
+    - Gemini Vision 辨識圖片內容自動產出 3-5 題選擇題，填入既有 textarea
+*   **👨‍🎓 學生端渲染（是非題）**：
+    - 備題模式：在 O/X 按鈕上方顯示題目文字 + 圖片卡片（即時同步自教師）
+    - 快速模式：隱藏題目區，維持純 O/X 介面，不影響原體驗
+*   **🛠️ 技術實作**：
+    - 抽象共用 Quiz Image Composer（`addQuizComposerImage` / `renderQuizComposer` / `clearQuizComposer` / `handleQuizComposerPaste`），以 `composerId` 區分 tf / mc 兩組獨立狀態
+    - 共用 `recognizeQuizImages(composerId, targetTextareaId, mode)` 多模態辨識函數
+    - Firestore 新增 `true_false_question` 欄位（`{ text, images:[{dataUrl}], correctAnswer }`），`setInteractionMode('true_false', { questionContent })` 統一入口
+    - 重用既有 `.ai-reading-image-thumb` CSS 樣式，無新增 CSS class
+*   **♻️ 向後相容**：既有 `setInteractionMode('true_false')` 呼叫（無 options）維持快速模式行為，現有選擇題的「無題目出題」radio 仍可用（備題 modal 仍可手動切回）
 
 ---
 
