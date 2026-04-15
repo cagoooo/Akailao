@@ -2790,6 +2790,12 @@
                     <button id="rescore-all-students-btn"
                         class="btn bg-green-600 hover:bg-green-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">更新學生答案
                         ✏️</button>
+                    <!-- 🆕 NEW [v3.7.1]: 允許學生提前交卷（只在閱讀測驗模式顯示） -->
+                    <button id="allow-early-submit-btn"
+                        class="btn bg-amber-500 hover:bg-amber-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
+                        title="點擊後學生可立即送出答案，不必等到 5 分鐘">
+                        <i class="fas fa-bolt mr-1"></i><span id="allow-early-submit-btn-text">允許提前交卷 ⚡</span>
+                    </button>
                     <button id="show-matching-answer-btn"
                         class="btn bg-pink-600 hover:bg-pink-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示答案
                         💡</button>
@@ -4719,6 +4725,11 @@
         const MAX_IMAGE_DIMENSION = 1024;
         // JPEG compression quality (0.0 to 1.0).
         const JPEG_QUALITY = 0.8;
+
+        // 🆕 NEW [v3.7.1]: 閱讀測驗最短閱讀時間（5 分鐘 = 300000ms）
+        // - 學生進入測驗後需至少閱讀這麼久才能送出（預設防止太早交卷）
+        // - 可由老師在教師端按「允許提前交卷」主動解鎖（寫入 Firestore: allowEarlyReadingSubmit）
+        const READING_MIN_DURATION_MS = 5 * 60 * 1000;
 
         // Firebase configuration.
         const firebaseConfig = JSON.parse(__firebase_config);
@@ -7811,6 +7822,14 @@
             const rescoreAllStudentsBtn = document.getElementById('rescore-all-students-btn');
             rescoreAllStudentsBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
 
+            // 🆕 NEW [v3.7.1]: Show "Allow Early Submit" button only for reading_comprehension，切換模式時重置為未開放狀態
+            const allowEarlySubmitBtn = document.getElementById('allow-early-submit-btn');
+            if (allowEarlySubmitBtn) {
+                allowEarlySubmitBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
+                // 每次進入/切換模式都重置為未開放狀態
+                resetAllowEarlySubmitButton();
+            }
+
             // NEW: Show peer review button only for text_input and drawing modes
             const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
             startPeerReviewBtn.classList.toggle('hidden', mode !== 'text_input' && mode !== 'drawing');
@@ -7871,7 +7890,9 @@
                     showMatchingAnswer: false, // Reset matching answer display
                     showSequencingAnswer: false, // Reset sequencing answer display
                     // 🚀 NEW: Force UI reset with monotonic token when options.forceReset is true
-                    modeResetToken: options.forceReset ? Date.now() : (window.lastModeResetToken || 0)
+                    modeResetToken: options.forceReset ? Date.now() : (window.lastModeResetToken || 0),
+                    // 🆕 NEW [v3.7.1]: 切換模式時一律重置「允許提前交卷」狀態
+                    allowEarlyReadingSubmit: false
                 };
 
                 // Store the token globally for comparison
@@ -8701,6 +8722,68 @@
                 const newBackgroundImage = data.backgroundImage || null;
                 const newMultipleChoiceQuestions = data.multiple_choice_questions || null;
                 const newResetTimestamp = data.resetTimestamp || null;
+
+                // 🆕 NEW [v3.7.1]: 偵測老師「允許提前交卷」狀態變化
+                const prevAllowEarly = window.allowEarlyReadingSubmit === true;
+                const newAllowEarly = data.allowEarlyReadingSubmit === true;
+                window.allowEarlyReadingSubmit = newAllowEarly;
+                if (currentRole === 'student' && newMode === 'reading_comprehension' && prevAllowEarly !== newAllowEarly) {
+                    const submitBtn = document.getElementById('submit-reading-btn');
+                    if (submitBtn) {
+                        if (newAllowEarly) {
+                            // 立即解鎖送出按鈕
+                            if (window.readingCountdownInterval) {
+                                clearInterval(window.readingCountdownInterval);
+                                window.readingCountdownInterval = null;
+                            }
+                            submitBtn.disabled = false;
+                            submitBtn.classList.remove('btn-gray', 'reading-submit-warning');
+                            submitBtn.classList.add('btn-primary');
+                            submitBtn.textContent = '⚡ 老師已開放，可送出 ✉️';
+                            showMessage('⚡ 老師已開放提前交卷，請確認答案後送出！', 'success');
+                        } else if (window.studentReadingLocalStartTime) {
+                            // 老師關閉提前交卷：若尚未送出且仍在倒數範圍內，恢復倒數
+                            const elapsed = Date.now() - window.studentReadingLocalStartTime;
+                            if (elapsed < READING_MIN_DURATION_MS) {
+                                submitBtn.disabled = true;
+                                submitBtn.classList.remove('btn-primary');
+                                submitBtn.classList.add('btn-gray');
+                                // 重啟倒數 interval（updateCountdown 內已重用此起始時間）
+                                if (!window.readingCountdownInterval) {
+                                    // 由 displayReadingComprehensionForStudent 建立的 updateCountdown 已包含重啟邏輯
+                                    // 但此時 submitBtn 已失去綁定，重新觸發倒數 UI 更新
+                                    const submitBtnEl = submitBtn;
+                                    const tick = () => {
+                                        if (window.allowEarlyReadingSubmit) { clearInterval(window.readingCountdownInterval); window.readingCountdownInterval = null; return; }
+                                        const el = Date.now() - window.studentReadingLocalStartTime;
+                                        const rem = READING_MIN_DURATION_MS - el;
+                                        if (rem <= 0) {
+                                            submitBtnEl.disabled = false;
+                                            submitBtnEl.classList.remove('btn-gray');
+                                            submitBtnEl.classList.add('btn-primary');
+                                            submitBtnEl.textContent = '送出答案 ✉️';
+                                            clearInterval(window.readingCountdownInterval);
+                                            window.readingCountdownInterval = null;
+                                            return;
+                                        }
+                                        const total = Math.ceil(rem / 1000);
+                                        const m = Math.floor(total / 60);
+                                        const s = total % 60;
+                                        if (rem <= 30000) {
+                                            submitBtnEl.textContent = `⚠️ 即將開放 (${m}:${s.toString().padStart(2, '0')})`;
+                                            submitBtnEl.classList.add('reading-submit-warning');
+                                        } else {
+                                            submitBtnEl.textContent = `⏳ 請先閱讀... (${m}:${s.toString().padStart(2, '0')})`;
+                                            submitBtnEl.classList.remove('reading-submit-warning');
+                                        }
+                                    };
+                                    tick();
+                                    window.readingCountdownInterval = setInterval(tick, 500);
+                                }
+                            }
+                        }
+                    }
+                }
                 const newModeResetToken = data.modeResetToken || 0;
 
                 // Determine if the interaction mode itself has changed
@@ -8971,7 +9054,7 @@
                             displayReadingComprehensionForStudent(readingDataWithTime);
                             // 🚀 FIX: 不在這裡重新啟用送出按鈕
                             // displayReadingComprehensionForStudent 內部已有倒數計時器邏輯
-                            // 它會在 180 秒後才啟用送出按鈕，此處不可覆蓋
+                            // 它會在 READING_MIN_DURATION_MS (5 分鐘) 後才啟用送出按鈕，此處不可覆蓋
                         }
                         // 啟動排行榜監聽（如果尚未啟動）
                         if (modeChanged) {
@@ -13516,9 +13599,9 @@
                     modeResetToken: window.lastModeResetToken
                 };
 
-                // 🚀 CRITICAL FIX: 如果是讀題模式，更新 readingStartedAt 時間戳以重新開始180秒倒計時
+                // 🚀 CRITICAL FIX: 如果是讀題模式，更新 readingStartedAt 時間戳以重新開始閱讀倒計時
                 if (currentMode === 'reading_comprehension') {
-                    console.log('[resetAllAnswers] 🎯 讀題模式檢測到：更新 readingStartedAt 以重新開始180秒倒計時');
+                    console.log('[resetAllAnswers] 🎯 讀題模式檢測到：更新 readingStartedAt 以重新開始閱讀倒計時');
                     updatePayload.readingStartedAt = serverTimestamp();
                     console.log('[resetAllAnswers] ✓ readingStartedAt 已更新為：', new Date().toISOString());
                 }
@@ -15352,6 +15435,8 @@
 
             // 🚀 NEW: Rescore All Students Button Listener
             document.getElementById('rescore-all-students-btn')?.addEventListener('click', rescoreAllStudents);
+            // 🆕 NEW [v3.7.1]: 允許提前交卷 toggle
+            document.getElementById('allow-early-submit-btn')?.addEventListener('click', toggleAllowEarlyReadingSubmit);
 
             // NEW: Student side custom multiple choice submission
             document.getElementById('submit-custom-mc-btn').addEventListener('click', async (e) => {
@@ -17943,7 +18028,7 @@
                 });
             }
 
-            // 🚀 FIX: 以學生看到試卷的「本地時間」作為倒數起點，確保每位學生都有完整 3 分鐘
+            // 🚀 FIX: 以學生看到試卷的「本地時間」作為倒數起點，確保每位學生都有完整閱讀時間（READING_MIN_DURATION_MS）
             // 使用 window.studentReadingLocalStartTime 記錄，若同一測驗已計時則不重置
             console.log('[displayReadingComprehensionForStudent] Setting up 3-minute (180-second) local countdown timer');
             const submitBtn = document.getElementById('submit-reading-btn');
@@ -17986,12 +18071,27 @@
             submitBtn.classList.add('btn-gray');
 
             const updateCountdown = () => {
+                // 🆕 MODIFIED [v3.7.1]: 若老師已按「允許提前交卷」，立即啟用送出按鈕
+                if (window.allowEarlyReadingSubmit === true) {
+                    console.log('[Timer] ⚡ 老師已開放提前交卷，啟用送出按鈕');
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('btn-gray', 'reading-submit-warning');
+                    submitBtn.classList.add('btn-primary');
+                    submitBtn.textContent = '⚡ 老師已開放，可送出 ✉️';
+                    if (window.readingCountdownInterval) {
+                        clearInterval(window.readingCountdownInterval);
+                        window.readingCountdownInterval = null;
+                    }
+                    return;
+                }
+
                 const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
-                const remainingMs = 180000 - elapsedMs; // 3分鐘 = 180秒 = 180000ms
+                // 🆕 MODIFIED [v3.7.1]: 使用 READING_MIN_DURATION_MS 常數（5 分鐘）
+                const remainingMs = READING_MIN_DURATION_MS - elapsedMs;
 
                 if (remainingMs <= 0) {
-                    // 180秒已過，啟用提交按鈕
-                    console.log('[Timer] ✅ 3 分鐘已過，啟用送出按鈕');
+                    // 時間到，啟用提交按鈕
+                    console.log('[Timer] ✅ 閱讀時間已到，啟用送出按鈕');
                     submitBtn.disabled = false;
                     submitBtn.classList.remove('btn-gray');
                     submitBtn.classList.add('btn-primary');
@@ -18198,16 +18298,18 @@
             // 🚀 FIX: 防止重複點擊（檢查按鈕是否已被禁用）
             if (submitBtn.disabled) {
                 console.log('[submitReadingAnswer] Button already disabled, ignoring click');
-                showMessage('⏳ 請至少花3分鐘（180秒）閱讀文章！', 'warning');
+                const totalMinutes = Math.ceil(READING_MIN_DURATION_MS / 60000);
+                showMessage(`⏳ 請至少花 ${totalMinutes} 分鐘閱讀文章！`, 'warning');
                 return;
             }
 
-            // 🚀 FIX: 使用學生本地計時驗證是否已閱讀 3 分鐘（與 UI 倒數計時一致）
-            if (window.studentReadingLocalStartTime) {
+            // 🆕 MODIFIED [v3.7.1]: 若老師已按「允許提前交卷」，跳過時間限制驗證
+            // 🚀 FIX: 使用學生本地計時驗證是否已閱讀到最短時間（與 UI 倒數計時一致）
+            if (window.allowEarlyReadingSubmit !== true && window.studentReadingLocalStartTime) {
                 const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
-                if (elapsedMs < 180000) {
+                if (elapsedMs < READING_MIN_DURATION_MS) {
                     console.log('[submitReadingAnswer] Time limit not met (local), elapsed:', elapsedMs, 'ms');
-                    const remainingSeconds = Math.ceil((180000 - elapsedMs) / 1000);
+                    const remainingSeconds = Math.ceil((READING_MIN_DURATION_MS - elapsedMs) / 1000);
                     const remainingMinutes = Math.floor(remainingSeconds / 60);
                     const remainingSecs = remainingSeconds % 60;
                     showMessage(`⏳ 請再閱讀 ${remainingMinutes}:${remainingSecs.toString().padStart(2, '0')}，才能提交答案！`, 'warning');
@@ -20348,6 +20450,73 @@ ${existingText}
                     showMessage('題庫已儲存，但自動重新評分失敗。請手動使用「修改答案」功能重新計分。', 'warning');
                 }
             }
+        }
+
+        /**
+        // ==========================================================
+        // 🆕 NEW [v3.7.1]: 閱讀測驗「允許提前交卷」- 教師端切換函數
+        // ==========================================================
+
+        /**
+         * 🆕 切換允許提前交卷狀態：寫入 Firestore control doc
+         * - false → true：學生端解鎖送出按鈕（立即啟用）
+         * - true → false：學生端改回倒數狀態（繼續倒數剩餘時間）
+         */
+        async function toggleAllowEarlyReadingSubmit() {
+            if (!classroomCode) {
+                showMessage('無法取得教室代碼', 'error');
+                return;
+            }
+            const btn = document.getElementById('allow-early-submit-btn');
+            const btnText = document.getElementById('allow-early-submit-btn-text');
+            if (!btn || !btnText) return;
+
+            // 以目前 UI 狀態推算目前是否已開放（dataset 存真實狀態）
+            const currentlyAllowed = btn.dataset.allowed === 'true';
+            const newState = !currentlyAllowed;
+
+            try {
+                btn.disabled = true;
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                await setDoc(controlRef, { allowEarlyReadingSubmit: newState }, { merge: true });
+
+                // 更新按鈕視覺狀態
+                if (newState) {
+                    btn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+                    btn.classList.add('bg-green-600', 'hover:bg-green-700');
+                    btnText.textContent = '已開放提前交卷 ✅';
+                    btn.dataset.allowed = 'true';
+                    btn.title = '已開放學生提前交卷，點擊再次關閉';
+                    showMessage('⚡ 已開放學生提前交卷！', 'success');
+                } else {
+                    btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+                    btn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+                    btnText.textContent = '允許提前交卷 ⚡';
+                    btn.dataset.allowed = 'false';
+                    btn.title = '點擊後學生可立即送出答案，不必等到 5 分鐘';
+                    showMessage('🔒 已關閉提前交卷，學生需等到 5 分鐘後才能送出', 'info');
+                }
+            } catch (err) {
+                console.error('[toggleAllowEarlyReadingSubmit] 失敗:', err);
+                showMessage('切換失敗：' + (err.message || '未知錯誤'), 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        /**
+         * 🆕 重置「允許提前交卷」按鈕至未開放狀態（切換互動模式時呼叫）
+         */
+        function resetAllowEarlySubmitButton() {
+            const btn = document.getElementById('allow-early-submit-btn');
+            const btnText = document.getElementById('allow-early-submit-btn-text');
+            if (!btn || !btnText) return;
+            btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+            btn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+            btnText.textContent = '允許提前交卷 ⚡';
+            btn.dataset.allowed = 'false';
+            btn.disabled = false;
+            btn.title = '點擊後學生可立即送出答案，不必等到 5 分鐘';
         }
 
         /**
