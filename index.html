@@ -3569,6 +3569,61 @@
         </div>
     </div>
 
+    <!-- 🆕 NEW [v3.7.3]: 結束互動再確認 Modal（防止老師忘記儲存學生作答紀錄） -->
+    <div id="end-interaction-confirm-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 560px;">
+            <button id="end-interaction-confirm-close-btn" class="magnified-image-modal-close">×</button>
+
+            <div class="text-center mb-4">
+                <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 mb-3">
+                    <span class="text-4xl">🛑</span>
+                </div>
+                <h4 class="text-2xl font-bold text-gray-800 mb-1">確定結束本次互動？</h4>
+                <p class="text-sm text-gray-500">按下結束後，學生的作答資料將從螢幕上消失。</p>
+            </div>
+
+            <!-- 紅色警示框 -->
+            <div class="bg-red-50 border-l-4 border-red-500 p-4 rounded mb-4">
+                <p class="font-bold text-red-800 mb-1 flex items-center gap-1">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    請先確認所有紀錄都已儲存！
+                </p>
+                <p class="text-sm text-gray-700">
+                    結束互動後會清空所有學生答題資料並回到九宮格選單，
+                    <strong class="text-red-700">無法再取回本次的作答細節</strong>。
+                </p>
+            </div>
+
+            <!-- 動態建議區塊（根據當前互動模式） -->
+            <div id="end-interaction-hint-box" class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded mb-5">
+                <p class="font-bold text-blue-800 mb-2 flex items-center gap-1">
+                    <i class="fas fa-lightbulb"></i>
+                    <span>建議先完成的動作</span>
+                </p>
+                <ul id="end-interaction-hint-list" class="text-sm text-gray-700 space-y-1.5 list-disc list-inside ml-1">
+                    <!-- JS 依據模式動態填入 -->
+                </ul>
+            </div>
+
+            <!-- 按鈕區：取消優先（視覺突出） -->
+            <div class="flex flex-col sm:flex-row-reverse gap-2 mt-2">
+                <!-- 取消：primary，預設 focus，避免誤按 -->
+                <button id="end-interaction-cancel-btn"
+                    class="btn btn-primary flex-1 h-12 text-base font-bold flex items-center justify-center gap-2"
+                    autofocus>
+                    <i class="fas fa-arrow-left"></i>
+                    <span>我再檢查一下 ↩️</span>
+                </button>
+                <!-- 確認：警示紅色，需要刻意點擊 -->
+                <button id="end-interaction-confirm-btn"
+                    class="btn bg-red-600 hover:bg-red-700 text-white flex-1 h-12 text-base font-bold flex items-center justify-center gap-2">
+                    <i class="fas fa-door-open"></i>
+                    <span>確認結束互動 🚪</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 查看閱讀測驗題目模態框 -->
     <div id="view-reading-questions-modal" class="magnified-image-modal hidden">
         <div id="view-reading-questions-modal-content" class="magnified-image-modal-content" style="max-width: 1200px;">
@@ -13480,6 +13535,100 @@
          * @param {boolean} options.fullReset - If true, clears peer review, dispatch settings, etc. Default: true
          * @param {boolean} options.navigateToMenu - If true, navigates to teacher menu view. Default: true
          */
+        // ==========================================================
+        // 🆕 NEW [v3.7.3]: 結束互動再確認 Modal（防止老師忘記儲存學生作答紀錄）
+        // ==========================================================
+
+        /**
+         * 🆕 依當前互動模式計算「建議先做的事」清單
+         * 回傳陣列，每項為 HTML 字串（允許 icon + 粗體）
+         * @param {string} mode - 當前互動模式（currentInteractionMode）
+         * @returns {string[]}
+         */
+        function computeEndInteractionHint(mode) {
+            const hints = [];
+            // 通用提醒（第一條，所有模式都會看到）
+            hints.push('確認<strong>排行榜分數</strong>已截圖或記錄（結束後排行榜會清空）');
+
+            switch (mode) {
+                case 'text_input':
+                    hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV，保存學生文字答題內容');
+                    hints.push('📝 如有使用「AI 文字分析」結果，也請一併截圖留存');
+                    break;
+                case 'drawing':
+                    hints.push('💾 點「<strong>下載所有媒體</strong>」匯出學生繪圖作品（ZIP 壓縮）');
+                    hints.push('📸 若已開啟互評，建議截圖記錄最終投票結果');
+                    break;
+                case 'multiple_choice': {
+                    const hasCustomQs = currentMultipleChoiceQuestions && currentMultipleChoiceQuestions.length > 0;
+                    if (hasCustomQs) {
+                        hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV，保存每位學生每題作答紀錄');
+                    } else {
+                        hints.push('📊 點「<strong>顯示統計</strong>」檢視各選項人數，建議截圖存檔');
+                    }
+                    break;
+                }
+                case 'true_false':
+                    hints.push('📊 點「<strong>顯示統計</strong>」檢視 O / X 人數分布，建議截圖存檔');
+                    break;
+                case 'reading_comprehension':
+                    hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV（含每題作答 + PIRLS 四層次分析）');
+                    hints.push('📖 如需保留題目，可先點「<strong>顯示題目</strong>」檢視');
+                    break;
+                case 'quick_answer':
+                    hints.push('🏆 若有贏家，已記錄在排行榜，請確認分數已加上');
+                    break;
+                case 'sequencing':
+                case 'matching':
+                    hints.push('📊 點「<strong>顯示統計</strong>」查看各答案選擇分布');
+                    hints.push('💡 需要再次展示答案時，可留在此模式下繼續講解');
+                    break;
+                case 'recording':
+                    hints.push('💾 點「<strong>下載所有媒體</strong>」保存學生錄音 ZIP 檔案');
+                    break;
+                case 'url_dispatch':
+                    hints.push('🌐 派送內容已傳送完畢，不需額外儲存');
+                    break;
+                default:
+                    // 其他未特別列出的模式，僅顯示通用提醒
+                    break;
+            }
+
+            // 最後一條通用提醒
+            hints.push('如需重新開始但保留題目設定，可改用「<strong>重新開始 🔄</strong>」按鈕');
+
+            return hints;
+        }
+
+        /**
+         * 🆕 顯示結束互動再確認 Modal
+         */
+        function showEndInteractionConfirm() {
+            const modal = document.getElementById('end-interaction-confirm-modal');
+            const hintList = document.getElementById('end-interaction-hint-list');
+            if (!modal || !hintList) return;
+
+            // 根據當前模式填入建議
+            const mode = currentInteractionMode || 'waiting';
+            const hints = computeEndInteractionHint(mode);
+            hintList.innerHTML = hints.map(h => `<li>${h}</li>`).join('');
+
+            modal.classList.remove('hidden');
+
+            // 讓「再檢查一下」取得 focus，避免使用者按 Enter 直接確認結束
+            setTimeout(() => {
+                const cancelBtn = document.getElementById('end-interaction-cancel-btn');
+                if (cancelBtn) cancelBtn.focus();
+            }, 60);
+        }
+
+        /**
+         * 🆕 隱藏結束互動再確認 Modal
+         */
+        function hideEndInteractionConfirm() {
+            document.getElementById('end-interaction-confirm-modal').classList.add('hidden');
+        }
+
         async function endInteraction({ fullReset = true, navigateToMenu = true } = {}) {
             console.log(`[endInteraction] Called with fullReset=${fullReset}, navigateToMenu=${navigateToMenu}`);
 
@@ -14059,9 +14208,16 @@
                 });
             });
 
-            // End interaction button.
-            document.getElementById('end-interaction-btn').addEventListener('click', async () => {
-                await endInteraction(); // Use the new endInteraction function with default options (full reset)
+            // 🆕 MODIFIED [v3.7.3]: 結束互動改為先彈出確認 Modal，避免誤觸遺失學生作答資料
+            document.getElementById('end-interaction-btn').addEventListener('click', () => {
+                showEndInteractionConfirm();
+            });
+            // --- Confirm Modal 的 3 個按鈕事件 ---
+            document.getElementById('end-interaction-cancel-btn')?.addEventListener('click', hideEndInteractionConfirm);
+            document.getElementById('end-interaction-confirm-close-btn')?.addEventListener('click', hideEndInteractionConfirm);
+            document.getElementById('end-interaction-confirm-btn')?.addEventListener('click', async () => {
+                hideEndInteractionConfirm();
+                await endInteraction();
             });
 
             // Student answer buttons for default multiple choice.
