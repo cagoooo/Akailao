@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.7.9** ｜ 更新時間：2026-04-15
+> **版本：V3.7.10** ｜ 更新時間：2026-04-16
 
 ---
 
@@ -349,6 +349,30 @@
   - **隱藏按鈕持久化**：修正 `clearMask` 邏輯，確保內建金鑰模式下眼睛按鈕永遠不出現（`display: none`）。
   - **403 Forbidden 專項診斷**：在 API 測試失敗時提供針對金鑰洩漏/封鎖的具體修復建議。
   - **本地伺服器強化**：`dev.py` 現在會明確顯示注入金鑰的前 8 碼，方便診斷 `.env` 是否讀取成功。
+
+---
+
+### 🟢 V3.7.10 (2026-04-16) - 學生作答結果顯示修正：container query 閾值 + max-height 双管齊下
+*   **🐛 V3.7.6 埋下的重要 bug**：
+    - `container-type: inline-size` 測量的是「**content-box**」，不是卡片外觀寬度
+    - 卡片視覺 400px → 扣 padding 1rem × 2 = **content-box 僅 360px**
+    - 原本 `@container student-card (min-width: 400px)` 閾值**根本沒觸發**
+    - 結果：老師看到 Q1-Q10 badges 還是 2 欄、max-height 320px 的殘念版本，Q1-Q10 + 作答時間被截斷產生卡片內捲軸
+*   **🎯 雙軌修正**：
+    1. **Container Query 閾值下修**：對應到實際 content-box 寬度
+       - `min-width: 320px` → `260px`（badges 3 欄）
+       - `min-width: 400px` → `340px`（**badges 5 欄** + 卡片放大）
+       - `min-width: 480px` → `420px`（超寬奢侈版）
+    2. **max-height 提升 + 預設加強**：
+       - 閱讀模式預設：320px → **500px**
+       - Container 觸發後：420px → **600px**（10 題 + 時間戳 + 分數 + 等級 + 筆記加分一口氣全部可見）
+*   **📐 配套：grid minmax 下限提高**：確保卡片實際寬度足夠觸發 container query
+    - sm 斷點：`minmax(360px)` → `400px`
+    - lg 斷點：`minmax(420px)` → `440px`
+    - xl 斷點：`minmax(460px)` → `480px`
+*   **📊 視覺成效**：
+    - 20+ 學生的閱讀測驗監控畫面，每張卡片都會自動展開成「名字列 + Q1-Q10 橫 5 欄 + 作答時間 + 分數排名 + 評語」完整呈現
+    - 老師不再需要點擊卡片或內部捲動才能看到完整答題情況
 
 ---
 
