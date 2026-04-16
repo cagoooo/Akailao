@@ -4321,6 +4321,40 @@
                     </div>
                 </div>
 
+                <!-- 🆕 NEW [v3.8.0] A-1: 選擇題 localStorage 題庫管理（快速儲存常用題目） -->
+                <div id="mc-quick-bank-section" class="hidden w-full mt-4 bg-blue-50 p-3 rounded border border-blue-200">
+                    <details>
+                        <summary class="cursor-pointer text-sm font-bold text-blue-700 flex items-center gap-1">
+                            📚 <span>快速題庫（儲存常用題目，下次一鍵載入）</span>
+                        </summary>
+                        <div class="mt-3 space-y-3">
+                            <!-- 儲存當前題目為新題庫 -->
+                            <div class="flex gap-2">
+                                <input type="text" id="mc-bank-name-input" placeholder="輸入題庫名稱"
+                                    class="flex-1 p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <button type="button" id="mc-bank-save-btn"
+                                    class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded whitespace-nowrap">💾 儲存</button>
+                            </div>
+                            <!-- 已儲存題庫列表 -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <span class="text-xs text-gray-600 font-semibold">已儲存題庫</span>
+                                    <div class="flex gap-1">
+                                        <button type="button" id="mc-bank-import-btn" class="text-xs text-green-600 hover:underline" title="從 JSON 匯入">
+                                            <i class="fas fa-upload"></i> 匯入
+                                        </button>
+                                        <input type="file" id="mc-bank-import-input" accept=".json" class="hidden">
+                                    </div>
+                                </div>
+                                <div id="mc-bank-list"
+                                    class="space-y-1 max-h-40 overflow-y-auto bg-white p-2 rounded border">
+                                    <p class="text-xs text-gray-400 italic text-center py-2">目前沒有儲存的題庫</p>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
+                </div>
+
                 <!-- 題庫管理區塊 -->
                 <div id="question-bank-management-section" class="hidden w-full mt-6 bg-blue-50 p-4 rounded-lg border">
                     <h5 class="text-lg font-bold text-gray-800 text-center mb-4">📚 題庫管理</h5>
@@ -4498,6 +4532,40 @@
                             <span class="ml-2 text-red-700 font-bold">X（否）</span>
                         </label>
                     </div>
+                </div>
+
+                <!-- 🆕 NEW [v3.8.0] A-1: 是非題題庫管理 -->
+                <div class="bg-blue-50 p-3 rounded border border-blue-200">
+                    <details>
+                        <summary class="cursor-pointer text-sm font-bold text-blue-700 flex items-center gap-1">
+                            📚 <span>題庫管理（儲存常用題目，下次一鍵載入）</span>
+                        </summary>
+                        <div class="mt-3 space-y-3">
+                            <!-- 儲存當前題目為新題庫 -->
+                            <div class="flex gap-2">
+                                <input type="text" id="tf-bank-name-input" placeholder="輸入題庫名稱"
+                                    class="flex-1 p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <button type="button" id="tf-bank-save-btn"
+                                    class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded whitespace-nowrap">💾 儲存</button>
+                            </div>
+                            <!-- 已儲存題庫列表 -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <span class="text-xs text-gray-600 font-semibold">已儲存題庫</span>
+                                    <div class="flex gap-1">
+                                        <button type="button" id="tf-bank-import-btn" class="text-xs text-green-600 hover:underline" title="從 JSON 匯入">
+                                            <i class="fas fa-upload"></i> 匯入
+                                        </button>
+                                        <input type="file" id="tf-bank-import-input" accept=".json" class="hidden">
+                                    </div>
+                                </div>
+                                <div id="tf-bank-list"
+                                    class="space-y-1 max-h-40 overflow-y-auto bg-white p-2 rounded border">
+                                    <p class="text-xs text-gray-400 italic text-center py-2">目前沒有儲存的題庫</p>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </div>
 
@@ -14601,6 +14669,11 @@
                 mcQuestionTypeCustom.checked = true;
                 customMcQuestionsSection.classList.remove('hidden');
                 document.getElementById('question-bank-management-section').classList.remove('hidden');
+                // 🆕 NEW [v3.8.0] A-1: 顯示並渲染 MC 快速題庫
+                document.getElementById('mc-quick-bank-section')?.classList.remove('hidden');
+                if (typeof QuizBankManager !== 'undefined') {
+                    QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+                }
 
                 // 若已有題目則回填（讓老師可再編輯）
                 if (customMultipleChoiceQuestions && customMultipleChoiceQuestions.length > 0) {
@@ -15998,6 +16071,62 @@
             document.getElementById('true-false-settings-modal-close-btn')?.addEventListener('click', hideTrueFalseSettingsModal);
             document.getElementById('cancel-tf-settings-btn')?.addEventListener('click', hideTrueFalseSettingsModal);
             document.getElementById('start-tf-interaction-btn')?.addEventListener('click', startTrueFalsePreparedInteraction);
+
+            // 🆕 NEW [v3.8.0] A-1: TF 題庫管理事件綁定
+            document.getElementById('tf-bank-save-btn')?.addEventListener('click', () => {
+                const nameInput = document.getElementById('tf-bank-name-input');
+                const text = document.getElementById('tf-question-textarea').value.trim();
+                const correctAnswer = (document.querySelector('input[name="tfCorrectAnswer"]:checked') || {}).value || '';
+                const images = (quizAiImageComposers.tf || []).map(img => ({ dataUrl: img.dataUrl, name: img.name }));
+                if (!text && images.length === 0) {
+                    showMessage('❌ 請至少輸入題目文字或上傳圖片才能存題庫', 'warning');
+                    return;
+                }
+                const ok = QuizBankManager.save('tf', nameInput.value, { text, images, correctAnswer });
+                if (ok) {
+                    nameInput.value = '';
+                    QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+                }
+            });
+            document.getElementById('tf-bank-import-btn')?.addEventListener('click', () => {
+                document.getElementById('tf-bank-import-input').click();
+            });
+            document.getElementById('tf-bank-import-input')?.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    QuizBankManager.importBank('tf', file, () => {
+                        QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+                    });
+                    e.target.value = '';
+                }
+            });
+
+            // 🆕 NEW [v3.8.0] A-1: MC 快速題庫管理事件綁定
+            document.getElementById('mc-bank-save-btn')?.addEventListener('click', () => {
+                const nameInput = document.getElementById('mc-bank-name-input');
+                const questionsRaw = document.getElementById('custom-mc-questions-textarea').value.trim();
+                if (!questionsRaw) {
+                    showMessage('❌ 請先在 textarea 輸入題目，才能儲存為題庫', 'warning');
+                    return;
+                }
+                const ok = QuizBankManager.save('mc', nameInput.value, { questionsRaw });
+                if (ok) {
+                    nameInput.value = '';
+                    QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+                }
+            });
+            document.getElementById('mc-bank-import-btn')?.addEventListener('click', () => {
+                document.getElementById('mc-bank-import-input').click();
+            });
+            document.getElementById('mc-bank-import-input')?.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    QuizBankManager.importBank('mc', file, () => {
+                        QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+                    });
+                    e.target.value = '';
+                }
+            });
 
             // --- TF 圖片 Composer ---
             document.getElementById('tf-image-input')?.addEventListener('change', (e) => {
@@ -18585,7 +18714,50 @@
                 r.checked = (r.value === '');
             });
             clearQuizComposer('tf');
+            // 🆕 NEW [v3.8.0] A-1: 渲染 TF 題庫列表
+            if (typeof QuizBankManager !== 'undefined') {
+                QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+            }
             document.getElementById('true-false-settings-modal').classList.remove('hidden');
+        }
+
+        // 🆕 NEW [v3.8.0] A-1: 從題庫載入內容到 MC Modal
+        function loadMcBankToModal(content) {
+            if (!content || !content.questionsRaw) return;
+            const textarea = document.getElementById('custom-mc-questions-textarea');
+            if (textarea) {
+                textarea.value = content.questionsRaw;
+            }
+            // 清除 mc 圖片 composer（題庫主要是文字）
+            clearQuizComposer('mc');
+        }
+
+        // 🆕 NEW [v3.8.0] A-1: 從題庫載入內容到 TF Modal
+        function loadTfBankToModal(content) {
+            if (!content) return;
+            document.getElementById('tf-question-textarea').value = content.text || '';
+            // 還原正確答案
+            document.querySelectorAll('input[name="tfCorrectAnswer"]').forEach(r => {
+                r.checked = (r.value === (content.correctAnswer || ''));
+            });
+            // 還原圖片（如果有）
+            clearQuizComposer('tf');
+            if (Array.isArray(content.images) && content.images.length > 0) {
+                content.images.forEach(img => {
+                    if (img && img.dataUrl) {
+                        // 圖片直接 push 到 composer state（已是 dataUrl 形式）
+                        // 為了重用既有 composer，把 dataUrl 轉回類似結構
+                        const base64 = img.dataUrl.split(',')[1] || '';
+                        quizAiImageComposers.tf.push({
+                            dataUrl: img.dataUrl,
+                            base64,
+                            mimeType: 'image/jpeg',
+                            name: img.name || 'restored-from-bank'
+                        });
+                    }
+                });
+                renderQuizComposer('tf');
+            }
         }
 
         function hideTrueFalseSettingsModal() {
@@ -21828,6 +22000,196 @@ ${existingText}
                 console.error('Failed to parse reading question banks:', e);
             }
         }
+
+        // ==========================================================
+        // 🆕 NEW [v3.8.0] A-1: 是非/選擇題題庫管理 - QuizBankManager 模組
+        // ==========================================================
+        // 用 localStorage 儲存教師常用題目，重複使用避免每次都重新輸入
+        // 設計：以 type ('tf' | 'mc') 區分兩個獨立題庫空間
+        // localStorage key: questionBanks_v1.tf / questionBanks_v1.mc
+        // 資料結構：{ name: string, content: string|object, savedAt: ISO string }
+        // 注意：line 6929 已有 class QuestionBankManager（用於排序/配對等舊題型），故新模組改名 QuizBankManager 避免衝突
+
+        const QuizBankManager = (() => {
+            const STORAGE_KEY_PREFIX = 'questionBanks_v1.';
+
+            // 內部狀態：以 type 為 key 的 banks 陣列
+            const banks = { tf: [], mc: [] };
+
+            function loadFromStorage(type) {
+                try {
+                    const raw = localStorage.getItem(STORAGE_KEY_PREFIX + type);
+                    banks[type] = raw ? JSON.parse(raw) : [];
+                } catch (e) {
+                    console.error(`[QuestionBank:${type}] localStorage 解析失敗：`, e);
+                    banks[type] = [];
+                }
+            }
+
+            function saveToStorage(type) {
+                try {
+                    localStorage.setItem(STORAGE_KEY_PREFIX + type, JSON.stringify(banks[type]));
+                } catch (e) {
+                    console.error(`[QuestionBank:${type}] localStorage 寫入失敗：`, e);
+                    showMessage('❌ 儲存失敗，瀏覽器儲存空間可能已滿', 'error');
+                }
+            }
+
+            function getList(type) {
+                return banks[type] || [];
+            }
+
+            /**
+             * 儲存題庫（content 任意 JSON 結構，由各 type 自行決定）
+             * - TF：content = { text: string, images: [{dataUrl}], correctAnswer: 'O'|'X'|null }
+             * - MC：content = { questionsRaw: string, hasCustomQuestions: boolean }
+             */
+            function save(type, name, content) {
+                if (!name || !name.trim()) {
+                    showMessage('❌ 請輸入題庫名稱', 'error');
+                    return false;
+                }
+                name = name.trim();
+                const idx = banks[type].findIndex(b => b.name === name);
+                const bank = { name, content, savedAt: new Date().toISOString() };
+
+                if (idx >= 0) {
+                    if (!confirm(`題庫「${name}」已存在，是否覆蓋？`)) return false;
+                    banks[type][idx] = bank;
+                } else {
+                    banks[type].push(bank);
+                }
+                saveToStorage(type);
+                showMessage(`✅ 題庫「${name}」已儲存`, 'success');
+                return true;
+            }
+
+            function deleteBank(type, name) {
+                if (!confirm(`確定刪除題庫「${name}」？此動作無法復原。`)) return;
+                banks[type] = banks[type].filter(b => b.name !== name);
+                saveToStorage(type);
+                showMessage(`🗑️ 題庫「${name}」已刪除`, 'info');
+            }
+
+            function exportBank(type, name) {
+                const bank = banks[type].find(b => b.name === name);
+                if (!bank) return;
+                const data = {
+                    type,
+                    name: bank.name,
+                    content: bank.content,
+                    savedAt: bank.savedAt,
+                    exportedAt: new Date().toISOString()
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+                const filename = `${name}_${type === 'tf' ? '是非題' : '選擇題'}題庫_${new Date().toISOString().slice(0, 10)}.json`;
+                if (typeof window.saveAs === 'function') {
+                    window.saveAs(blob, filename);
+                } else {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = filename; a.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 100);
+                }
+                showMessage(`📥 題庫「${name}」已匯出`, 'success');
+            }
+
+            function importBank(type, file, onSuccess) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (!data.name || !data.content) {
+                            showMessage('❌ 檔案格式錯誤（缺少 name 或 content）', 'error');
+                            return;
+                        }
+                        if (data.type && data.type !== type) {
+                            if (!confirm(`此檔案是「${data.type}」題庫，確定要匯入到「${type}」？`)) return;
+                        }
+                        const idx = banks[type].findIndex(b => b.name === data.name);
+                        if (idx >= 0) {
+                            if (!confirm(`題庫「${data.name}」已存在，是否覆蓋？`)) return;
+                            banks[type][idx] = { name: data.name, content: data.content, savedAt: new Date().toISOString() };
+                        } else {
+                            banks[type].push({ name: data.name, content: data.content, savedAt: new Date().toISOString() });
+                        }
+                        saveToStorage(type);
+                        showMessage(`✅ 已匯入題庫「${data.name}」`, 'success');
+                        if (typeof onSuccess === 'function') onSuccess();
+                    } catch (err) {
+                        showMessage('❌ 檔案解析失敗：' + err.message, 'error');
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            /**
+             * 渲染題庫列表到 DOM
+             * @param {string} type - 'tf' | 'mc'
+             * @param {string} listElId - 要渲染的 div id
+             * @param {Function} onLoad - 點擊「載入」時呼叫的 callback(bankContent)
+             */
+            function renderList(type, listElId, onLoad) {
+                const listEl = document.getElementById(listElId);
+                if (!listEl) return;
+                const list = banks[type];
+
+                if (!list.length) {
+                    listEl.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-2">目前沒有儲存的題庫</p>';
+                    return;
+                }
+
+                listEl.innerHTML = list.map(bank => {
+                    const safeName = String(bank.name).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+                    const dateStr = bank.savedAt ? new Date(bank.savedAt).toLocaleDateString('zh-TW') : '';
+                    return `
+                        <div class="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-gray-50 border-b last:border-b-0">
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-semibold text-gray-800 truncate" title="${safeName}">${safeName}</div>
+                                <div class="text-xs text-gray-400">${dateStr}</div>
+                            </div>
+                            <div class="flex gap-0.5 flex-shrink-0">
+                                <button type="button" data-bank-action="load" data-bank-name="${safeName}"
+                                    class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded font-bold" title="載入到目前設定">📂 載入</button>
+                                <button type="button" data-bank-action="export" data-bank-name="${safeName}"
+                                    class="text-green-600 hover:text-green-700 px-1.5" title="匯出 JSON">
+                                    <i class="fas fa-download text-xs"></i>
+                                </button>
+                                <button type="button" data-bank-action="delete" data-bank-name="${safeName}"
+                                    class="text-red-500 hover:text-red-700 px-1.5" title="刪除">
+                                    <i class="fas fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // 綁定按鈕（事件委派）
+                listEl.querySelectorAll('[data-bank-action]').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const action = e.currentTarget.dataset.bankAction;
+                        const name = e.currentTarget.dataset.bankName;
+                        const bank = banks[type].find(b => b.name === name);
+                        if (!bank) return;
+                        if (action === 'load') {
+                            if (typeof onLoad === 'function') onLoad(bank.content);
+                            showMessage(`📂 已載入題庫「${name}」`, 'success');
+                        } else if (action === 'export') {
+                            exportBank(type, name);
+                        } else if (action === 'delete') {
+                            deleteBank(type, name);
+                            renderList(type, listElId, onLoad);
+                        }
+                    });
+                });
+            }
+
+            // 啟動時載入兩個 type 的 banks
+            loadFromStorage('tf');
+            loadFromStorage('mc');
+
+            return { save, deleteBank, exportBank, importBank, renderList, getList, loadFromStorage };
+        })();
 
         // ==========================================================
         // 🆕 NEW [v3.7.15]: 班級即時排行榜 - WaitingGameLeaderboard 模組
