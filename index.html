@@ -3211,71 +3211,72 @@
                 </div>
 
                 <!-- 第二行：功能按鈕區（Bento Box 響應式網格） -->
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                <!-- 🆕 MODIFIED [v3.8.11]: grid-cols-1 → grid-cols-2 避免手機端 12 個按鈕堆太長 -->
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-2">
                     <button id="toggle-pause-btn"
-                        class="btn bg-gray-500 hover:bg-gray-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
+                        class="btn bg-gray-500 hover:bg-gray-600 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3">
                         <i class="fas fa-pause mr-1 sm:mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
                     </button>
                     <button id="reset-answers-btn"
-                        class="btn btn-green text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">
+                        class="btn btn-green text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3">
                         <i class="fas fa-redo mr-1 sm:mr-2"></i> <span>重新開始 🔄</span>
                     </button>
                     <button id="draw-lottery-btn"
-                        class="btn btn-orange text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3">抽籤
+                        class="btn btn-orange text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3">抽籤
                         🎲</button>
                     <button id="show-unsubmitted-students-btn"
-                        class="btn btn-orange text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">未作答學生
+                        class="btn btn-orange text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">未作答學生
                         📝</button>
                     <button id="ai-text-summary-btn"
-                        class="btn btn-purple text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">AI
+                        class="btn btn-purple text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">AI
                         文字分析 🤖</button>
                     <button id="download-media-btn"
-                        class="btn btn-purple text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載所有媒體
+                        class="btn btn-purple text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">下載所有媒體
                         💾</button>
                     <button id="show-statistics-btn"
-                        class="btn btn-primary text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示統計
+                        class="btn btn-primary text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">顯示統計
                         📊</button>
                     <button id="start-peer-review-btn"
-                        class="btn btn-teal text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">開始互評
+                        class="btn btn-teal text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">開始互評
                         ❤️</button>
                     <button id="view-questions-btn"
-                        class="btn bg-indigo-600 hover:bg-indigo-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">查看題目
+                        class="btn bg-indigo-600 hover:bg-indigo-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">查看題目
                         📝</button>
                     <button id="view-reading-questions-btn"
-                        class="btn bg-red-600 hover:bg-red-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示題目
+                        class="btn bg-red-600 hover:bg-red-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">顯示題目
                         📖</button>
                     <button id="rescore-all-students-btn"
-                        class="btn bg-green-600 hover:bg-green-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">更新學生答案
+                        class="btn bg-green-600 hover:bg-green-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">更新學生答案
                         ✏️</button>
                     <!-- 🆕 NEW [v3.8.3] A-4: 歷史趨勢按鈕（任何模式都顯示） -->
                     <button id="show-historical-quizzes-btn"
-                        class="btn bg-purple-600 hover:bg-purple-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3"
+                        class="btn bg-purple-600 hover:bg-purple-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3"
                         title="查看本教室過去所有評分型互動的趨勢統計">
                         📊 歷史趨勢
                     </button>
                     <!-- 🆕 NEW [v3.8.4] A-5: 即時加題（只在閱讀測驗/選擇題進行中顯示） -->
                     <button id="add-question-on-fly-btn"
-                        class="btn bg-teal-600 hover:bg-teal-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
+                        class="btn bg-teal-600 hover:bg-teal-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden"
                         title="互動進行中追加一題給學生作答（已提交者該題視為未答）">
                         ✏️ 加題
                     </button>
                     <!-- 🆕 NEW [v3.7.1]: 允許學生提前交卷（只在閱讀測驗模式顯示） -->
                     <button id="allow-early-submit-btn"
-                        class="btn bg-amber-500 hover:bg-amber-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
+                        class="btn bg-amber-500 hover:bg-amber-600 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden"
                         title="點擊後學生可立即送出答案，不必等到 5 分鐘">
                         <i class="fas fa-bolt mr-1"></i><span id="allow-early-submit-btn-text">允許提前交卷 ⚡</span>
                     </button>
                     <button id="show-matching-answer-btn"
-                        class="btn bg-pink-600 hover:bg-pink-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示答案
+                        class="btn bg-pink-600 hover:bg-pink-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">顯示答案
                         💡</button>
                     <button id="show-sequencing-answer-btn"
-                        class="btn bg-cyan-600 hover:bg-cyan-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">顯示答案
+                        class="btn bg-cyan-600 hover:bg-cyan-700 text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">顯示答案
                         💡</button>
                     <button id="download-responses-btn"
-                        class="btn btn-green text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">下載回應
+                        class="btn btn-green text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 hidden">下載回應
                         📥</button>
                     <button id="end-interaction-btn"
-                        class="btn btn-primary text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 font-bold shadow-md md:col-span-2 lg:col-span-3">✅
+                        class="btn btn-primary text-xs sm:text-sm md:text-base h-9 sm:h-10 px-2 sm:px-3 font-bold shadow-md col-span-2 md:col-span-3 lg:col-span-4">✅
                         結束互動，回到選單</button>
                 </div>
             </div>
@@ -4008,26 +4009,28 @@
                     </div>
                 </div>
 
+                <!-- 🆕 MODIFIED [v3.8.11]: HTML 區塊 RWD 修正（按鈕改 flex-wrap + 縮小字體） -->
                 <div id="html-dispatch-section" class="hidden">
                     <div class="flex flex-col items-center">
-                        <div class="flex gap-4 mb-4">
+                        <div class="flex flex-wrap gap-2 justify-center mb-3">
                             <label for="dispatch-html-upload-input"
-                                class="btn bg-yellow-600 !w-auto text-base h-11 px-4 py-2 flex items-center justify-center cursor-pointer">
-                                <i class="fas fa-file-upload mr-2"></i> 上傳 HTML 檔案 ⬆️
+                                class="btn bg-yellow-600 hover:bg-yellow-700 !w-auto text-sm h-10 px-3 py-2 flex items-center justify-center cursor-pointer whitespace-nowrap rounded-lg">
+                                <i class="fas fa-file-upload mr-1.5"></i> 上傳 HTML 檔案
                             </label>
                             <input type="file" id="dispatch-html-upload-input" accept=".html" class="hidden">
                             <button id="clear-dispatch-html-btn"
-                                class="btn btn-red !w-auto text-base h-11 px-4 py-2 flex items-center justify-center">
-                                <i class="fas fa-trash mr-2"></i> 清除 HTML 🗑️
+                                class="btn btn-red !w-auto text-sm h-10 px-3 py-2 flex items-center justify-center whitespace-nowrap rounded-lg">
+                                <i class="fas fa-trash mr-1.5"></i> 清除 HTML
                             </button>
                         </div>
-                        <p id="dispatch-html-status" class="text-gray-600 text-sm mt-2">目前沒有 HTML 檔案。</p>
+                        <p id="dispatch-html-status" class="text-gray-600 text-xs mt-1">目前沒有 HTML 檔案。</p>
                     </div>
                 </div>
             </div>
-            <div class="settings-button-group mt-6 w-full">
-                <button id="clear-dispatch-settings-btn" class="btn btn-red">清除設定 🧹</button>
-                <button id="save-dispatch-settings-btn" class="btn btn-primary">儲存設定 💾</button>
+            <!-- 🆕 MODIFIED [v3.8.11]: 底部按鈕 RWD flex-wrap -->
+            <div class="flex flex-wrap gap-2 justify-center mt-6 w-full">
+                <button id="clear-dispatch-settings-btn" class="btn btn-red !w-auto text-sm px-4 py-2 whitespace-nowrap">清除設定 🧹</button>
+                <button id="save-dispatch-settings-btn" class="btn btn-primary !w-auto text-sm px-4 py-2 whitespace-nowrap">儲存設定 💾</button>
             </div>
         </div>
     </div>
@@ -5312,8 +5315,8 @@
                                     class="text-gray-500">,[層次(1-4)選填]</span><br>
                                 <span class="text-gray-500">支援逗號(,)或Tab分隔，每行一題</span>
                             </p>
-                            <textarea id="reading-questions-textarea" rows="8"
-                                class="w-full p-3 border rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-red-500"
+                            <textarea id="reading-questions-textarea" rows="6"
+                                class="w-full p-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 font-mono"
                                 placeholder="例如：
 主角的名字是什麼?,2,小明,小華,小美,小強,1
 本文的主旨是?,A,友誼的重要,競爭的意義,學習的價值,家庭的溫暖
@@ -5321,6 +5324,20 @@
                             <p id="reading-questions-status" class="text-red-500 text-sm mt-2 hidden">
                                 格式錯誤或題目為空，請檢查輸入。
                             </p>
+
+                            <!-- 🆕 NEW [v3.8.11]: 結構化即時預覽（讓老師一眼看懂 AI 產出的題目） -->
+                            <div id="reading-questions-preview" class="hidden mt-3">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h6 class="text-sm font-bold text-blue-700 flex items-center gap-1">
+                                        👁️ <span>題目預覽</span>
+                                        <span id="preview-question-count" class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">0 題</span>
+                                    </h6>
+                                    <button type="button" id="toggle-preview-btn" class="text-xs text-blue-600 hover:underline">收起預覽</button>
+                                </div>
+                                <div id="reading-questions-preview-list" class="space-y-2 max-h-64 overflow-y-auto bg-gray-50 rounded-lg p-2 border">
+                                    <!-- JS 動態渲染 -->
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -16995,6 +17012,12 @@
             document.getElementById('start-reading-interaction-btn')?.addEventListener('click', startReadingComprehension);
             document.getElementById('submit-reading-btn')?.addEventListener('click', submitReadingAnswer);
             document.getElementById('ai-generate-reading-btn')?.addEventListener('click', generatePIRLSQuestions);
+            // 🆕 v3.8.11: 題目 textarea 變動時自動更新預覽
+            document.getElementById('reading-questions-textarea')?.addEventListener('input', renderReadingQuestionsPreview);
+            document.getElementById('toggle-preview-btn')?.addEventListener('click', () => {
+                const wrap = document.getElementById('reading-questions-preview');
+                if (wrap) wrap.classList.toggle('hidden');
+            });
             document.getElementById('load-reading-files-btn')?.addEventListener('click', loadReadingFiles);
             document.getElementById('save-reading-question-bank-btn')?.addEventListener('click', saveReadingQuestionBank);
 
@@ -19821,6 +19844,59 @@
         /**
          * Show reading comprehension settings modal
          */
+        // 🆕 NEW [v3.8.11]: 閱讀測驗題目即時結構化預覽
+        function renderReadingQuestionsPreview() {
+            const textarea = document.getElementById('reading-questions-textarea');
+            const previewWrap = document.getElementById('reading-questions-preview');
+            const previewList = document.getElementById('reading-questions-preview-list');
+            const countLabel = document.getElementById('preview-question-count');
+            if (!textarea || !previewWrap || !previewList) return;
+
+            const raw = textarea.value.trim();
+            if (!raw) {
+                previewWrap.classList.add('hidden');
+                return;
+            }
+
+            // 用現有的 parseReadingQuestions 函數嘗試解析
+            const questions = parseReadingQuestions(raw);
+            if (!questions || questions.length === 0) {
+                previewWrap.classList.remove('hidden');
+                previewList.innerHTML = '<p class="text-xs text-red-500 py-2 text-center">⚠️ 無法解析題目格式（請確認每行 7 欄以逗號分隔）</p>';
+                if (countLabel) countLabel.textContent = '0 題';
+                return;
+            }
+
+            previewWrap.classList.remove('hidden');
+            if (countLabel) countLabel.textContent = `${questions.length} 題`;
+
+            const levelIcons = ['📖', '💭', '🔗', '⚖️'];
+            const levelTexts = ['直接提取', '直接推論', '詮釋整合', '比較評估'];
+
+            previewList.innerHTML = questions.map((q, idx) => {
+                const levelIdx = (q.level || 1) - 1;
+                return `
+                    <div class="bg-white p-2.5 rounded border border-gray-200 text-xs">
+                        <div class="flex items-center gap-1.5 mb-1.5">
+                            <span class="bg-blue-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">${idx + 1}</span>
+                            <span class="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-xs font-semibold">${levelIcons[levelIdx]} L${q.level} ${levelTexts[levelIdx]}</span>
+                        </div>
+                        <p class="font-semibold text-gray-800 text-sm mb-1.5">${q.question}</p>
+                        <div class="grid grid-cols-2 gap-1">
+                            ${q.options.map((opt, i) => {
+                                const isCorrect = (i + 1) === q.correctAnswer;
+                                return `<div class="flex items-center gap-1 px-1.5 py-1 rounded ${isCorrect ? 'bg-green-100 text-green-800 font-bold border border-green-300' : 'bg-gray-50 text-gray-700'}">
+                                    <span class="font-bold">${i + 1}.</span>
+                                    <span>${opt}</span>
+                                    ${isCorrect ? '<i class="fas fa-check-circle text-green-600 ml-auto"></i>' : ''}
+                                </div>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function showReadingComprehensionModal() {
             document.getElementById('reading-comprehension-settings-modal').classList.remove('hidden');
             // Populate with existing data if any
@@ -21778,6 +21854,8 @@ ${existingText}
                         questionsTextarea.value = generatedText;
                     }
                     showMessage(hasImages ? '✅ AI 已成功辨識圖片並生成閱讀測驗！' : 'AI 閱讀測驗已成功生成！', 'success');
+                    // 🆕 v3.8.11: AI 生成完畢自動觸發預覽
+                    renderReadingQuestionsPreview();
                 } else {
                     throw new Error('AI 未返回有效內容。');
                 }
