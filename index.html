@@ -3232,6 +3232,12 @@
                         title="查看本教室過去所有評分型互動的趨勢統計">
                         📊 歷史趨勢
                     </button>
+                    <!-- 🆕 NEW [v3.8.4] A-5: 即時加題（只在閱讀測驗/選擇題進行中顯示） -->
+                    <button id="add-question-on-fly-btn"
+                        class="btn bg-teal-600 hover:bg-teal-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
+                        title="互動進行中追加一題給學生作答（已提交者該題視為未答）">
+                        ✏️ 加題
+                    </button>
                     <!-- 🆕 NEW [v3.7.1]: 允許學生提前交卷（只在閱讀測驗模式顯示） -->
                     <button id="allow-early-submit-btn"
                         class="btn bg-amber-500 hover:bg-amber-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
@@ -4034,6 +4040,77 @@
     </div>
 
     <!-- 🆕 NEW [v3.7.3]: 結束互動再確認 Modal（防止老師忘記儲存學生作答紀錄） -->
+    <!-- 🆕 NEW [v3.8.4] A-5: 即時加題 Modal -->
+    <div id="add-question-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 600px;">
+            <button id="add-question-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-2 text-gray-800 flex items-center gap-2">
+                ✏️ 即時追加一題
+            </h4>
+            <p class="text-sm text-gray-500 mb-4">
+                立即傳送一題給學生（已提交者該新題視為未答；新加入學生會看到完整題組）
+            </p>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">題目敘述</label>
+                    <textarea id="add-question-text" rows="2"
+                        class="w-full p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        placeholder="例如：以下哪個是哺乳類動物？"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">選項 1</label>
+                        <input id="add-question-opt1" type="text" class="w-full p-2 border rounded text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">選項 2</label>
+                        <input id="add-question-opt2" type="text" class="w-full p-2 border rounded text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">選項 3</label>
+                        <input id="add-question-opt3" type="text" class="w-full p-2 border rounded text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 mb-1">選項 4</label>
+                        <input id="add-question-opt4" type="text" class="w-full p-2 border rounded text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-700 mb-1">正確答案</label>
+                    <select id="add-question-correct"
+                        class="w-full p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                        <option value="1">選項 1</option>
+                        <option value="2">選項 2</option>
+                        <option value="3">選項 3</option>
+                        <option value="4">選項 4</option>
+                        <option value="0">送分題（任何答案都對）</option>
+                    </select>
+                </div>
+                <!-- 閱讀測驗特有：層次 -->
+                <div id="add-question-level-row">
+                    <label class="block text-xs font-bold text-gray-700 mb-1">PIRLS 層次（僅閱讀測驗）</label>
+                    <select id="add-question-level"
+                        class="w-full p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                        <option value="1">層次 1：直接提取</option>
+                        <option value="2">層次 2：直接推論</option>
+                        <option value="3">層次 3：詮釋整合</option>
+                        <option value="4">層次 4：比較評估</option>
+                    </select>
+                </div>
+            </div>
+            <div class="bg-amber-50 border-l-4 border-amber-500 p-2 mt-3 text-xs text-amber-800 rounded">
+                <i class="fas fa-info-circle"></i>
+                <strong>提醒</strong>：已提交答案的學生看不到新題（題目鎖定）；尚未提交者會在原題目後看到新題。
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button id="add-question-cancel-btn" class="btn btn-gray flex-1">取消 ↩️</button>
+                <button id="add-question-confirm-btn" class="btn bg-teal-600 hover:bg-teal-700 text-white flex-1">
+                    ✅ 確認加題
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 🆕 NEW [v3.8.3] A-4: 班級歷史互動趨勢 Modal -->
     <div id="historical-quizzes-modal" class="magnified-image-modal hidden">
         <div class="magnified-image-modal-content" style="max-width: 720px; max-height: 85vh;">
@@ -8493,6 +8570,14 @@
                 allowEarlySubmitBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
                 // 每次進入/切換模式都重置為未開放狀態
                 resetAllowEarlySubmitButton();
+            }
+
+            // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕只在閱讀測驗或選擇題（自訂題）顯示
+            const addQuestionBtn = document.getElementById('add-question-on-fly-btn');
+            if (addQuestionBtn) {
+                const showAddQ = (mode === 'reading_comprehension') ||
+                                 (mode === 'multiple_choice' && currentMultipleChoiceQuestions && currentMultipleChoiceQuestions.length > 0);
+                addQuestionBtn.classList.toggle('hidden', !showAddQ);
             }
 
             // NEW: Show peer review button only for text_input and drawing modes
@@ -14249,6 +14334,72 @@
         //   timestamp: serverTimestamp
         // }
 
+        // ==========================================================
+        // 🆕 NEW [v3.8.4] A-5: 即時加題（互動進行中追加一題給學生）
+        // ==========================================================
+        function showAddQuestionModal() {
+            const modal = document.getElementById('add-question-modal');
+            if (!modal) return;
+            // 重置欄位
+            document.getElementById('add-question-text').value = '';
+            ['1','2','3','4'].forEach(n => document.getElementById('add-question-opt' + n).value = '');
+            document.getElementById('add-question-correct').value = '1';
+            document.getElementById('add-question-level').value = '1';
+            // 依模式顯示/隱藏層次選項
+            const levelRow = document.getElementById('add-question-level-row');
+            if (levelRow) levelRow.style.display = currentInteractionMode === 'reading_comprehension' ? '' : 'none';
+            modal.classList.remove('hidden');
+        }
+        function hideAddQuestionModal() {
+            document.getElementById('add-question-modal')?.classList.add('hidden');
+        }
+        async function confirmAddQuestion() {
+            const questionText = document.getElementById('add-question-text').value.trim();
+            const opts = ['1','2','3','4'].map(n => document.getElementById('add-question-opt' + n).value.trim());
+            const correctAnswer = parseInt(document.getElementById('add-question-correct').value);
+            const level = parseInt(document.getElementById('add-question-level').value) || 1;
+
+            if (!questionText) { showMessage('❌ 題目敘述不能為空', 'error'); return; }
+            if (opts.some(o => !o)) { showMessage('❌ 4 個選項都要填', 'error'); return; }
+
+            const newQuestion = { question: questionText, correctAnswer, options: opts, level };
+
+            try {
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+
+                if (currentInteractionMode === 'reading_comprehension') {
+                    // 追加到 readingComprehensionData.questions
+                    if (!readingComprehensionData) {
+                        showMessage('❌ 目前無閱讀測驗資料', 'error');
+                        return;
+                    }
+                    readingComprehensionData.questions.push(newQuestion);
+                    // 寫入 Firestore - control doc 的 readingComprehensionData
+                    await setDoc(controlRef, {
+                        readingComprehensionData,
+                        modeResetToken: Date.now() // 強制學生端 re-render
+                    }, { merge: true });
+                    showMessage(`✅ 已加第 ${readingComprehensionData.questions.length} 題，學生會即時看到`, 'success');
+                } else if (currentInteractionMode === 'multiple_choice') {
+                    // 追加到 multiple_choice_questions
+                    const newList = (currentMultipleChoiceQuestions || []).concat([newQuestion]);
+                    await setDoc(controlRef, {
+                        multiple_choice_questions: newList,
+                        modeResetToken: Date.now()
+                    }, { merge: true });
+                    currentMultipleChoiceQuestions = newList;
+                    showMessage(`✅ 已加第 ${newList.length} 題，學生會即時看到`, 'success');
+                } else {
+                    showMessage('❌ 目前模式不支援即時加題', 'warning');
+                    return;
+                }
+                hideAddQuestionModal();
+            } catch (err) {
+                console.error('[addQuestion] 失敗：', err);
+                showMessage('❌ 加題失敗：' + err.message, 'error');
+            }
+        }
+
         async function archiveCurrentQuizSnapshot() {
             if (!classroomCode || !currentInteractionMode || currentInteractionMode === 'waiting') return;
 
@@ -16493,6 +16644,12 @@
             document.getElementById('show-historical-quizzes-btn')?.addEventListener('click', showHistoricalQuizzesModal);
             document.getElementById('historical-quizzes-close-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
             document.getElementById('historical-quizzes-close-bottom-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
+
+            // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕
+            document.getElementById('add-question-on-fly-btn')?.addEventListener('click', showAddQuestionModal);
+            document.getElementById('add-question-close-btn')?.addEventListener('click', hideAddQuestionModal);
+            document.getElementById('add-question-cancel-btn')?.addEventListener('click', hideAddQuestionModal);
+            document.getElementById('add-question-confirm-btn')?.addEventListener('click', confirmAddQuestion);
             // 🆕 NEW [v3.7.1]: 允許提前交卷 toggle
             document.getElementById('allow-early-submit-btn')?.addEventListener('click', toggleAllowEarlyReadingSubmit);
 
