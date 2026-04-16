@@ -449,6 +449,18 @@
             /* Blue */
         }
 
+        /* 🆕 NEW [v3.7.13]: 閱讀測驗模式 - 解除外容器 h-96 (384px) 的高度限制
+           原本 Tailwind 的 h-96 讓整個學生卡片區塊只有 384px 可見，
+           導致老師需要在極小視窗內捲動 15-25 張學生卡片，體驗很差。
+           改為動態依視窗高度（min 500px, 80vh，max 900px）：
+           - 小筆電（768px 高）→ 80vh = 614px 可見
+           - 一般桌機（1080px 高）→ 80vh = 864px，被 max 900 鎖定
+           - 內部仍保留 overflow-y-auto 讓卡片多時可捲動
+        */
+        #student-responses-container.reading-mode-container {
+            height: clamp(500px, 80vh, 900px) !important;
+        }
+
         /* 📖 閱讀測驗模式：教師端容器自適應欄數 */
         /* 🆕 MODIFIED [v3.7.12]: 改用 clamp() 動態計算 minmax，無斷點切換更平滑
            - 240px 是「絕對最小值」確保任何視窗都能塞下 3 欄（900px 視窗下精準塞 3 欄）
@@ -468,8 +480,9 @@
         }
 
         /* 閱讀測驗卡片：啟用 container query 精準控制內部排版 */
+        /* 🆕 MODIFIED [v3.7.13]: min-height 120 → 180，讓卡片視覺更飽滿不侷促 */
         .reading-mode-container .student-response-item {
-            min-height: 120px;
+            min-height: 180px;
             container-type: inline-size;
             container-name: student-card;
         }
