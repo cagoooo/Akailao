@@ -1,0 +1,16 @@
+/**
+ * Tailwind v4 input CSS - 用於 D-2 本地化 build
+ *
+ * Build command（已加入 package.json scripts.build:css）：
+ *   npm run build:css
+ *
+ * 部署流程：
+ *   1. 修改 index.html / set.html 後，跑 npm run build:css 重新編譯
+ *   2. 把產出的 tailwind-build.css 一起 commit
+ *   3. GitHub Actions 部署時不需 build（CSS 已是靜態檔）
+ */
+@import "tailwindcss";
+
+/* 🆕 NEW [v3.8.7]: 顯式 source 掃描範圍，僅讀取根目錄 .html（避開 node_modules 與本地測試副本） */
+@source "./index.html";
+@source "./set.html";

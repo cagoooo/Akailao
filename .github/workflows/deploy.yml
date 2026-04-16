@@ -41,6 +41,12 @@ jobs:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
+      # 🆕 NEW [v3.8.7] D-2: 建置 Tailwind CSS（保險措施，本地 commit 應已含 tailwind-build.css）
+      - name: 🎨 建置 Tailwind CSS
+        run: |
+          npm install --no-save @tailwindcss/cli@^4 tailwindcss@^4
+          npx tailwindcss -i tailwind.input.css -o tailwind-build.css --minify
+
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
         with:

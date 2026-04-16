@@ -1,10 +1,12 @@
 {
   "name": "akailao",
-  "version": "3.8.5",
-  "description": "> **版本：V3.8.5** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署",
+  "version": "3.8.7",
+  "description": "> **版本：V3.8.7** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署",
   "main": "tailwind.config.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:css": "tailwindcss -i tailwind.input.css -o tailwind-build.css --minify",
+    "watch:css": "tailwindcss -i tailwind.input.css -o tailwind-build.css --watch"
   },
   "repository": {
     "type": "git",

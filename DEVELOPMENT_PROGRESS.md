@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.5** ｜ 更新時間：2026-04-16
+> **版本：V3.8.7** ｜ 更新時間：2026-04-16
 
 ---
 
@@ -861,6 +861,30 @@
 | V3.8.3 | A-4 MVP | 📊 班級答題趨勢面板（自動歸檔 + 統計卡片）| 長期分析 |
 | V3.8.4 | A-5 MVP | ✏️ 互動進行中即時加題 | 課堂彈性 |
 | V3.8.5 | A-4+ / D-5 | 📊 Chart.js 折線圖 + 個人趨勢 + PDF + Node 24 | 親師溝通 + 部署 |
+
+---
+
+### 🟢 V3.8.7 (2026-04-16) - D-2：Tailwind CDN → 本地預編譯（消除 console 警告 + 首頁載入加速 97%）
+*   **🐛 痛點**：每次開啟頁面都跳「cdn.tailwindcss.com should not be used in production」警告；CDN 大小 ~3MB 每次都要下載
+*   **🆕 改用本地 build**：
+    - 新增 `tailwind.input.css`（含 `@source` 指令明確掃描 `index.html` + `set.html`）
+    - `npm run build:css` → `tailwind-build.css`（69 KB minified，**省 97% 流量**）
+    - `npm run watch:css` 開發時即時 rebuild
+*   **🔁 GitHub Actions 雙保險**：
+    - 本地 commit 已含 `tailwind-build.css`
+    - Workflow 部署前會 `npm install --no-save @tailwindcss/cli@^4` 再重 build 一次
+    - 即使老師忘記本地 build 也不會破壞部署
+*   **📐 替換目標**：
+    - `index.html` line 10：`<script src="cdn.tailwindcss.com">` → `<link rel="stylesheet" href="tailwind-build.css">`
+    - `set.html` line 8：同上
+*   **🛡️ 風險評估**：
+    - Tailwind v4 用 `@source` 指令掃描 HTML，所有實際用到的 class 都會包進來（不會少）
+    - 若日後新增 HTML 檔，記得在 `tailwind.input.css` 加 `@source` 並 rebuild
+    - 若忘記 rebuild → GitHub Actions 會幫忙救一次（保險措施）
+*   **🔮 預期效益**：
+    - Production console 警告徹底消失
+    - 首頁載入時間在弱網路上明顯加快
+    - 不再依賴外部 CDN（cdn.tailwindcss.com 萬一掛掉也不影響）
 
 ---
 
