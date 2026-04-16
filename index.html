@@ -4938,6 +4938,44 @@
 - 或直接上傳課本/講義截圖，AI 會自動辨識"></textarea>
                                 </div>
 
+                                <!-- 🆕 NEW [v3.8.2] A-3: 課綱對齊選擇器 -->
+                                <div class="bg-white p-2.5 rounded border border-purple-200">
+                                    <label class="block text-xs font-bold text-purple-700 mb-1.5 flex items-center gap-1">
+                                        🎯 <span>學習階段對齊（選填，幫 AI 調整深淺）</span>
+                                    </label>
+                                    <div class="grid grid-cols-2 gap-1.5">
+                                        <select id="ai-reading-grade-select"
+                                            class="w-full p-1.5 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-purple-500">
+                                            <option value="">— 年級 —</option>
+                                            <option value="小1">國小 1 年級</option>
+                                            <option value="小2">國小 2 年級</option>
+                                            <option value="小3">國小 3 年級</option>
+                                            <option value="小4">國小 4 年級</option>
+                                            <option value="小5">國小 5 年級</option>
+                                            <option value="小6">國小 6 年級</option>
+                                            <option value="國1">國中 7 年級</option>
+                                            <option value="國2">國中 8 年級</option>
+                                            <option value="國3">國中 9 年級</option>
+                                            <option value="高中">高中</option>
+                                        </select>
+                                        <select id="ai-reading-subject-select"
+                                            class="w-full p-1.5 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-purple-500">
+                                            <option value="">— 科目 —</option>
+                                            <option value="國語">國語/國文</option>
+                                            <option value="英語">英語</option>
+                                            <option value="數學">數學</option>
+                                            <option value="自然">自然/科學</option>
+                                            <option value="社會">社會/歷史/地理/公民</option>
+                                            <option value="生活">生活</option>
+                                            <option value="健康體育">健康與體育</option>
+                                            <option value="藝術">藝術/音樂/美術</option>
+                                            <option value="科技">資訊/科技</option>
+                                            <option value="其他">其他</option>
+                                        </select>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1.5 italic">💡 設定後 AI 會調整詞彙難度、句構複雜度，並對齊該年級該科目的常見題型</p>
+                                </div>
+
                                 <!-- 🆕 NEW: 圖片/截圖上傳區塊（支援 Gemini Vision） -->
                                 <div id="ai-reading-image-section"
                                     class="bg-white p-3 rounded border-2 border-dashed border-purple-300">
@@ -20462,6 +20500,57 @@
         /**
          * AI generate PIRLS reading questions
          */
+        // 🆕 NEW [v3.8.2] A-3: 依年級+科目產生 prompt 增益指引
+        function buildCurriculumHint(grade, subject) {
+            if (!grade && !subject) return '';
+
+            // 國小 1-2、3-4、5-6 年級對應十二年國教學習階段
+            const stageMap = {
+                '小1': '第一學習階段（國小低年級）', '小2': '第一學習階段（國小低年級）',
+                '小3': '第二學習階段（國小中年級）', '小4': '第二學習階段（國小中年級）',
+                '小5': '第三學習階段（國小高年級）', '小6': '第三學習階段（國小高年級）',
+                '國1': '第四學習階段（國中）', '國2': '第四學習階段（國中）', '國3': '第四學習階段（國中）',
+                '高中': '第五學習階段（高中）'
+            };
+            const stage = stageMap[grade] || '';
+
+            // 各科建議重點
+            const subjectGuide = {
+                '國語': '注重字詞認讀、句意理解、文章主旨、修辭辨識；題幹避免太抽象',
+                '英語': '使用該年級常見單字與句型；題幹可中英夾雜（中文敘述+英文選項）',
+                '數學': '結合生活情境出題；題目應包含數字、單位、計算情境；避免過於抽象',
+                '自然': '聚焦觀察、實驗、科學原理；可用日常現象引導推論',
+                '社會': '聚焦地理位置、歷史事件、公民議題；題目宜結合本土素材',
+                '生活': '結合學生日常情境，如家庭、學校、社區；題目簡明易懂',
+                '健康體育': '聚焦健康知識、運動規則、安全常識',
+                '藝術': '聚焦藝術元素辨識、文化背景、創作技法',
+                '科技': '聚焦資訊素養、運算思維、科技倫理'
+            };
+            const guide = subjectGuide[subject] || '';
+
+            // 各年級詞彙難度建議
+            const difficultyHint = (grade === '小1' || grade === '小2')
+                ? '詞彙限定 1-2 年級常用字（500-800 字以內），句長 8-15 字，避免冷僻字'
+                : (grade === '小3' || grade === '小4')
+                ? '詞彙限定 3-4 年級常用字（800-1500 字），句長 12-20 字'
+                : (grade === '小5' || grade === '小6')
+                ? '詞彙限定 5-6 年級常用字（1500-2500 字），句長 15-25 字，可有複句'
+                : (grade === '國1' || grade === '國2' || grade === '國3')
+                ? '詞彙可達國中程度（含部分文言詞），句構複雜度提高'
+                : grade === '高中'
+                ? '詞彙可達高中程度（含古典詩文、論述體裁）'
+                : '';
+
+            const lines = [];
+            lines.push('\n【🎯 教學階段對齊指引】');
+            if (grade) lines.push(`- 對象年級：${grade}（${stage}）`);
+            if (subject) lines.push(`- 學科領域：${subject}`);
+            if (difficultyHint) lines.push(`- 詞彙難度：${difficultyHint}`);
+            if (guide) lines.push(`- 題型重點：${guide}`);
+            lines.push('- 請依此調整題目深淺、詞彙選擇與情境設計');
+            return lines.join('\n');
+        }
+
         async function generatePIRLSQuestions() {
             // 🚀 UX: 檢查 API KEY 是否已設定
             if (!checkAPIKey()) return;
@@ -20483,6 +20572,11 @@
                 showMessage('請輸入出題要求或上傳至少一張圖片！', 'error');
                 return;
             }
+
+            // 🆕 NEW [v3.8.2] A-3: 讀取課綱對齊選項，組成 prompt 增益指引
+            const grade = (document.getElementById('ai-reading-grade-select') || {}).value || '';
+            const subject = (document.getElementById('ai-reading-subject-select') || {}).value || '';
+            const curriculumHint = buildCurriculumHint(grade, subject);
 
             // 自動清除舊內容，提供更好的 UX 體驗
             readingTextTextarea.value = '';
@@ -20555,7 +20649,7 @@
 - 層次2（直接推論）：3題
 - 層次3（詮釋整合資訊）：2題
 - 層次4（比較評估內容）：2題
-${topic ? `\n【教師補充要求】\n${topic}\n` : ''}
+${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
 【輸出格式 — 非常重要，請嚴格遵守】
 1. 不要使用 markdown code fence（\`\`\`）包裝輸出
 2. 不要加「文本：」「題目：」等標題，直接開始輸出文本
@@ -20583,7 +20677,7 @@ ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}
 文本：
 ${existingText}
 
-要求：${topic}
+要求：${topic}${curriculumHint}
 
 請按照以下格式輸出，每行一題：
 題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
@@ -20597,7 +20691,7 @@ ${existingText}
 層次3（詮釋整合資訊）：2題
 層次4（比較評估內容）：2題
 
-主題：${topic}
+主題：${topic}${curriculumHint}
 
 請先輸出文本，然後輸出「---題目---」，再按照以下格式輸出題目，每行一題：
 題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)`;
