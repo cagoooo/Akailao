@@ -450,27 +450,46 @@
         }
 
         /* 📖 閱讀測驗模式：教師端容器改為自適應欄數（auto-fill + minmax） */
-        /* 🆕 MODIFIED [v3.7.6]: 改用 auto-fill，欄數依容器寬度自動計算，卡片寬度穩定不被人數稀釋 */
-        /* 🆕 MODIFIED [v3.7.10]: 提高 minmax 下限確保卡片足夠寬觸發 5 欄 badges */
+        /* 🆕 MODIFIED [v3.7.6]: 改用 auto-fill，欄數依容器寬度自動計算 */
+        /* 🆕 MODIFIED [v3.7.11]: 降低 minmax 下限讓中等寬度視窗（~900px）能塞 3 欄，避免堆疊 1 欄
+           計算範例：
+           - 900px 視窗（wide-mode 98%）= 882px container
+             - 扣 p-4 32px + 2 gaps × 16px = 818px 可用
+             - minmax(260px) → floor(818/260) = 3 欄 ✓
+           - 1200px 視窗 = 1168 → 扣 padding ≈ 1104
+             - minmax(300px) → 3-4 欄
+           - 1600px 視窗 → 4-5 欄 */
         .reading-mode-container {
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)) !important;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
         }
 
         @media (min-width: 640px) {
             .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
             }
         }
 
-        @media (min-width: 1024px) {
+        @media (min-width: 900px) {
             .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
             }
         }
 
-        @media (min-width: 1440px) {
+        @media (min-width: 1280px) {
             .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)) !important;
+                grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)) !important;
+            }
+        }
+
+        @media (min-width: 1600px) {
+            .reading-mode-container {
+                grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)) !important;
+            }
+        }
+
+        @media (min-width: 1920px) {
+            .reading-mode-container {
+                grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)) !important;
             }
         }
 
@@ -481,14 +500,15 @@
             container-name: student-card;
         }
 
-        /* 🆕 NEW [v3.7.6 / MODIFIED v3.7.10]: 用 container query 依「卡片實際寬度」精準調整 badges 排版
+        /* 🆕 NEW [v3.7.6 / MODIFIED v3.7.10 / v3.7.11]: 用 container query 依「卡片實際寬度」精準調整 badges 排版
            重要：container-type: inline-size 測量的是 content-box（扣除 padding），
                  卡片外觀 400px → content-box ~360px（扣 padding 1rem × 2 = 32px）
                  所以閾值要設比實際卡片視覺寬度少 32-40px
+           v3.7.11: 降低所有閾值，讓窄卡片（3 欄佈局）也能有好的內部排版
         */
 
-        /* content-box ≥ 260px（卡片視覺 ~300px）：Q1-Q10 badges 3 欄 */
-        @container student-card (min-width: 260px) {
+        /* content-box ≥ 220px（卡片視覺 ~260px）：Q1-Q10 badges 3 欄 */
+        @container student-card (min-width: 220px) {
             .answer-box > div[style*="grid-template-columns"] {
                 grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
                 gap: 4px 8px !important;
