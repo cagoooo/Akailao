@@ -2275,6 +2275,79 @@
             }
         }
 
+        /* 🆕 NEW [v3.7.15]: 班級即時排行榜 */
+        .leaderboard-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 6px 10px;
+            border-radius: 6px;
+            background: linear-gradient(90deg, #fffbeb, #fef3c7);
+            border: 1px solid #fde68a;
+            transition: transform 0.2s, background 0.2s;
+            font-size: 13px;
+        }
+
+        .leaderboard-row.is-self {
+            background: linear-gradient(90deg, #ddd6fe, #ede9fe) !important;
+            border-color: #8b5cf6;
+            box-shadow: 0 2px 6px rgba(139, 92, 246, 0.25);
+        }
+
+        .leaderboard-row.is-new {
+            animation: leaderboard-flash 1.4s ease-out;
+        }
+
+        @keyframes leaderboard-flash {
+            0% { background: #fde047; transform: scale(1.04); }
+            100% { background: linear-gradient(90deg, #fffbeb, #fef3c7); transform: scale(1); }
+        }
+
+        .leaderboard-rank {
+            font-weight: 900;
+            font-size: 16px;
+            min-width: 28px;
+            text-align: center;
+        }
+
+        .leaderboard-rank-1 { color: #d97706; font-size: 18px; }
+        .leaderboard-rank-2 { color: #6b7280; font-size: 17px; }
+        .leaderboard-rank-3 { color: #b45309; font-size: 16px; }
+
+        .leaderboard-name {
+            flex: 1;
+            font-weight: 600;
+            color: #1f2937;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .leaderboard-time {
+            font-family: monospace;
+            font-weight: 700;
+            color: #0369a1;
+            white-space: nowrap;
+        }
+
+        .leaderboard-moves {
+            font-size: 11px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+
+        /* 🆕 NEW [v3.7.15]: 排名數字大字體跳動動畫 */
+        @keyframes rank-pop-in {
+            0% { transform: scale(0.5); opacity: 0; }
+            60% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        #game-rank-num.pop-in {
+            display: inline-block;
+            animation: rank-pop-in 0.5s ease-out;
+        }
+
         /* 🏆 Best Score Display */
         #best-score-display {
             background: linear-gradient(135deg, #fbbf24, #f59e0b);
@@ -3294,7 +3367,7 @@
                     <div class="flex gap-3 justify-center flex-wrap">
                         <button id="start-game-btn" class="btn btn-primary px-6">🎯 開始遊戲</button>
                         <button id="reset-game-btn"
-                            class="btn bg-orange-500 hover:bg-orange-600 text-white px-6 hidden">🔄 重新開始</button>
+                            class="btn bg-orange-500 hover:bg-orange-600 text-white px-6 hidden">🔄 再次挑戰</button>
                     </div>
 
                     <!-- Game Completion Message -->
@@ -3303,6 +3376,26 @@
                         <p class="text-lg sm:text-xl font-bold text-green-700 mb-2">🎉 恭喜！全部配對完成！</p>
                         <p class="text-xs sm:text-sm md:text-base text-gray-700">用時: <span id="final-time"></span> 秒 |
                             翻轉次數: <span id="final-moves"></span> 次</p>
+                        <!-- 🆕 NEW [v3.7.15]: 班級排名顯示 -->
+                        <div id="game-rank-display" class="hidden mt-3 pt-3 border-t border-green-300">
+                            <p class="text-base sm:text-lg font-bold text-purple-700">
+                                🏆 班級排名：第 <span id="game-rank-num" class="text-2xl sm:text-3xl text-orange-600">--</span> 名
+                                <span class="text-xs text-gray-600 font-normal">（共 <span id="game-rank-total">0</span> 位同學完成）</span>
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- 🆕 NEW [v3.7.15]: 班級即時排行榜 -->
+                    <div id="waiting-game-leaderboard"
+                        class="mt-4 sm:mt-5 p-3 sm:p-4 bg-white border-2 border-yellow-300 rounded-lg shadow-md text-left hidden">
+                        <h4 class="text-base sm:text-lg font-bold text-yellow-700 mb-2 flex items-center gap-2">
+                            🏆 <span>班級即時排行榜</span>
+                            <span id="leaderboard-count-label" class="text-xs text-gray-500 font-normal ml-auto">尚無紀錄</span>
+                        </h4>
+                        <div id="leaderboard-list" class="space-y-1.5">
+                            <!-- 排行榜項目由 JS 動態渲染 -->
+                            <p class="text-sm text-gray-400 italic text-center py-2">第一個完成的人將出現在這裡 🎯</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -9277,8 +9370,16 @@
                 if (currentInteractionMode === 'waiting') {
                     showView('studentWaiting');
                     studentPauseOverlay.classList.add('hidden'); // Hide overlay in waiting view
+                    // 🆕 NEW [v3.7.15]: 進入等待模式 → 啟動配對遊戲即時排行榜
+                    if (typeof WaitingGameLeaderboard !== 'undefined') {
+                        WaitingGameLeaderboard.start();
+                    }
                 } else {
                     showView('studentInteraction');
+                    // 🆕 NEW [v3.7.15]: 離開等待模式 → 停止排行榜監聽
+                    if (typeof WaitingGameLeaderboard !== 'undefined') {
+                        WaitingGameLeaderboard.stop();
+                    }
 
                     // Call showInteractionUI if mode changed OR token changed OR if this is the first time entering this mode
                     // We determine "first time" by checking if any interaction UI is currently visible
@@ -21728,6 +21829,206 @@ ${existingText}
             }
         }
 
+        // ==========================================================
+        // 🆕 NEW [v3.7.15]: 班級即時排行榜 - WaitingGameLeaderboard 模組
+        // ==========================================================
+        // 用 onSnapshot 監聽 classrooms/{code}/waitingGameScores/{name}
+        // 偵測新完成 → 在學生端彈 Toast 通知 + 即時更新排行榜 UI
+
+        const WaitingGameLeaderboard = (() => {
+            let unsubscribe = null;
+            // Map<studentName, {bestTime, lastTime, lastMoves, completedAtMs}>
+            // 用於偵測「新完成」與「再挑戰刷新紀錄」
+            const lastSeen = new Map();
+            let isFirstSnapshot = true;
+            let cachedScores = []; // 排序後的 scores
+
+            function formatTime(seconds) {
+                if (seconds == null || isNaN(seconds)) return '--';
+                if (seconds < 60) return seconds + '秒';
+                return Math.floor(seconds / 60) + '分' + (seconds % 60).toString().padStart(2, '0') + '秒';
+            }
+
+            function rankClass(rank) {
+                return rank === 1 ? 'leaderboard-rank-1'
+                    : rank === 2 ? 'leaderboard-rank-2'
+                    : rank === 3 ? 'leaderboard-rank-3' : '';
+            }
+
+            function rankIcon(rank) {
+                return rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+            }
+
+            function renderLeaderboard(scores, newCompletionNames = []) {
+                const listEl = document.getElementById('leaderboard-list');
+                const countLabel = document.getElementById('leaderboard-count-label');
+                const wrapper = document.getElementById('waiting-game-leaderboard');
+                if (!listEl || !wrapper) return;
+
+                wrapper.classList.remove('hidden');
+                cachedScores = scores;
+
+                if (scores.length === 0) {
+                    listEl.innerHTML = '<p class="text-sm text-gray-400 italic text-center py-2">第一個完成的人將出現在這裡 🎯</p>';
+                    if (countLabel) countLabel.textContent = '尚無紀錄';
+                    return;
+                }
+
+                if (countLabel) countLabel.textContent = `共 ${scores.length} 位完成`;
+
+                // 顯示前 8 名（如果自己不在前 8 名，最後一行加自己）
+                const top = scores.slice(0, 8);
+                const selfIdx = scores.findIndex(s => s.name === studentName);
+                const showSelfSeparately = selfIdx >= 8;
+
+                const rows = top.map((s, idx) => buildRow(s, idx + 1, newCompletionNames));
+                if (showSelfSeparately) {
+                    rows.push('<div class="text-center text-gray-400 text-xs py-1">⋯</div>');
+                    rows.push(buildRow(scores[selfIdx], selfIdx + 1, newCompletionNames));
+                }
+                listEl.innerHTML = rows.join('');
+            }
+
+            function buildRow(score, rank, newCompletionNames) {
+                const isSelf = score.name === studentName;
+                const isNew = newCompletionNames.includes(score.name);
+                const classes = ['leaderboard-row'];
+                if (isSelf) classes.push('is-self');
+                if (isNew) classes.push('is-new');
+                return `
+                    <div class="${classes.join(' ')}">
+                        <span class="leaderboard-rank ${rankClass(rank)}">${rankIcon(rank)}</span>
+                        <span class="leaderboard-name">${escapeHtml(score.name)}${isSelf ? ' (你)' : ''}</span>
+                        <span class="leaderboard-time">⏱️ ${formatTime(score.bestTime)}</span>
+                        <span class="leaderboard-moves">🎯 ${score.bestMoves}</span>
+                    </div>
+                `;
+            }
+
+            function escapeHtml(s) {
+                return String(s || '').replace(/[&<>"']/g, c => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[c]));
+            }
+
+            function start() {
+                if (!classroomCode) return;
+                stop(); // 防止重複啟動
+                isFirstSnapshot = true;
+                lastSeen.clear();
+
+                const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'waitingGameScores');
+                unsubscribe = onSnapshot(colRef, (snap) => {
+                    const scores = [];
+                    const currentSeen = new Map();
+                    const newCompletionNames = [];
+
+                    snap.forEach(d => {
+                        const data = d.data();
+                        if (!data || !data.name) return;
+                        scores.push({
+                            name: data.name,
+                            bestTime: data.bestTime,
+                            bestMoves: data.bestMoves,
+                            lastTime: data.lastTime,
+                            lastMoves: data.lastMoves,
+                            totalGames: data.totalGames || 1,
+                            completedAtMs: data.completedAt?.toMillis ? data.completedAt.toMillis() : 0
+                        });
+                        currentSeen.set(data.name, data.completedAt?.toMillis ? data.completedAt.toMillis() : 0);
+                    });
+
+                    // 排序：bestTime 升序，再以 bestMoves 升序作為 tiebreaker
+                    scores.sort((a, b) => {
+                        if (a.bestTime !== b.bestTime) return a.bestTime - b.bestTime;
+                        return (a.bestMoves || 0) - (b.bestMoves || 0);
+                    });
+
+                    // 偵測新完成（避開首次載入的歷史紀錄與自己的紀錄，避免擾人）
+                    if (!isFirstSnapshot) {
+                        currentSeen.forEach((completedAt, name) => {
+                            const prev = lastSeen.get(name);
+                            // 新加入或時間更新（再挑戰刷新最佳成績）
+                            if ((!prev || prev !== completedAt) && name !== studentName) {
+                                newCompletionNames.push(name);
+                                const rank = scores.findIndex(s => s.name === name) + 1;
+                                const score = scores.find(s => s.name === name);
+                                if (score && rank > 0) {
+                                    showMessage(
+                                        `🎉 <strong>${escapeHtml(name)}</strong> 剛完成配對：第 ${rank} 名（${formatTime(score.bestTime)} / ${score.bestMoves} 次）`,
+                                        'success', 4000, true
+                                    );
+                                }
+                            }
+                        });
+                    }
+
+                    isFirstSnapshot = false;
+                    lastSeen.clear();
+                    currentSeen.forEach((v, k) => lastSeen.set(k, v));
+
+                    renderLeaderboard(scores, newCompletionNames);
+                }, (err) => {
+                    console.error('[WaitingGameLeaderboard] snapshot error:', err);
+                });
+
+                console.log('[WaitingGameLeaderboard] 已啟動，監聽 classroom:', classroomCode);
+            }
+
+            function stop() {
+                if (unsubscribe) {
+                    unsubscribe();
+                    unsubscribe = null;
+                }
+                lastSeen.clear();
+                isFirstSnapshot = true;
+                cachedScores = [];
+                // 隱藏 UI
+                const wrapper = document.getElementById('waiting-game-leaderboard');
+                if (wrapper) wrapper.classList.add('hidden');
+                const rankDisplay = document.getElementById('game-rank-display');
+                if (rankDisplay) rankDisplay.classList.add('hidden');
+                console.log('[WaitingGameLeaderboard] 已停止');
+            }
+
+            /**
+             * 取得目前學生在排行榜中的排名（基於最新 cachedScores）
+             */
+            function getMyRank() {
+                if (!studentName || !cachedScores.length) return null;
+                const idx = cachedScores.findIndex(s => s.name === studentName);
+                return idx >= 0 ? { rank: idx + 1, total: cachedScores.length } : null;
+            }
+
+            /**
+             * 寫入個人成績到 Firestore（取最佳值 + 紀錄最近一次）
+             */
+            async function recordScore(timeSeconds, moves) {
+                if (!classroomCode || !studentName) return;
+                try {
+                    const ref = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'waitingGameScores', studentName);
+                    const existing = await getDoc(ref);
+                    const data = existing.exists() ? existing.data() : {};
+                    const newBestTime = !data.bestTime || timeSeconds < data.bestTime ? timeSeconds : data.bestTime;
+                    const newBestMoves = !data.bestMoves || moves < data.bestMoves ? moves : data.bestMoves;
+                    await setDoc(ref, {
+                        name: studentName,
+                        bestTime: newBestTime,
+                        bestMoves: newBestMoves,
+                        lastTime: timeSeconds,
+                        lastMoves: moves,
+                        totalGames: (data.totalGames || 0) + 1,
+                        completedAt: serverTimestamp()
+                    });
+                    console.log('[WaitingGameLeaderboard] 成績已記錄：', { time: timeSeconds, moves, newBestTime, newBestMoves });
+                } catch (err) {
+                    console.error('[WaitingGameLeaderboard] 寫入成績失敗：', err);
+                }
+            }
+
+            return { start, stop, recordScore, getMyRank };
+        })();
+
         // ========================================
         // 🎮 MEMORY GAME SYSTEM (Waiting Page)
         // ========================================
@@ -21941,6 +22242,31 @@ ${existingText}
 
             completionMsg.classList.remove('hidden');
             document.getElementById('reset-game-btn').classList.remove('hidden');
+
+            // 🆕 NEW [v3.7.15]: 將成績寫入 Firestore + 短暫延遲後顯示排名（等待 onSnapshot 同步）
+            (async () => {
+                if (typeof WaitingGameLeaderboard === 'undefined' || !classroomCode || !studentName) return;
+                await WaitingGameLeaderboard.recordScore(gameTime, gameMoves);
+                // 等待 onSnapshot 收到剛才的寫入後再讀排名
+                setTimeout(() => {
+                    const rankInfo = WaitingGameLeaderboard.getMyRank();
+                    const rankDisplay = document.getElementById('game-rank-display');
+                    const rankNum = document.getElementById('game-rank-num');
+                    const rankTotal = document.getElementById('game-rank-total');
+                    if (rankInfo && rankDisplay && rankNum && rankTotal) {
+                        rankNum.textContent = rankInfo.rank;
+                        rankTotal.textContent = rankInfo.total;
+                        rankDisplay.classList.remove('hidden');
+                        // 觸發跳動動畫
+                        rankNum.classList.remove('pop-in');
+                        void rankNum.offsetWidth;
+                        rankNum.classList.add('pop-in');
+                        // 對自己也彈個 toast
+                        let rankEmoji = rankInfo.rank === 1 ? '🥇' : rankInfo.rank === 2 ? '🥈' : rankInfo.rank === 3 ? '🥉' : '🎉';
+                        showMessage(`${rankEmoji} 你目前排名第 ${rankInfo.rank} 名（共 ${rankInfo.total} 位完成）`, 'success', 4000);
+                    }
+                }, 700);
+            })();
         }
 
         function resetGame() {

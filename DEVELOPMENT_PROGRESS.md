@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.7.14** ｜ 更新時間：2026-04-16
+> **版本：V3.7.15** ｜ 更新時間：2026-04-16
 
 ---
 
@@ -349,6 +349,35 @@
   - **隱藏按鈕持久化**：修正 `clearMask` 邏輯，確保內建金鑰模式下眼睛按鈕永遠不出現（`display: none`）。
   - **403 Forbidden 專項診斷**：在 API 測試失敗時提供針對金鑰洩漏/封鎖的具體修復建議。
   - **本地伺服器強化**：`dev.py` 現在會明確顯示注入金鑰的前 8 碼，方便診斷 `.env` 是否讀取成功。
+
+---
+
+### 🟢 V3.7.15 (2026-04-16) - 等待頁配對遊戲升級為「班級即時排行榜」🏆
+*   **🎯 新體驗**：學生在等待老師派發作業期間，可玩 12 對 emoji 記憶配對遊戲；現在不只是個人遊戲，而是 **班級即時競賽**！
+*   **🆕 三大新功能**：
+    1. **🏆 即時班級排行榜**：onSnapshot 監聽 `classrooms/{code}/waitingGameScores` 集合
+        - 顯示前 8 名 + 自己（若未進前 8）
+        - 🥇🥈🥉 金銀銅牌 icon
+        - 自己的排名以**紫色高亮**標示
+        - 排序：bestTime 升序 → bestMoves tiebreaker
+    2. **🎉 同學完成通知**：偵測新完成（含再挑戰刷新最佳成績）→ 彈 Toast
+        - 「🎉 王小明 剛完成配對：第 3 名（28秒 / 12 次）」
+        - 自己的完成不再彈通知擾人
+        - 首次載入歷史紀錄不算「新」
+    3. **🏅 完成後排名顯示**：完成遊戲時自動寫入 Firestore + 0.7s 後讀取自己排名
+        - 大字體跳動動畫顯示「第 N 名（共 M 位完成）」
+        - 自我成績 toast：「🥇 你目前排名第 1 名」
+*   **🛠️ 技術實作**：
+    - 新增 `WaitingGameLeaderboard` IIFE module（IIFE pattern，與 `ZoomableImageViewer` 一致）
+    - 公開 API：`start()` / `stop()` / `recordScore(time, moves)` / `getMyRank()`
+    - 進入 waiting mode 自動 start，離開自動 stop（在 `listenToInteractionMode` 內鉤住）
+    - Firestore 結構：`waitingGameScores/{studentName}` 含 bestTime / bestMoves / lastTime / lastMoves / totalGames / completedAt
+    - 寫入策略：取最佳值（不會被「再挑戰」變慢的成績覆蓋），同時保留最近一次紀錄
+*   **🎨 UI 優化**：
+    - `reset-game-btn` 文字「🔄 重新開始」→ 「🔄 再次挑戰」
+    - 排行榜列：金黃色漸層 + 自己紫色高亮 + 新完成者紅色閃爍 1.4s
+    - 完成 Modal 增加「🏆 班級排名」區塊
+*   **♻️ 向後相容**：保留 localStorage 個人最佳紀錄（v3.x 既有功能）；不影響其他互動模式
 
 ---
 
