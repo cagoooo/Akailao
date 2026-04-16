@@ -333,6 +333,67 @@
             max-height: 320px;
         }
 
+        /* 🆕 NEW [v3.7.9]: 「尚未作答」視覺強化 - 斜紋背景 + 虛線邊框 + 漏斗 icon + 脈動動畫 */
+        .student-response-item .answer-box .unanswered-placeholder {
+            width: 100%;
+            min-height: 72px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 14px 12px;
+            color: #94a3b8;
+            font-style: italic;
+            background: repeating-linear-gradient(45deg,
+                    #f8fafc,
+                    #f8fafc 8px,
+                    #f1f5f9 8px,
+                    #f1f5f9 16px);
+            border: 1.5px dashed #cbd5e1;
+            border-radius: 0.5rem;
+        }
+
+        .student-response-item .answer-box .unanswered-icon {
+            font-size: 22px;
+            color: #94a3b8;
+            animation: unanswered-pulse 1.8s ease-in-out infinite;
+        }
+
+        .student-response-item .answer-box .unanswered-text {
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+        }
+
+        @keyframes unanswered-pulse {
+
+            0%,
+            100% {
+                opacity: 0.55;
+                transform: rotate(0deg);
+            }
+
+            50% {
+                opacity: 1;
+                transform: rotate(180deg);
+            }
+        }
+
+        /* 閱讀模式下的 placeholder 更飽滿 */
+        .reading-mode-container .unanswered-placeholder {
+            min-height: 100px !important;
+            gap: 10px !important;
+        }
+
+        .reading-mode-container .unanswered-icon {
+            font-size: 28px !important;
+        }
+
+        .reading-mode-container .unanswered-text {
+            font-size: 14px !important;
+        }
+
         .student-response-item .answer-box img {
             max-width: 100%;
             /* Make images responsive within the answer box */
@@ -459,7 +520,21 @@
 
             .quick-comment-btn {
                 font-size: 12px !important;
-                padding: 3px 10px !important;
+                padding: 4px 12px !important;
+            }
+
+            /* 🆕 v3.7.9: 閱讀模式下寬卡片，未作答 placeholder 再放大 */
+            .unanswered-placeholder {
+                min-height: 120px !important;
+                padding: 20px !important;
+            }
+
+            .unanswered-icon {
+                font-size: 34px !important;
+            }
+
+            .unanswered-text {
+                font-size: 15px !important;
             }
         }
 
@@ -9985,8 +10060,13 @@
                 // URL dispatch mode: show online indicator
                 answerContentHTML = `<i class="fas fa-check-circle text-green-500 text-2xl"></i>`;
             } else if (student.answer === null || student.answer === undefined) {
-                // 學生未提交答案（所有模式通用）
-                answerContentHTML = `<p class="text-gray-400">尚未作答</p>`;
+                // 🆕 MODIFIED [v3.7.9]: 學生未提交答案 - 強化視覺 placeholder（icon + 虛線邊框 + 等待動畫）
+                answerContentHTML = `
+                    <div class="unanswered-placeholder">
+                        <i class="fas fa-hourglass-half unanswered-icon"></i>
+                        <span class="unanswered-text">等待作答中…</span>
+                    </div>
+                `;
             } else if (mode === 'drawing') {
                 // 繪圖模式
                 if (String(student.answer).startsWith('data:image')) {
@@ -10238,11 +10318,12 @@
             const cardBgClass = isDistracted ? 'bg-red-50 border-2 border-red-400' : '';
 
             // 📢 快速評語按鈕 HTML
+            // 🆕 MODIFIED [v3.7.9]: 加 mt-2 + gap-1.5 提升視覺間距，與名字列、答題區有呼吸感
             const quickCommentBtns = `
-                <div class="flex gap-1 mt-1 flex-wrap">
-                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-green-100 hover:bg-green-200 text-green-800 font-semibold transition" data-comment="💪 讚！老師說你很棒！" data-student="${student.name}">💪 讚！</button>
-                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-semibold transition" data-comment="⭐ 加油！繼續努力！" data-student="${student.name}">⭐ 加油！</button>
-                    <button class="quick-comment-btn text-xs px-2 py-0.5 rounded-full bg-red-100 hover:bg-red-200 text-red-800 font-semibold transition" data-comment="📝 再檢查一次看看！" data-student="${student.name}">📝 再試試</button>
+                <div class="quick-comment-row flex gap-1.5 mt-2 flex-wrap w-full">
+                    <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-green-100 hover:bg-green-200 text-green-800 font-semibold transition whitespace-nowrap" data-comment="💪 讚！老師說你很棒！" data-student="${student.name}">💪 讚！</button>
+                    <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-semibold transition whitespace-nowrap" data-comment="⭐ 加油！繼續努力！" data-student="${student.name}">⭐ 加油！</button>
+                    <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-red-100 hover:bg-red-200 text-red-800 font-semibold transition whitespace-nowrap" data-comment="📝 再檢查一次看看！" data-student="${student.name}">📝 再試試</button>
                 </div>
             `;
 
