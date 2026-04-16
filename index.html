@@ -4123,11 +4123,12 @@
             </h4>
             <p class="text-sm text-gray-500 mb-3">本教室所有評分型互動的歷史紀錄</p>
 
-            <!-- 🆕 v3.8.5 Tab 切換：班級總覽 vs 個人趨勢 vs 列表 -->
-            <div class="flex gap-1 mb-3 border-b border-gray-200">
+            <!-- 🆕 v3.8.5 Tab 切換：班級總覽 vs 個人趨勢 vs 列表 / v3.8.8 新增題目品質 -->
+            <div class="flex gap-1 mb-3 border-b border-gray-200 flex-wrap">
                 <button data-history-tab="overview" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-purple-500 text-purple-700">📈 班級趨勢</button>
                 <button data-history-tab="individual" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">👤 個人成績</button>
-                <button data-history-tab="list" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">📋 詳細列表</button>
+                <button data-history-tab="quality" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">📋 題目品質</button>
+                <button data-history-tab="list" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">📅 詳細列表</button>
             </div>
 
             <!-- 內容區（依 tab 切換） -->
@@ -4146,6 +4147,28 @@
                     </div>
                     <div id="individual-chart-area"></div>
                 </div>
+                <!-- 🆕 v3.8.8 A-9：題目品質統計 Tab -->
+                <div data-history-panel="quality" class="hidden">
+                    <div class="flex items-center gap-2 mb-3 flex-wrap">
+                        <label class="text-xs font-bold text-gray-700">篩選模式：</label>
+                        <select id="quality-mode-filter" class="p-1.5 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-purple-500">
+                            <option value="all">全部</option>
+                            <option value="reading_comprehension">📖 閱讀測驗</option>
+                            <option value="multiple_choice">🔢 選擇題</option>
+                        </select>
+                        <label class="text-xs font-bold text-gray-700 ml-2">最少出現次數：</label>
+                        <select id="quality-min-occurrences" class="p-1.5 border rounded text-xs focus:outline-none focus:ring-1 focus:ring-purple-500">
+                            <option value="1">1 次以上</option>
+                            <option value="2">2 次以上</option>
+                            <option value="3">3 次以上</option>
+                            <option value="5">5 次以上</option>
+                        </select>
+                    </div>
+                    <div id="question-quality-area">
+                        <p class="text-center text-gray-500 py-8 text-sm">請等待讀取中...</p>
+                    </div>
+                </div>
+
                 <!-- List tab -->
                 <div data-history-panel="list" class="hidden">
                     <div id="historical-quizzes-list">
@@ -14471,9 +14494,22 @@
                 // 🆕 v3.8.5 A-4 完整版：除了平均，還記錄每位學生分數 → 支援個人成績趨勢圖
                 const perStudentScores = []; // [{ name, accuracy }]
 
+                // 🆕 v3.8.8 A-9：每題答對率統計（題目品質分析用）
+                // 結構：[{ qIndex, questionText, correctAnswer, answeredCount, correctCount, accuracy }]
+                const perQuestionStats = [];
+
                 if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData?.questions) {
                     questionCount = readingComprehensionData.questions.length;
                     let totalAcc = 0;
+                    // 初始化每題的統計累加器
+                    const qStats = readingComprehensionData.questions.map((q, i) => ({
+                        qIndex: i,
+                        questionText: q.question || '',
+                        correctAnswer: q.correctAnswer,
+                        level: q.level || 1,
+                        answeredCount: 0,
+                        correctCount: 0
+                    }));
                     submitted.forEach(s => {
                         try {
                             const ans = JSON.parse(s.answer);
@@ -14481,7 +14517,12 @@
                             let correct = 0;
                             ans.forEach((a, i) => {
                                 const q = readingComprehensionData.questions[i];
-                                if (q && (q.correctAnswer === 0 || String(a) === String(q.correctAnswer))) correct++;
+                                if (!q) return;
+                                qStats[i].answeredCount++;
+                                if (q.correctAnswer === 0 || String(a) === String(q.correctAnswer)) {
+                                    correct++;
+                                    qStats[i].correctCount++;
+                                }
                             });
                             const acc = +((correct / questionCount) * 100).toFixed(1);
                             totalAcc += acc;
@@ -14492,15 +14533,32 @@
                     });
                     avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
                     avgScore = avgAccuracy; // 對閱讀測驗來說一致
+                    // 計算每題答對率
+                    qStats.forEach(q => {
+                        q.accuracy = q.answeredCount > 0 ? +((q.correctCount / q.answeredCount) * 100).toFixed(1) : null;
+                        perQuestionStats.push(q);
+                    });
                 } else if (currentInteractionMode === 'multiple_choice' && currentMultipleChoiceQuestions?.length > 0) {
                     questionCount = currentMultipleChoiceQuestions.length;
                     let totalAcc = 0;
+                    const qStats = currentMultipleChoiceQuestions.map((q, i) => ({
+                        qIndex: i,
+                        questionText: q.question || '',
+                        correctAnswer: q.correctAnswer,
+                        answeredCount: 0,
+                        correctCount: 0
+                    }));
                     submitted.forEach(s => {
                         if (!Array.isArray(s.answer)) return;
                         let correct = 0;
                         s.answer.forEach(a => {
                             const q = currentMultipleChoiceQuestions[a.qIndex];
-                            if (q && (q.correctAnswer === 0 || String(a.ans) === String(q.correctAnswer))) correct++;
+                            if (!q) return;
+                            qStats[a.qIndex].answeredCount++;
+                            if (q.correctAnswer === 0 || String(a.ans) === String(q.correctAnswer)) {
+                                correct++;
+                                qStats[a.qIndex].correctCount++;
+                            }
                         });
                         const acc = +((correct / questionCount) * 100).toFixed(1);
                         totalAcc += acc;
@@ -14509,6 +14567,10 @@
                     });
                     avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
                     avgScore = avgAccuracy;
+                    qStats.forEach(q => {
+                        q.accuracy = q.answeredCount > 0 ? +((q.correctCount / q.answeredCount) * 100).toFixed(1) : null;
+                        perQuestionStats.push(q);
+                    });
                 } else if (currentInteractionMode === 'true_false') {
                     questionCount = 1;
                     // 是非題無「正解」當下儲存（除非備題模式有 true_false_question.correctAnswer）
@@ -14536,6 +14598,7 @@
                     avgScore,
                     topStudent: topStudent || null,
                     perStudentScores, // 🆕 v3.8.5 A-4 完整版：個人成績陣列，支援個人趨勢圖
+                    perQuestionStats, // 🆕 v3.8.8 A-9：每題答對率，支援題目品質統計
                     timestamp: serverTimestamp()
                 };
 
@@ -14853,6 +14916,127 @@
                     }
                 }
             });
+        }
+
+        // 🆕 v3.8.8 A-9：渲染題目品質統計
+        function renderQuestionQuality() {
+            const area = document.getElementById('question-quality-area');
+            if (!area) return;
+
+            const modeFilter = document.getElementById('quality-mode-filter')?.value || 'all';
+            const minOccurrences = parseInt(document.getElementById('quality-min-occurrences')?.value || '1');
+
+            // 從 cache 收集所有 perQuestionStats
+            // 用 questionText 作為 key 聚合（考量同題目可能在多次測驗出現）
+            const aggregated = {}; // questionText → { mode, occurrences, totalAnswered, totalCorrect, accuracies[] }
+
+            _historicalQuizzesCache.forEach(quiz => {
+                if (modeFilter !== 'all' && quiz.mode !== modeFilter) return;
+                if (!Array.isArray(quiz.perQuestionStats)) return;
+
+                quiz.perQuestionStats.forEach(qs => {
+                    const key = (qs.questionText || '').trim();
+                    if (!key) return;
+                    if (!aggregated[key]) {
+                        aggregated[key] = {
+                            questionText: key,
+                            mode: quiz.mode,
+                            modeLabel: quiz.modeLabel,
+                            occurrences: 0,
+                            totalAnswered: 0,
+                            totalCorrect: 0,
+                            accuracies: [],
+                            level: qs.level || null
+                        };
+                    }
+                    const agg = aggregated[key];
+                    agg.occurrences++;
+                    agg.totalAnswered += (qs.answeredCount || 0);
+                    agg.totalCorrect += (qs.correctCount || 0);
+                    if (qs.accuracy != null) agg.accuracies.push(qs.accuracy);
+                });
+            });
+
+            // 過濾、計算總平均
+            const list = Object.values(aggregated)
+                .filter(q => q.occurrences >= minOccurrences && q.accuracies.length > 0)
+                .map(q => {
+                    const avgAcc = q.accuracies.reduce((s, a) => s + a, 0) / q.accuracies.length;
+                    return {
+                        ...q,
+                        avgAccuracy: +avgAcc.toFixed(1),
+                        // 標籤：太簡單(>90%) / 太難(<40%) / 適中
+                        difficulty: avgAcc > 90 ? 'too-easy' : avgAcc < 40 ? 'too-hard' : 'good'
+                    };
+                });
+
+            if (list.length === 0) {
+                area.innerHTML = `
+                    <p class="text-center text-gray-400 py-8 text-sm">
+                        尚無符合條件的題目統計<br>
+                        ${minOccurrences > 1 ? '<span class="text-xs">請降低「最少出現次數」篩選條件</span>' : '<br><span class="text-xs">提示：題目品質統計只計算 V3.8.8 之後新增的歷史紀錄</span>'}
+                    </p>`;
+                return;
+            }
+
+            // 統計總體
+            const tooEasy = list.filter(q => q.difficulty === 'too-easy').length;
+            const tooHard = list.filter(q => q.difficulty === 'too-hard').length;
+            const good = list.filter(q => q.difficulty === 'good').length;
+
+            // 排序：太難在最前 → 太簡單在最後（讓老師最先看到問題題目）
+            list.sort((a, b) => a.avgAccuracy - b.avgAccuracy);
+
+            area.innerHTML = `
+                <!-- 統計卡片 -->
+                <div class="grid grid-cols-3 gap-2 mb-3">
+                    <div class="bg-red-50 p-3 rounded text-center border border-red-200">
+                        <div class="text-2xl font-bold text-red-700">${tooHard}</div>
+                        <div class="text-xs text-gray-600">⚠️ 太難（&lt; 40%）</div>
+                    </div>
+                    <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                        <div class="text-2xl font-bold text-green-700">${good}</div>
+                        <div class="text-xs text-gray-600">✓ 適中（40-90%）</div>
+                    </div>
+                    <div class="bg-yellow-50 p-3 rounded text-center border border-yellow-200">
+                        <div class="text-2xl font-bold text-yellow-700">${tooEasy}</div>
+                        <div class="text-xs text-gray-600">😴 太簡單（&gt; 90%）</div>
+                    </div>
+                </div>
+
+                <p class="text-xs text-gray-500 mb-2">💡 共 ${list.length} 題（依答對率由低到高排序，太難的題目優先處理）</p>
+
+                <!-- 題目列表 -->
+                <div class="space-y-2">
+                    ${list.map(q => {
+                        const colorMap = {
+                            'too-hard': { bg: 'bg-red-50', border: 'border-red-300', text: 'text-red-700', label: '⚠️ 太難', tip: '建議：補充教學或標為加分題' },
+                            'too-easy': { bg: 'bg-yellow-50', border: 'border-yellow-300', text: 'text-yellow-700', label: '😴 太簡單', tip: '建議：換更具挑戰的題目' },
+                            'good': { bg: 'bg-green-50', border: 'border-green-300', text: 'text-green-700', label: '✓ 適中', tip: null }
+                        };
+                        const c = colorMap[q.difficulty];
+                        const previewText = q.questionText.length > 80 ? q.questionText.substring(0, 80) + '…' : q.questionText;
+                        const levelBadge = q.level ? `<span class="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 ml-1">L${q.level}</span>` : '';
+                        return `
+                            <div class="${c.bg} p-3 rounded border-l-4 ${c.border}">
+                                <div class="flex items-start justify-between gap-2 mb-1">
+                                    <div class="flex-1 min-w-0">
+                                        <span class="text-xs font-bold ${c.text}">${c.label}</span>
+                                        ${levelBadge}
+                                        <span class="text-xs text-gray-500 ml-2">${q.modeLabel || q.mode}</span>
+                                    </div>
+                                    <div class="text-xl font-bold ${c.text} flex-shrink-0">${q.avgAccuracy}%</div>
+                                </div>
+                                <p class="text-sm text-gray-800 mb-1 break-words">${escapeHtmlSafe(previewText)}</p>
+                                <div class="flex items-center justify-between text-xs text-gray-500">
+                                    <span>📊 出現 ${q.occurrences} 次 · 累計 ${q.totalCorrect}/${q.totalAnswered} 答對</span>
+                                    ${c.tip ? `<span class="${c.text} font-semibold">${c.tip}</span>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
         }
 
         // 🆕 渲染詳細列表（原本 V3.8.3 的版本）
@@ -17023,11 +17207,19 @@
                         // 等 DOM 渲染後再 redraw（解決 hidden → visible 後 canvas 大小為 0 的問題）
                         requestAnimationFrame(() => renderClassTrendChart(_historicalQuizzesCache));
                     }
+                    // 🆕 v3.8.8 A-9：切到題目品質 tab 時渲染
+                    if (tab === 'quality') {
+                        renderQuestionQuality();
+                    }
                 });
             });
             document.getElementById('history-student-select')?.addEventListener('change', (e) => {
                 renderIndividualTrend(e.target.value);
             });
+            // 🆕 v3.8.8 A-9：題目品質篩選變動時重渲染
+            document.getElementById('quality-mode-filter')?.addEventListener('change', renderQuestionQuality);
+            document.getElementById('quality-min-occurrences')?.addEventListener('change', renderQuestionQuality);
+
             document.getElementById('historical-print-btn')?.addEventListener('click', printHistoricalQuizzes);
 
             // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕
