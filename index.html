@@ -3345,11 +3345,9 @@
                 <button id="submit-name-btn"
                     class="btn btn-primary w-full mt-4 text-base sm:text-lg px-6 sm:px-8 py-2.5 sm:py-3">進入教室
                     🚪</button>
-                <!-- 🚀 NEW: Back button to switch role on mobile -->
-                <button id="student-back-to-role-btn"
-                    class="btn bg-gray-500 hover:bg-gray-600 text-white font-semibold w-full mt-2 sm:mt-4 text-sm sm:text-base px-4 sm:px-6 py-2 sm:py-2.5 flex items-center justify-center gap-2 transition-all hover:shadow-lg rounded-lg">
-                    <i class="fas fa-arrow-left text-lg sm:text-xl"></i> <span>返回切換角色 ↩️</span>
-                </button>
+                <!-- 🆕 MODIFIED [v3.8.10]: 隱藏「返回切換角色」按鈕，防止學生誤選教師角色
+                     原因：學生進入後不應再跳回主畫面（入口頁有「我是教師」按鈕），避免好奇點到需輸入教師密碼的流程 -->
+                <!-- <button id="student-back-to-role-btn" class="hidden"> 移除 </button> -->
             </div>
         </div>
 
@@ -15492,7 +15490,8 @@
             });
 
             // 🚀 NEW: Back button to return to role selection from student name input view
-            document.getElementById('student-back-to-role-btn').addEventListener('click', () => {
+            // 🆕 MODIFIED [v3.8.10]: 按鈕已從 DOM 移除，用 ?. 防止 null error
+            document.getElementById('student-back-to-role-btn')?.addEventListener('click', () => {
                 document.getElementById('student-classroom-code-input').value = '';
                 document.getElementById('student-name-input').value = '';
                 showView('entry');
