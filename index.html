@@ -20,6 +20,49 @@
     <!-- 🆕 NEW [v3.8.5] A-4 完整版：Chart.js 用於班級歷史趨勢折線圖 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
     <style>
+        /* 🐛 CRITICAL FIX [v3.8.9]: 修復 V3.8.7 Tailwind 本地化後 modal 預設不隱藏的問題
+
+           問題背景：
+           V3.8.7 把 Tailwind 從 CDN 改為本地 build (tailwind-build.css 用 <link> 在頁首)，
+           但 inline <style> 緊接 <link> 之後，所以兩個位置的 CSS 衝突時 source order 後者贏：
+             - tailwind-build.css: .hidden { display: none }
+             - inline <style>:    .magnified-image-modal { display: flex }
+                                  .zoomable-image-viewer { display: flex }
+           兩個 selector specificity 都是 (0,1,0)，後者勝 → 所有預設帶 hidden 的 modal
+           （quick-poll-stats / zoomable-image-viewer / statistics 等 30+ 個 modal）
+           一進頁面就全部跳出，黑色蒙版蓋滿畫面。
+
+           解法：所有「預設 hidden 但開啟時 display: flex」的 modal 規則改用 :not(.hidden) 修飾，
+                避免與 .hidden 衝突。不能用 !important 否則破壞 responsive utility（如 hidden sm:inline）。
+           */
+        .magnified-image-modal:not(.hidden) {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        .zoomable-image-viewer:not(.hidden) {
+            position: fixed;
+            inset: 0;
+            z-index: 2000;
+            background: rgba(0, 0, 0, 0.92);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
         /* --- 全新初始畫面美化樣式 --- */
         body.initial-view-background {
             background-color: #f0f4f8;
@@ -1222,19 +1265,7 @@
 
 
         /* 放大繪圖 Modal 樣式 */
-        .magnified-image-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.8);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            backdrop-filter: blur(5px);
-        }
+        /* 🐛 v3.8.9: 此規則已上移至文件頂端，改為 .magnified-image-modal:not(.hidden) — 此處保留註解供搜尋 */
 
         .magnified-image-modal-content {
             position: relative;
@@ -1295,20 +1326,7 @@
            - 雙擊切換 1x↔2x
            - Esc / 點背景關閉
         */
-        .zoomable-image-viewer {
-            position: fixed;
-            inset: 0;
-            z-index: 2000;
-            background: rgba(0, 0, 0, 0.92);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
-            touch-action: none;
-            /* 禁止瀏覽器原生 pinch / pan 行為 */
-            user-select: none;
-            -webkit-user-select: none;
-        }
+        /* 🐛 v3.8.9: 此規則已上移至文件頂端，改為 .zoomable-image-viewer:not(.hidden) — 此處保留註解供搜尋 */
 
         .zoomable-viewer-canvas {
             width: 100%;

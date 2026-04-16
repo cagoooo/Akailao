@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.8** ｜ 更新時間：2026-04-16
+> **版本：V3.8.9** ｜ 更新時間：2026-04-16
 
 ---
 
@@ -861,6 +861,53 @@
 | V3.8.3 | A-4 MVP | 📊 班級答題趨勢面板（自動歸檔 + 統計卡片）| 長期分析 |
 | V3.8.4 | A-5 MVP | ✏️ 互動進行中即時加題 | 課堂彈性 |
 | V3.8.5 | A-4+ / D-5 | 📊 Chart.js 折線圖 + 個人趨勢 + PDF + Node 24 | 親師溝通 + 部署 |
+
+---
+
+### 🐛 V3.8.9 (2026-04-16) - HOTFIX：V3.8.7 Tailwind 本地化造成所有 modal 預設不隱藏
+
+#### 🔥 嚴重 Bug：重新整理頁面後黑色蒙版蓋滿全螢幕
+**現象**：使用者重整頁面後，「快速投票統計」+ ZoomableImageViewer 兩個 modal 同時跳出，黑色蒙版蓋滿全頁面，無法操作。
+
+#### 🔍 根本原因（CSS source order 衝突）
+V3.8.7 把 Tailwind 從 CDN 改為本地 build，但載入順序變了：
+```html
+<head>
+  <link rel="stylesheet" href="tailwind-build.css">  <!-- (1) -->
+  <style>                                             <!-- (2) -->
+    .magnified-image-modal { display: flex }
+    .zoomable-image-viewer { display: flex }
+    ...
+  </style>
+</head>
+```
+- `tailwind-build.css` 中：`.hidden { display: none }`（無 !important）
+- inline `<style>` 中：`.magnified-image-modal { display: flex }`（無 !important）
+- 兩者 specificity 都是 `(0,1,0)`，**source order 後者勝** → modal 預設帶 `class="magnified-image-modal hidden"` 仍被當成 `display: flex` 顯示
+
+#### 💡 為什麼 V3.8.7 之前沒事？
+V3.8.7 之前用 `cdn.tailwindcss.com` 是 v3 風格 JIT，會在 runtime 動態注入 CSS，可能用 `@layer utilities` 包裝給予 utilities 較高優先級，正好覆寫 inline style。
+
+#### ✅ 修復方案：用 `:not(.hidden)` 修飾 selector
+```css
+.magnified-image-modal:not(.hidden) {  /* ← 加上 :not(.hidden) */
+    display: flex;
+    /* ... */
+}
+.zoomable-image-viewer:not(.hidden) {
+    display: flex;
+    /* ... */
+}
+```
+**為何不用 `!important`？** 會破壞 Tailwind responsive utilities，例如 `class="hidden sm:inline"`（手機隱藏、平板以上顯示）會永遠 hidden。
+
+#### 📊 影響範圍
+- 受影響：30+ 個帶 `.magnified-image-modal hidden` class 的 modal（投票統計、查看題目、編輯答案、即時加題、結束互動確認等等）
+- 受影響：ZoomableImageViewer（學生端題目圖片放大檢視器）
+- 修復後：所有 modal 預設正確隱藏，僅在程式呼叫 `classList.remove('hidden')` 時才顯示
+
+#### 📌 經驗教訓
+換 CSS framework 載入方式時，務必檢查與 inline `<style>` 的 specificity 互動，特別是 `display:` 屬性。
 
 ---
 
