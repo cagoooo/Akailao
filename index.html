@@ -18548,16 +18548,32 @@
          * Supports both comma and tab delimiters
          */
         function parseReadingQuestions(text) {
-            const lines = text.trim().split('\n').filter(line => line.trim().length > 0);
-            const questions = [];
+            if (!text) return null;
+            // 🆕 MODIFIED [v3.7.14]: 強化前置清理 — 移除 markdown code fence、標題、空白雜訊
+            let cleaned = text.trim()
+                // 移除 markdown code fence ``` 或 ```xxx
+                .replace(/```[a-zA-Z]*\n?/g, '')
+                .replace(/```\s*$/g, '')
+                // 移除常見的 markdown 標題 (##, ###)
+                .replace(/^#{1,6}\s.*$/gm, '')
+                // 中文全形逗號／頓號 → 半形逗號（處理 AI 偶爾用錯分隔）
+                .replace(/，/g, ',')
+                // 移除題號前綴 (例如 "1. 題目..." → "題目...")
+                .replace(/^\s*\d+[\.\、]\s*/gm, '');
 
-            for (const line of lines) {
+            const lines = cleaned.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const questions = [];
+            const errors = [];
+
+            for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+                const line = lines[lineIdx];
                 // Try to detect delimiter: if line contains tab, use tab; otherwise use comma
                 const delimiter = line.includes('\t') ? '\t' : ',';
-                const parts = line.split(delimiter).map(p => p.trim());
+                const parts = line.split(delimiter).map(p => p.trim().replace(/^["']|["']$/g, '')); // 移除外層引號
 
                 if (parts.length < 6) {
-                    return null; // Invalid format - need at least question, answer, and 4 options
+                    errors.push(`第 ${lineIdx + 1} 行欄位不足（需 6-7 個）：${line.substring(0, 40)}`);
+                    continue; // 🆕 跳過該行而非整段 return null，讓合法題目能正常載入
                 }
 
                 const question = parts[0];
@@ -18574,13 +18590,16 @@
                 }
 
                 if (!question || isNaN(correctAnswer) || correctAnswer < 1 || correctAnswer > 4 ||
-                    options.length !== 4 || isNaN(level) || level < 1 || level > 4) {
-                    return null; // Invalid format
+                    options.some(o => !o) || isNaN(level) || level < 1 || level > 4) {
+                    errors.push(`第 ${lineIdx + 1} 行格式錯誤：${line.substring(0, 40)}`);
+                    continue; // 🆕 同樣改為跳過而非整段失敗
                 }
 
                 questions.push({ question, correctAnswer, options, level });
             }
 
+            // 🆕 偵錯友善：把錯誤暫存到 window，讓 startReadingComprehension 可以顯示詳細原因
+            window.__lastParseErrors = errors;
             return questions.length > 0 ? questions : null;
         }
 
@@ -18602,8 +18621,20 @@
 
             const questions = parseReadingQuestions(questionsText);
             if (!questions) {
+                // 🆕 MODIFIED [v3.7.14]: 顯示詳細錯誤訊息，方便老師知道 AI 辨識結果哪裡有問題
                 console.warn('[startReadingComprehension] ⚠️ Question parsing failed');
-                document.getElementById('reading-questions-status').classList.remove('hidden');
+                const statusEl = document.getElementById('reading-questions-status');
+                const errs = window.__lastParseErrors || [];
+                if (errs.length > 0) {
+                    statusEl.innerHTML = '⚠️ 題目格式無法解析（下方顯示前 3 個問題行）<br>' +
+                        errs.slice(0, 3).map(e => `• ${e}`).join('<br>') +
+                        '<br>💡 提示：請確認 AI 辨識結果為「題目,答案,選項1,選項2,選項3,選項4,層次」格式，或手動調整。';
+                } else {
+                    statusEl.textContent = '格式錯誤或題目為空，請檢查輸入。';
+                }
+                statusEl.classList.remove('hidden');
+                // 提示使用者看錯誤細節
+                showMessage('⚠️ AI 輸出格式無法解析，請檢視題目欄錯誤提示或手動調整', 'warning', 5000);
                 return;
             }
 
@@ -20174,6 +20205,7 @@
                 let prompt;
                 if (hasImages) {
                     // 圖片模式：請 Gemini 從圖片讀取文字，整理成文本後再出題
+                    // 🆕 v3.7.14: 強化格式要求 + 加入「不要用 markdown code fence」以防 AI 包 ``` 導致解析失敗
                     prompt = `你是一位專業的國小閱讀理解老師，請依照下列步驟完成任務：
 
 【步驟 1：辨識並整理文本】
@@ -20181,7 +20213,7 @@
 - 將圖片中的所有可讀文字完整提取並整理成通順的閱讀文本。
 - 若圖片來自多頁或多張截圖，請依照順序合併為一篇連貫的文章；忽略頁碼、浮水印、廣告、無關的插圖註解等雜訊。
 - 若原文為直書或橫書，統一輸出為橫書；若有錯字或辨識不清的字，請依上下文合理修正。
-- 若文字不足以形成有意義的文本，或完全無法辨識，請直接回覆「⚠️ 無法從圖片辨識到足夠的閱讀文本」。
+- 若文字不足以形成有意義的文本（例如圖片只是表格、清單或無文章段落），請直接回覆「無法從圖片辨識到足夠的閱讀文本」，不要強行生成題目。
 
 【步驟 2：依 PIRLS 四層次出 10 題選擇題】
 - 層次1（直接提取資訊）：3題
@@ -20189,16 +20221,23 @@
 - 層次3（詮釋整合資訊）：2題
 - 層次4（比較評估內容）：2題
 ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}
-【輸出格式（嚴格遵守）】
-先輸出完整的閱讀文本（不要加任何標題或說明）。
-接著輸出分隔線：---題目---
-然後每行輸出一題，格式為：
-題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+【輸出格式 — 非常重要，請嚴格遵守】
+1. 不要使用 markdown code fence（\`\`\`）包裝輸出
+2. 不要加「文本：」「題目：」等標題，直接開始輸出文本
+3. 先輸出完整的閱讀文本（純文字段落）
+4. 空一行後，輸出「---題目---」作為分隔
+5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
 
-範例：
+範例（請完全按此格式）：
 主角的名字是什麼?,2,小明,小華,小美,小強,1
+文章主旨是什麼?,1,友誼可貴,競爭激烈,獨立自主,勤勞致富,4
 
-注意：所有欄位以半形逗號分隔，選項內不要出現逗號。`;
+【絕對禁止】
+- 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
+- 禁止在題目前加題號（例如 "1. 題目..."，直接寫 "題目..." 即可）
+- 禁止輸出 JSON、表格或其他結構化格式
+- 禁止用全形逗號（，）分隔欄位`;
                 } else if (existingText) {
                     prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
 層次1（直接提取資訊）：3題
@@ -20272,11 +20311,19 @@ ${existingText}
                 }
 
                 const result = await response.json();
-                const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                let generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
                 if (generatedText) {
-                    // 🆕 NEW: 檢查圖片辨識失敗訊息
-                    if (hasImages && generatedText.includes('⚠️ 無法從圖片辨識到足夠的閱讀文本')) {
+                    // 🆕 MODIFIED [v3.7.14]: 強化輸出清理 — 剝除 markdown code fence 與其他雜訊
+                    generatedText = generatedText
+                        // 移除整段外層的 ```xxx ... ``` code fence
+                        .replace(/^```[a-zA-Z]*\n/gm, '')
+                        .replace(/\n```\s*$/gm, '')
+                        .replace(/```[a-zA-Z]*\n?/g, '')  // 保底再清一次
+                        .trim();
+
+                    // 🆕 NEW: 檢查圖片辨識失敗訊息（容錯匹配，AI 可能不加 emoji）
+                    if (hasImages && /無法從圖片辨識到足夠的閱讀文本/.test(generatedText)) {
                         throw new Error('⚠️ AI 無法從上傳的圖片辨識到足夠的文本內容。請確認圖片清晰、文字完整，或嘗試更換清晰的截圖。');
                     }
 
@@ -20288,10 +20335,12 @@ ${existingText}
                     // 🆕 NEW: 圖片模式與主題模式都會返回「文本 + ---題目---+ 題目」的格式
                     if (hasImages || !existingText) {
                         // Parse text and questions
-                        const parts = generatedText.split('---題目---');
-                        if (parts.length === 2) {
+                        // 🆕 v3.7.14: 支援多種分隔標記 (---題目---, ---題目：---, ### 題目)
+                        const splitRegex = /\n-{2,}\s*題目\s*[-：:]*\s*-{0,}\n|\n#{2,}\s*題目[:：]?\s*\n/;
+                        const parts = generatedText.split(splitRegex);
+                        if (parts.length >= 2) {
                             readingTextTextarea.value = parts[0].trim();
-                            questionsTextarea.value = parts[1].trim();
+                            questionsTextarea.value = parts.slice(1).join('\n').trim();
                         } else {
                             // 若 AI 沒有按照格式輸出分隔線，嘗試用空行拆分作為備援
                             const fallbackSplit = generatedText.split(/\n\s*\n(?=[^\n]*[,，][^\n]*[,，][^\n]*[,，])/);
@@ -20299,7 +20348,12 @@ ${existingText}
                                 readingTextTextarea.value = fallbackSplit[0].trim();
                                 questionsTextarea.value = fallbackSplit.slice(1).join('\n').trim();
                             } else {
+                                // 🆕 v3.7.14: 最後一招 - 把整段放到 textarea，提示老師手動調整
+                                console.warn('[AI 閱讀] 無法自動拆分文本與題目，全部放到題目區讓老師檢查');
+                                readingTextTextarea.value = '';
                                 questionsTextarea.value = generatedText;
+                                showMessage('⚠️ AI 未依標準格式回傳（缺少「---題目---」分隔），已放入題目區請老師手動調整', 'warning', 5000);
+                                return; // 避免後面的 success 訊息蓋掉警告
                             }
                         }
                     } else {

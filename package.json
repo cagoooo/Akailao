@@ -1,7 +1,7 @@
 {
   "name": "akailao",
-  "version": "3.7.13",
-  "description": "> **版本：V3.7.13** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署",
+  "version": "3.7.14",
+  "description": "> **版本：V3.7.14** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署",
   "main": "tailwind.config.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
