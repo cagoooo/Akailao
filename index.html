@@ -8643,74 +8643,128 @@
             const showMatchingAnswerBtn = document.getElementById('show-matching-answer-btn'); // NEW
             const showSequencingAnswerBtn = document.getElementById('show-sequencing-answer-btn'); // NEW
 
-            // MODIFIED: Show statistics button for true_false, multiple_choice, and reading_comprehension
-            showStatisticsBtn.classList.toggle('hidden', mode !== 'true_false' && mode !== 'multiple_choice' && mode !== 'reading_comprehension');
+            // ==========================================================
+            // 🆕 MODIFIED [v3.8.13]: 按鈕顯示邏輯重構 — 先全隱藏，再依模式只開需要的
+            // 原本：逐一 toggle 16 個按鈕，導致「不相關按鈕」可能漏 hide
+            // 新版：先統一 hide 全部功能按鈕，再依 mode 精準 show
+            // ==========================================================
 
-            // NEW: Show answer buttons for matching and sequencing modes
-            showMatchingAnswerBtn.classList.toggle('hidden', mode !== 'matching');
-            showSequencingAnswerBtn.classList.toggle('hidden', mode !== 'sequencing');
-
-            // NEW: Show view questions button only for multiple_choice with custom questions
-            const hasCustomQuestions = mode === 'multiple_choice' && options.customQuestions && options.customQuestions.length > 0;
-            viewQuestionsBtn.classList.toggle('hidden', !hasCustomQuestions);
-
-            // NEW: Show view reading questions button only for reading_comprehension
-            viewReadingQuestionsBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
-
-            // 🚀 NEW: Show rescore all students button only for reading_comprehension
             const rescoreAllStudentsBtn = document.getElementById('rescore-all-students-btn');
-            rescoreAllStudentsBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
-
-            // 🆕 NEW [v3.7.1]: Show "Allow Early Submit" button only for reading_comprehension，切換模式時重置為未開放狀態
             const allowEarlySubmitBtn = document.getElementById('allow-early-submit-btn');
-            if (allowEarlySubmitBtn) {
-                allowEarlySubmitBtn.classList.toggle('hidden', mode !== 'reading_comprehension');
-                // 每次進入/切換模式都重置為未開放狀態
-                resetAllowEarlySubmitButton();
-            }
-
-            // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕只在閱讀測驗或選擇題（自訂題）顯示
             const addQuestionBtn = document.getElementById('add-question-on-fly-btn');
-            if (addQuestionBtn) {
-                const showAddQ = (mode === 'reading_comprehension') ||
-                                 (mode === 'multiple_choice' && currentMultipleChoiceQuestions && currentMultipleChoiceQuestions.length > 0);
-                addQuestionBtn.classList.toggle('hidden', !showAddQ);
+            const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
+            const togglePauseBtn = document.getElementById('toggle-pause-btn');
+            const historicalBtn = document.getElementById('show-historical-quizzes-btn');
+
+            const hasCustomQuestions = mode === 'multiple_choice' && options.customQuestions && options.customQuestions.length > 0;
+
+            // Step 1: 全部隱藏（除了永遠顯示的按鈕）
+            const allOptionalBtns = [
+                showStatisticsBtn, showMatchingAnswerBtn, showSequencingAnswerBtn,
+                viewQuestionsBtn, viewReadingQuestionsBtn, rescoreAllStudentsBtn,
+                allowEarlySubmitBtn, addQuestionBtn, startPeerReviewBtn,
+                downloadMediaBtn, aiTextSummaryBtn, showUnsubmittedStudentsBtn,
+                downloadResponsesBtn, historicalBtn
+            ];
+            allOptionalBtns.forEach(btn => { if (btn) btn.classList.add('hidden'); });
+
+            // Step 2: 依模式精準顯示（每個 mode 只開需要的按鈕）
+            // 永遠顯示：暫停回覆（除 url_dispatch）、重新開始、結束互動
+            togglePauseBtn?.classList.toggle('hidden', mode === 'url_dispatch');
+
+            switch (mode) {
+                case 'true_false':
+                    // 是非題：抽籤 + 未作答 + 統計
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    showStatisticsBtn?.classList.remove('hidden');
+                    break;
+
+                case 'multiple_choice':
+                    // 選擇題
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    showStatisticsBtn?.classList.remove('hidden');
+                    if (hasCustomQuestions) {
+                        viewQuestionsBtn?.classList.remove('hidden');
+                        downloadResponsesBtn?.classList.remove('hidden');
+                        addQuestionBtn?.classList.remove('hidden');
+                    }
+                    break;
+
+                case 'reading_comprehension':
+                    // 閱讀測驗：最多按鈕但有明確功能分組
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    showStatisticsBtn?.classList.remove('hidden');
+                    viewReadingQuestionsBtn?.classList.remove('hidden');
+                    rescoreAllStudentsBtn?.classList.remove('hidden');
+                    allowEarlySubmitBtn?.classList.remove('hidden');
+                    downloadResponsesBtn?.classList.remove('hidden');
+                    addQuestionBtn?.classList.remove('hidden');
+                    if (allowEarlySubmitBtn) resetAllowEarlySubmitButton();
+                    break;
+
+                case 'text_input':
+                    // 問答題
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    aiTextSummaryBtn?.classList.remove('hidden');
+                    startPeerReviewBtn?.classList.remove('hidden');
+                    downloadResponsesBtn?.classList.remove('hidden');
+                    break;
+
+                case 'drawing':
+                    // 繪圖
+                    downloadMediaBtn?.classList.remove('hidden');
+                    startPeerReviewBtn?.classList.remove('hidden');
+                    break;
+
+                case 'recording':
+                    // 錄音
+                    downloadMediaBtn?.classList.remove('hidden');
+                    break;
+
+                case 'sequencing':
+                    // 排序
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    showSequencingAnswerBtn?.classList.remove('hidden');
+                    break;
+
+                case 'matching':
+                    // 配對
+                    showUnsubmittedStudentsBtn?.classList.remove('hidden');
+                    showMatchingAnswerBtn?.classList.remove('hidden');
+                    break;
+
+                case 'quick_answer':
+                    // 搶答
+                    break;
+
+                case 'url_dispatch':
+                    // 派送（只有結束互動+重新開始）
+                    break;
+
+                default:
+                    break;
             }
 
-            // NEW: Show peer review button only for text_input and drawing modes
-            const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
-            startPeerReviewBtn.classList.toggle('hidden', mode !== 'text_input' && mode !== 'drawing');
+            // Step 3: 歷史趨勢按鈕 — 只在有評分意義的模式顯示
+            const scoredModes = ['true_false', 'multiple_choice', 'reading_comprehension', 'sequencing', 'matching'];
+            if (historicalBtn && scoredModes.includes(mode)) {
+                historicalBtn.classList.remove('hidden');
+            }
 
-            // NEW: Reset peer review button state when starting new interaction
+            // Step 4: 重置互評狀態
             if (mode !== 'waiting') {
                 peerReviewActive = false;
                 startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
                 document.getElementById('peer-review-stats-container').classList.add('hidden');
 
-                // Reset peer review status in Firebase for new interaction
                 const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
                 setDoc(peerReviewRef, { active: false }).catch(error => {
                     console.error('Error resetting peer review status:', error);
                 });
 
-                // Clear student voting history for new interaction
                 studentVotedWorks.clear();
-
-                // Clear saved canvas state for new interaction
                 savedCanvasState = null;
             }
-            downloadMediaBtn.classList.toggle('hidden', mode !== 'drawing' && mode !== 'recording');
-            aiTextSummaryBtn.classList.toggle('hidden', mode !== 'text_input');
-            // NEW: Show unsubmitted students button for specific modes
-            showUnsubmittedStudentsBtn.classList.toggle('hidden', mode === 'waiting' || mode === 'url_dispatch');
-            // NEW: Show download responses button for text_input, multiple_choice with custom questions, and reading_comprehension
-            const showDownloadBtn = mode === 'text_input' || (mode === 'multiple_choice' && hasCustomQuestions) || mode === 'reading_comprehension';
-            downloadResponsesBtn.classList.toggle('hidden', !showDownloadBtn);
-
-
-            // NEW: Hide pause button for URL/HTML dispatch modes
-            const togglePauseBtn = document.getElementById('toggle-pause-btn');
-            togglePauseBtn.classList.toggle('hidden', mode === 'url_dispatch');
 
 
             try {
