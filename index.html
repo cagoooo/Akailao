@@ -449,48 +449,22 @@
             /* Blue */
         }
 
-        /* 📖 閱讀測驗模式：教師端容器改為自適應欄數（auto-fill + minmax） */
-        /* 🆕 MODIFIED [v3.7.6]: 改用 auto-fill，欄數依容器寬度自動計算 */
-        /* 🆕 MODIFIED [v3.7.11]: 降低 minmax 下限讓中等寬度視窗（~900px）能塞 3 欄，避免堆疊 1 欄
-           計算範例：
-           - 900px 視窗（wide-mode 98%）= 882px container
-             - 扣 p-4 32px + 2 gaps × 16px = 818px 可用
-             - minmax(260px) → floor(818/260) = 3 欄 ✓
-           - 1200px 視窗 = 1168 → 扣 padding ≈ 1104
-             - minmax(300px) → 3-4 欄
-           - 1600px 視窗 → 4-5 欄 */
+        /* 📖 閱讀測驗模式：教師端容器自適應欄數 */
+        /* 🆕 MODIFIED [v3.7.12]: 改用 clamp() 動態計算 minmax，無斷點切換更平滑
+           - 240px 是「絕對最小值」確保任何視窗都能塞下 3 欄（900px 視窗下精準塞 3 欄）
+           - 22vw 隨視窗放大（1280px=281, 1600px=352, 1920px=422）
+           - 380px 是「絕對最大值」避免 4K 螢幕下卡片過寬
+           - 整段公式：minmax(clamp(240px, 22vw, 380px), 1fr)
+
+           實測欄數（含 padding 與 gap）：
+             900px → minmax(240) → 3 欄（每張 ~258px）
+            1280px → minmax(281) → 4 欄（每張 ~290px）
+            1600px → minmax(352) → 4 欄（每張 ~370px）
+            1920px → minmax(380) → 4 欄（每張 ~448px）
+            2560px → minmax(380) → 6 欄（每張 ~415px）
+        */
         .reading-mode-container {
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
-        }
-
-        @media (min-width: 640px) {
-            .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
-            }
-        }
-
-        @media (min-width: 900px) {
-            .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
-            }
-        }
-
-        @media (min-width: 1280px) {
-            .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)) !important;
-            }
-        }
-
-        @media (min-width: 1600px) {
-            .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)) !important;
-            }
-        }
-
-        @media (min-width: 1920px) {
-            .reading-mode-container {
-                grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)) !important;
-            }
+            grid-template-columns: repeat(auto-fill, minmax(clamp(240px, 22vw, 380px), 1fr)) !important;
         }
 
         /* 閱讀測驗卡片：啟用 container query 精準控制內部排版 */
