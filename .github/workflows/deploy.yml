@@ -21,6 +21,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    # 🆕 NEW [v3.8.5] D-5: 強制 actions 使用 Node.js 24（消除 Node 20 deprecation 警告，2026-09-16 後將強制升級）
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: 📥 取得程式碼
         uses: actions/checkout@v4

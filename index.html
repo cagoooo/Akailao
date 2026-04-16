@@ -16,6 +16,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- 🆕 NEW [v3.8.5] A-4 完整版：Chart.js 用於班級歷史趨勢折線圖 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
     <style>
         /* --- 全新初始畫面美化樣式 --- */
         body.initial-view-background {
@@ -4111,19 +4113,52 @@
         </div>
     </div>
 
-    <!-- 🆕 NEW [v3.8.3] A-4: 班級歷史互動趨勢 Modal -->
+    <!-- 🆕 NEW [v3.8.3] A-4 / MODIFIED v3.8.5：班級歷史互動趨勢 Modal（含 Chart.js 折線圖 + 個人成績 + 列印） -->
     <div id="historical-quizzes-modal" class="magnified-image-modal hidden">
-        <div class="magnified-image-modal-content" style="max-width: 720px; max-height: 85vh;">
+        <div id="historical-quizzes-content" class="magnified-image-modal-content" style="max-width: 880px; max-height: 92vh;">
             <button id="historical-quizzes-close-btn" class="magnified-image-modal-close">×</button>
             <h4 class="text-2xl font-bold mb-1 text-gray-800 flex items-center gap-2">
                 📊 班級歷史互動趨勢
             </h4>
-            <p class="text-sm text-gray-500 mb-4">本教室所有評分型互動的歷史紀錄（最新在上）</p>
-            <div id="historical-quizzes-list" class="overflow-y-auto" style="max-height: 60vh;">
-                <p class="text-center text-gray-500 py-8">📊 讀取中...</p>
+            <p class="text-sm text-gray-500 mb-3">本教室所有評分型互動的歷史紀錄</p>
+
+            <!-- 🆕 v3.8.5 Tab 切換：班級總覽 vs 個人趨勢 vs 列表 -->
+            <div class="flex gap-1 mb-3 border-b border-gray-200">
+                <button data-history-tab="overview" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-purple-500 text-purple-700">📈 班級趨勢</button>
+                <button data-history-tab="individual" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">👤 個人成績</button>
+                <button data-history-tab="list" class="history-tab-btn px-3 py-2 text-sm font-bold border-b-2 border-transparent text-gray-500 hover:text-purple-600">📋 詳細列表</button>
             </div>
-            <div class="mt-4 text-right">
-                <button id="historical-quizzes-close-bottom-btn" class="btn btn-gray text-sm px-4">關閉</button>
+
+            <!-- 內容區（依 tab 切換） -->
+            <div id="historical-quizzes-body" class="overflow-y-auto" style="max-height: 64vh;">
+                <!-- Overview tab -->
+                <div data-history-panel="overview">
+                    <p class="text-center text-gray-500 py-8">📊 讀取中...</p>
+                </div>
+                <!-- Individual tab -->
+                <div data-history-panel="individual" class="hidden">
+                    <div class="mb-3">
+                        <label class="block text-xs font-bold text-gray-700 mb-1">選擇學生</label>
+                        <select id="history-student-select" class="w-full p-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            <option value="">— 請選擇 —</option>
+                        </select>
+                    </div>
+                    <div id="individual-chart-area"></div>
+                </div>
+                <!-- List tab -->
+                <div data-history-panel="list" class="hidden">
+                    <div id="historical-quizzes-list">
+                        <p class="text-center text-gray-500 py-8">📊 讀取中...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部按鈕區 -->
+            <div class="mt-3 flex justify-between items-center gap-2 flex-wrap">
+                <button id="historical-print-btn" class="btn bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 flex items-center gap-1">
+                    🖨️ <span>列印 / 儲存為 PDF</span>
+                </button>
+                <button id="historical-quizzes-close-bottom-btn" class="btn btn-gray text-sm px-4 py-2">關閉</button>
             </div>
         </div>
     </div>
@@ -14432,6 +14467,9 @@
                 let topScore = -Infinity;
                 let questionCount = 0;
 
+                // 🆕 v3.8.5 A-4 完整版：除了平均，還記錄每位學生分數 → 支援個人成績趨勢圖
+                const perStudentScores = []; // [{ name, accuracy }]
+
                 if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData?.questions) {
                     questionCount = readingComprehensionData.questions.length;
                     let totalAcc = 0;
@@ -14444,10 +14482,11 @@
                                 const q = readingComprehensionData.questions[i];
                                 if (q && (q.correctAnswer === 0 || String(a) === String(q.correctAnswer))) correct++;
                             });
-                            const acc = (correct / questionCount) * 100;
+                            const acc = +((correct / questionCount) * 100).toFixed(1);
                             totalAcc += acc;
                             const score = s.totalScore != null ? s.totalScore : (s.baseScore || acc);
                             if (score > topScore) { topScore = score; topStudent = s.name; }
+                            perStudentScores.push({ name: s.name, accuracy: acc });
                         } catch (e) { /* skip */ }
                     });
                     avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
@@ -14462,9 +14501,10 @@
                             const q = currentMultipleChoiceQuestions[a.qIndex];
                             if (q && (q.correctAnswer === 0 || String(a.ans) === String(q.correctAnswer))) correct++;
                         });
-                        const acc = (correct / questionCount) * 100;
+                        const acc = +((correct / questionCount) * 100).toFixed(1);
                         totalAcc += acc;
                         if (acc > topScore) { topScore = acc; topStudent = s.name; }
+                        perStudentScores.push({ name: s.name, accuracy: acc });
                     });
                     avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
                     avgScore = avgAccuracy;
@@ -14494,6 +14534,7 @@
                     avgAccuracy,
                     avgScore,
                     topStudent: topStudent || null,
+                    perStudentScores, // 🆕 v3.8.5 A-4 完整版：個人成績陣列，支援個人趨勢圖
                     timestamp: serverTimestamp()
                 };
 
@@ -14505,14 +14546,19 @@
             }
         }
 
+        // 🆕 v3.8.5 A-4 完整版：Chart.js 折線圖快取 + 全域歸檔資料
+        let _historicalQuizzesCache = [];
+        let _classChartInstance = null;
+        let _individualChartInstance = null;
+
         // 🆕 顯示歷史趨勢 Modal
         async function showHistoricalQuizzesModal() {
             const modal = document.getElementById('historical-quizzes-modal');
-            const listEl = document.getElementById('historical-quizzes-list');
-            if (!modal || !listEl) return;
-
+            if (!modal) return;
             modal.classList.remove('hidden');
-            listEl.innerHTML = '<p class="text-center text-gray-500 py-8">📊 讀取中...</p>';
+
+            // 切回預設 tab：overview
+            switchHistoryTab('overview');
 
             try {
                 const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'historicalQuizzes');
@@ -14526,66 +14572,383 @@
                         timestampMs: data.timestamp?.toMillis ? data.timestamp.toMillis() : 0
                     });
                 });
-                // 倒序：最新在上
-                quizzes.sort((a, b) => b.timestampMs - a.timestampMs);
+                // 升序：最舊在前（折線圖左 → 右是時間順序）
+                quizzes.sort((a, b) => a.timestampMs - b.timestampMs);
+                _historicalQuizzesCache = quizzes;
 
-                if (quizzes.length === 0) {
-                    listEl.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄。<br>結束評分型互動（閱讀測驗/選擇題/是非題等）時會自動歸檔。</p>';
-                    return;
-                }
-
-                // 計算總體統計
-                const totalQuizzes = quizzes.length;
-                const totalSubmissions = quizzes.reduce((s, q) => s + (q.submittedCount || 0), 0);
-                const validAccs = quizzes.map(q => q.avgAccuracy).filter(a => a != null);
-                const overallAvg = validAccs.length ? (validAccs.reduce((s, a) => s + a, 0) / validAccs.length).toFixed(1) : '—';
-
-                // 渲染
-                listEl.innerHTML = `
-                    <!-- 總體統計卡片 -->
-                    <div class="grid grid-cols-3 gap-2 mb-4">
-                        <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
-                            <div class="text-2xl font-bold text-blue-700">${totalQuizzes}</div>
-                            <div class="text-xs text-gray-600">總互動次數</div>
-                        </div>
-                        <div class="bg-green-50 p-3 rounded text-center border border-green-200">
-                            <div class="text-2xl font-bold text-green-700">${totalSubmissions}</div>
-                            <div class="text-xs text-gray-600">總提交人次</div>
-                        </div>
-                        <div class="bg-purple-50 p-3 rounded text-center border border-purple-200">
-                            <div class="text-2xl font-bold text-purple-700">${overallAvg}${validAccs.length ? '%' : ''}</div>
-                            <div class="text-xs text-gray-600">總平均答對率</div>
-                        </div>
-                    </div>
-
-                    <!-- 趨勢條列表 -->
-                    <h5 class="text-sm font-bold text-gray-700 mb-2">📅 最近互動紀錄（最新在上）</h5>
-                    <div class="space-y-2">
-                        ${quizzes.slice(0, 30).map(q => {
-                            const date = q.timestampMs ? new Date(q.timestampMs).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—';
-                            const accBadge = q.avgAccuracy != null
-                                ? `<span class="px-2 py-0.5 rounded text-xs font-bold ${q.avgAccuracy >= 80 ? 'bg-green-100 text-green-700' : q.avgAccuracy >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">${q.avgAccuracy}%</span>`
-                                : '<span class="text-xs text-gray-400">無評分</span>';
-                            return `
-                                <div class="flex items-center gap-2 p-2 bg-gray-50 rounded border hover:bg-white">
-                                    <div class="flex-1 min-w-0">
-                                        <div class="font-semibold text-sm">${q.modeLabel || q.mode}</div>
-                                        <div class="text-xs text-gray-500">${date} · ${q.submittedCount}/${q.onlineCount} 人提交 · ${q.questionCount} 題${q.topStudent ? ' · 🏆 ' + q.topStudent : ''}</div>
-                                    </div>
-                                    ${accBadge}
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                `;
+                renderHistoryOverview(quizzes);
+                renderHistoryList(quizzes);
+                populateStudentSelect(quizzes);
             } catch (err) {
                 console.error('[showHistoricalQuizzes] 失敗：', err);
-                listEl.innerHTML = '<p class="text-center text-red-500 py-4">❌ 讀取失敗：' + err.message + '</p>';
+                document.querySelector('[data-history-panel="overview"]').innerHTML =
+                    '<p class="text-center text-red-500 py-4">❌ 讀取失敗：' + err.message + '</p>';
             }
+        }
+
+        // 🆕 渲染班級趨勢總覽（統計卡 + 折線圖）
+        function renderHistoryOverview(quizzes) {
+            const panel = document.querySelector('[data-history-panel="overview"]');
+            if (!panel) return;
+
+            if (quizzes.length === 0) {
+                panel.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄。<br>結束評分型互動時會自動歸檔。</p>';
+                return;
+            }
+
+            const totalQuizzes = quizzes.length;
+            const totalSubmissions = quizzes.reduce((s, q) => s + (q.submittedCount || 0), 0);
+            const validAccs = quizzes.map(q => q.avgAccuracy).filter(a => a != null);
+            const overallAvg = validAccs.length ? (validAccs.reduce((s, a) => s + a, 0) / validAccs.length).toFixed(1) : '—';
+
+            panel.innerHTML = `
+                <!-- 總體統計卡 -->
+                <div class="grid grid-cols-3 gap-2 mb-4">
+                    <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
+                        <div class="text-2xl font-bold text-blue-700">${totalQuizzes}</div>
+                        <div class="text-xs text-gray-600">總互動次數</div>
+                    </div>
+                    <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                        <div class="text-2xl font-bold text-green-700">${totalSubmissions}</div>
+                        <div class="text-xs text-gray-600">總提交人次</div>
+                    </div>
+                    <div class="bg-purple-50 p-3 rounded text-center border border-purple-200">
+                        <div class="text-2xl font-bold text-purple-700">${overallAvg}${validAccs.length ? '%' : ''}</div>
+                        <div class="text-xs text-gray-600">總平均答對率</div>
+                    </div>
+                </div>
+                <!-- 折線圖 -->
+                <div class="bg-white rounded-lg border-2 border-gray-200 p-3">
+                    <h5 class="text-sm font-bold text-gray-700 mb-2 flex items-center gap-1">
+                        📈 <span>班級平均答對率變化</span>
+                        <span class="text-xs text-gray-400 ml-auto">（時間由舊到新）</span>
+                    </h5>
+                    <div style="position:relative;height:300px;">
+                        <canvas id="class-trend-chart"></canvas>
+                    </div>
+                </div>
+            `;
+
+            // 渲染 Chart.js
+            renderClassTrendChart(quizzes);
+        }
+
+        // 🆕 渲染班級趨勢折線圖
+        function renderClassTrendChart(quizzes) {
+            if (typeof Chart === 'undefined') {
+                console.warn('[Chart] Chart.js 未載入');
+                return;
+            }
+            const canvas = document.getElementById('class-trend-chart');
+            if (!canvas) return;
+
+            // 銷毀舊圖
+            if (_classChartInstance) {
+                _classChartInstance.destroy();
+                _classChartInstance = null;
+            }
+
+            // 過濾有效（有 avgAccuracy）的紀錄
+            const validQuizzes = quizzes.filter(q => q.avgAccuracy != null);
+            if (validQuizzes.length === 0) {
+                canvas.parentElement.innerHTML = '<p class="text-center text-gray-400 py-8 text-sm">無可用評分數據</p>';
+                return;
+            }
+
+            const labels = validQuizzes.map(q => {
+                const d = q.timestampMs ? new Date(q.timestampMs) : null;
+                return d ? `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}` : '—';
+            });
+            const data = validQuizzes.map(q => q.avgAccuracy);
+            const modeLabels = validQuizzes.map(q => q.modeLabel || q.mode);
+
+            _classChartInstance = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: '班級平均答對率 (%)',
+                        data,
+                        borderColor: 'rgb(139, 92, 246)',
+                        backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                        borderWidth: 2.5,
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 5,
+                        pointHoverRadius: 8,
+                        pointBackgroundColor: 'rgb(139, 92, 246)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: (ctx) => `${labels[ctx[0].dataIndex]}（${modeLabels[ctx[0].dataIndex]}）`,
+                                label: (ctx) => `答對率：${ctx.parsed.y.toFixed(1)}%`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: { callback: (v) => v + '%' },
+                            title: { display: true, text: '答對率', color: '#6b7280' }
+                        },
+                        x: {
+                            ticks: { maxRotation: 45, minRotation: 30, font: { size: 11 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // 🆕 填充學生下拉選單
+        function populateStudentSelect(quizzes) {
+            const select = document.getElementById('history-student-select');
+            if (!select) return;
+            const allStudents = new Set();
+            quizzes.forEach(q => {
+                (q.perStudentScores || []).forEach(s => {
+                    if (s && s.name) allStudents.add(s.name);
+                });
+            });
+            const sorted = [...allStudents].sort();
+            select.innerHTML = '<option value="">— 請選擇 —</option>' +
+                sorted.map(name => `<option value="${escapeHtmlSafe(name)}">${escapeHtmlSafe(name)}</option>`).join('');
+        }
+
+        // 🆕 escape helper
+        function escapeHtmlSafe(s) {
+            return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // 🆕 渲染個人成績趨勢圖
+        function renderIndividualTrend(studentName) {
+            const area = document.getElementById('individual-chart-area');
+            if (!area) return;
+
+            if (!studentName) {
+                area.innerHTML = '<p class="text-center text-gray-400 py-8 text-sm">請從上方選擇學生</p>';
+                if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+                return;
+            }
+
+            // 抓出該學生在所有 quiz 的成績
+            const dataPoints = [];
+            _historicalQuizzesCache.forEach(q => {
+                const s = (q.perStudentScores || []).find(x => x.name === studentName);
+                if (s && s.accuracy != null) {
+                    dataPoints.push({
+                        timestamp: q.timestampMs,
+                        accuracy: s.accuracy,
+                        modeLabel: q.modeLabel || q.mode
+                    });
+                }
+            });
+
+            if (dataPoints.length === 0) {
+                area.innerHTML = `<p class="text-center text-gray-400 py-8 text-sm">${escapeHtmlSafe(studentName)} 尚未有評分紀錄</p>`;
+                if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+                return;
+            }
+
+            // 計算個人統計
+            const accs = dataPoints.map(p => p.accuracy);
+            const avg = (accs.reduce((s, a) => s + a, 0) / accs.length).toFixed(1);
+            const max = Math.max(...accs);
+            const min = Math.min(...accs);
+            const trend = accs.length >= 2 ? (accs[accs.length-1] - accs[0]).toFixed(1) : 0;
+
+            area.innerHTML = `
+                <div class="grid grid-cols-4 gap-2 mb-3">
+                    <div class="bg-purple-50 p-2 rounded text-center border border-purple-200">
+                        <div class="text-lg font-bold text-purple-700">${dataPoints.length}</div>
+                        <div class="text-xs text-gray-600">參與次數</div>
+                    </div>
+                    <div class="bg-blue-50 p-2 rounded text-center border border-blue-200">
+                        <div class="text-lg font-bold text-blue-700">${avg}%</div>
+                        <div class="text-xs text-gray-600">平均</div>
+                    </div>
+                    <div class="bg-green-50 p-2 rounded text-center border border-green-200">
+                        <div class="text-lg font-bold text-green-700">${max}%</div>
+                        <div class="text-xs text-gray-600">最高</div>
+                    </div>
+                    <div class="bg-${trend >= 0 ? 'amber' : 'red'}-50 p-2 rounded text-center border border-${trend >= 0 ? 'amber' : 'red'}-200">
+                        <div class="text-lg font-bold text-${trend >= 0 ? 'amber' : 'red'}-700">${trend >= 0 ? '↑' : '↓'} ${Math.abs(trend)}%</div>
+                        <div class="text-xs text-gray-600">進步幅度</div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg border-2 border-gray-200 p-3">
+                    <h5 class="text-sm font-bold text-gray-700 mb-2">📊 ${escapeHtmlSafe(studentName)} 的歷次成績</h5>
+                    <div style="position:relative;height:280px;">
+                        <canvas id="individual-trend-chart"></canvas>
+                    </div>
+                </div>
+            `;
+
+            if (typeof Chart === 'undefined') return;
+            const canvas = document.getElementById('individual-trend-chart');
+            if (!canvas) return;
+
+            if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+
+            const labels = dataPoints.map(p => {
+                const d = p.timestamp ? new Date(p.timestamp) : null;
+                return d ? `${d.getMonth()+1}/${d.getDate()}` : '—';
+            });
+            const data = dataPoints.map(p => p.accuracy);
+
+            _individualChartInstance = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: studentName + ' 答對率 (%)',
+                        data,
+                        borderColor: 'rgb(34, 197, 94)',
+                        backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                        borderWidth: 2.5,
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 5,
+                        pointHoverRadius: 8,
+                        pointBackgroundColor: 'rgb(34, 197, 94)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                    }, {
+                        label: '班級平均',
+                        data: dataPoints.map(p => {
+                            const q = _historicalQuizzesCache.find(qz => qz.timestampMs === p.timestamp);
+                            return q?.avgAccuracy || null;
+                        }),
+                        borderColor: 'rgb(156, 163, 175)',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        tension: 0.3,
+                        fill: false,
+                        pointRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top', labels: { font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                title: (ctx) => `${labels[ctx[0].dataIndex]}（${dataPoints[ctx[0].dataIndex].modeLabel}）`,
+                                label: (ctx) => `${ctx.dataset.label}：${ctx.parsed.y.toFixed(1)}%`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } }
+                    }
+                }
+            });
+        }
+
+        // 🆕 渲染詳細列表（原本 V3.8.3 的版本）
+        function renderHistoryList(quizzes) {
+            const listEl = document.getElementById('historical-quizzes-list');
+            if (!listEl) return;
+            // 列表內倒序：最新在上
+            const sorted = [...quizzes].sort((a, b) => b.timestampMs - a.timestampMs);
+
+            if (sorted.length === 0) {
+                listEl.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄</p>';
+                return;
+            }
+
+            listEl.innerHTML = `
+                <h5 class="text-sm font-bold text-gray-700 mb-2">📅 完整紀錄（最新在上）</h5>
+                <div class="space-y-2">
+                    ${sorted.map(q => {
+                        const date = q.timestampMs ? new Date(q.timestampMs).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—';
+                        const accBadge = q.avgAccuracy != null
+                            ? `<span class="px-2 py-0.5 rounded text-xs font-bold ${q.avgAccuracy >= 80 ? 'bg-green-100 text-green-700' : q.avgAccuracy >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">${q.avgAccuracy}%</span>`
+                            : '<span class="text-xs text-gray-400">無評分</span>';
+                        return `
+                            <div class="flex items-center gap-2 p-2 bg-gray-50 rounded border hover:bg-white">
+                                <div class="flex-1 min-w-0">
+                                    <div class="font-semibold text-sm">${q.modeLabel || q.mode}</div>
+                                    <div class="text-xs text-gray-500">${date} · ${q.submittedCount}/${q.onlineCount} 人提交 · ${q.questionCount} 題${q.topStudent ? ' · 🏆 ' + escapeHtmlSafe(q.topStudent) : ''}</div>
+                                </div>
+                                ${accBadge}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // 🆕 切換 tab
+        function switchHistoryTab(tabName) {
+            // 按鈕樣式
+            document.querySelectorAll('.history-tab-btn').forEach(b => {
+                const isActive = b.dataset.historyTab === tabName;
+                b.classList.toggle('border-purple-500', isActive);
+                b.classList.toggle('text-purple-700', isActive);
+                b.classList.toggle('border-transparent', !isActive);
+                b.classList.toggle('text-gray-500', !isActive);
+            });
+            // 面板顯示
+            document.querySelectorAll('[data-history-panel]').forEach(p => {
+                p.classList.toggle('hidden', p.dataset.historyPanel !== tabName);
+            });
+        }
+
+        // 🆕 列印 / 儲存為 PDF
+        function printHistoricalQuizzes() {
+            // 暫時隱藏關閉按鈕、底部按鈕
+            const closeBtn = document.getElementById('historical-quizzes-close-btn');
+            const bottomBtns = document.querySelectorAll('#historical-quizzes-modal .btn');
+            const allHidden = [closeBtn, ...bottomBtns].filter(Boolean);
+            allHidden.forEach(el => el.classList.add('print-hide'));
+
+            // 列印用 CSS
+            const printStyle = document.createElement('style');
+            printStyle.id = '__print-style';
+            printStyle.textContent = `
+                @media print {
+                    body * { visibility: hidden !important; }
+                    #historical-quizzes-modal, #historical-quizzes-modal * { visibility: visible !important; }
+                    #historical-quizzes-modal { position: absolute !important; inset: 0 !important; background: white !important; }
+                    #historical-quizzes-content { box-shadow: none !important; max-width: 100% !important; max-height: none !important; }
+                    .print-hide { display: none !important; }
+                    [data-history-panel] { display: block !important; max-height: none !important; }
+                    #historical-quizzes-body { max-height: none !important; overflow: visible !important; }
+                }
+            `;
+            document.head.appendChild(printStyle);
+
+            // 列印前確保所有 tab 都顯示（PDF 才能完整看到）
+            document.querySelectorAll('[data-history-panel]').forEach(p => p.classList.remove('hidden'));
+
+            setTimeout(() => {
+                window.print();
+                // 列印完還原
+                setTimeout(() => {
+                    allHidden.forEach(el => el.classList.remove('print-hide'));
+                    document.getElementById('__print-style')?.remove();
+                    // 還原 tab 顯示
+                    const activeTab = document.querySelector('.history-tab-btn.border-purple-500');
+                    if (activeTab) switchHistoryTab(activeTab.dataset.historyTab);
+                }, 500);
+            }, 100);
         }
 
         function hideHistoricalQuizzesModal() {
             document.getElementById('historical-quizzes-modal')?.classList.add('hidden');
+            // 銷毀圖表釋放記憶體
+            if (_classChartInstance) { _classChartInstance.destroy(); _classChartInstance = null; }
+            if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
         }
 
         async function endInteraction({ fullReset = true, navigateToMenu = true } = {}) {
@@ -16644,6 +17007,27 @@
             document.getElementById('show-historical-quizzes-btn')?.addEventListener('click', showHistoricalQuizzesModal);
             document.getElementById('historical-quizzes-close-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
             document.getElementById('historical-quizzes-close-bottom-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
+            // 🆕 v3.8.5 A-4 完整版：tab 切換 + 學生選單 + 列印
+            document.querySelectorAll('.history-tab-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const tab = e.currentTarget.dataset.historyTab;
+                    switchHistoryTab(tab);
+                    // 切到個人 tab 時，若已選學生重新渲染（避免 DOM 切換後 chart 被破壞）
+                    if (tab === 'individual') {
+                        const sel = document.getElementById('history-student-select');
+                        if (sel?.value) renderIndividualTrend(sel.value);
+                    }
+                    // 切到 overview 時，若 chart 不在則重新繪
+                    if (tab === 'overview' && _historicalQuizzesCache.length > 0) {
+                        // 等 DOM 渲染後再 redraw（解決 hidden → visible 後 canvas 大小為 0 的問題）
+                        requestAnimationFrame(() => renderClassTrendChart(_historicalQuizzesCache));
+                    }
+                });
+            });
+            document.getElementById('history-student-select')?.addEventListener('change', (e) => {
+                renderIndividualTrend(e.target.value);
+            });
+            document.getElementById('historical-print-btn')?.addEventListener('click', printHistoricalQuizzes);
 
             // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕
             document.getElementById('add-question-on-fly-btn')?.addEventListener('click', showAddQuestionModal);
