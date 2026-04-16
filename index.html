@@ -20316,30 +20316,43 @@
             }
 
             try {
+                // 🆕 MODIFIED [v3.8.1] A-2: 升級 prompt，要求 AI 同時辨識題目+正解
                 // 依模式生成不同 prompt
                 let prompt;
                 if (mode === 'tf') {
-                    prompt = `你是一位專業的國小老師。請仔細辨識下方 ${store.length} 張圖片中的文字，整理成「一個是非題題目」。
+                    prompt = `你是一位專業的國小老師。請仔細辨識下方 ${store.length} 張圖片，整理成「一個是非題題目並判斷正解」。
 
-要求：
-- 只輸出題目敘述本身（一句話或一小段，學生看完可判斷對錯）
+【輸出格式 - 嚴格遵守，純 JSON 不要任何 markdown code fence】
+{"question": "題目敘述", "answer": "O" 或 "X"}
+
+【要求】
+- question 為學生看完可判斷對錯的肯定陳述句
+- answer 必須是 "O"（敘述正確）或 "X"（敘述錯誤）
+- 若原文為疑問句，請改寫為肯定陳述句
+- 若圖片中已有標示正解，請依照圖片正解；否則依照常識判斷
 - 忽略頁碼、浮水印、插圖說明、排版雜訊
-- 若原文為疑問句，請改寫為肯定陳述句以適合是非判斷
-- 若圖片資訊不足以形成是非題，請直接回覆「⚠️ 無法辨識出有效的是非題內容」
-- 不要加引號、編號、「題目：」等前綴，直接輸出題目文字`;
+- 若無法判斷正解，answer 設為 null
+- 若圖片資訊不足以形成是非題，回傳 {"error": "無法辨識出有效的是非題內容"}
+
+【範例】
+{"question": "台灣的首都是台北市。", "answer": "O"}
+{"question": "地球是宇宙中唯一有生命的星球。", "answer": "X"}`;
                 } else {
                     // mode === 'mc'
+                    // 既有格式已經包含 correctAnswer，A-2 只需確保 prompt 強化不出錯
                     prompt = `你是一位專業的國小老師。請仔細辨識下方 ${store.length} 張圖片中的文字內容，並根據內容生成 3-5 題選擇題。
 
-【輸出格式（嚴格遵守，每行一題）】
+【輸出格式（嚴格遵守，每行一題，不要 markdown code fence）】
 題目,正確答案(1-4),選項1,選項2,選項3,選項4
 
 範例：
 台灣的首都在哪裡?,1,台北,台中,台南,高雄
+2+3 等於?,2,4,5,6,7
 
 【要求】
 - 題目涵蓋圖片中的重要知識點
-- 正確答案用阿拉伯數字 1-4，選項內不要出現逗號
+- 正確答案必須是阿拉伯數字 1-4（對應到第幾個選項）
+- 選項內不要出現逗號（如有，請用、頓號代替）
 - 忽略頁碼、浮水印、插圖說明等雜訊
 - 若圖片內容無法生成選擇題，回覆「⚠️ 無法從圖片生成選擇題」`;
                 }
@@ -20371,13 +20384,62 @@
                     throw new Error(`AI 請求失敗：${response.status}`);
                 }
                 const result = await response.json();
-                const generated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                let generated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
                 if (!generated) throw new Error('AI 未返回有效內容');
+
+                // 🆕 v3.8.1 A-2: 強化清理 — 剝除 markdown code fence
+                generated = generated.replace(/^```[a-zA-Z]*\n?/gm, '').replace(/\n?```\s*$/g, '').trim();
+
                 if (generated.includes('⚠️ 無法')) {
                     throw new Error('AI 無法從圖片中辨識出有效的題目內容，請確認圖片清晰或更換。');
                 }
 
-                // 填入 textarea（如原本已有內容，附加於後方，以換行分隔）
+                // 🆕 v3.8.1 A-2: TF 模式特別處理 — 解析 JSON 並 prefill 正解 radio
+                if (mode === 'tf') {
+                    let parsed = null;
+                    try {
+                        parsed = JSON.parse(generated);
+                    } catch (e) {
+                        console.warn('[TF AI] JSON 解析失敗，嘗試從文字中擷取題目:', e.message);
+                        // Fallback：把整段當題目，無正解
+                        parsed = { question: generated, answer: null };
+                    }
+
+                    if (parsed.error) {
+                        throw new Error('AI 回傳：' + parsed.error);
+                    }
+                    if (!parsed.question) {
+                        throw new Error('AI 未回傳有效題目內容');
+                    }
+
+                    // 填入題目 textarea
+                    const existing = textarea.value.trim();
+                    textarea.value = existing ? (existing + '\n' + parsed.question) : parsed.question;
+
+                    // 自動勾選正解 radio
+                    let answerHint = '';
+                    if (parsed.answer === 'O' || parsed.answer === 'X') {
+                        const radio = document.querySelector(`input[name="tfCorrectAnswer"][value="${parsed.answer}"]`);
+                        if (radio) {
+                            radio.checked = true;
+                            // 視覺回饋：閃爍效果
+                            const label = radio.closest('label');
+                            if (label) {
+                                label.style.transition = 'background 0.3s';
+                                label.style.background = '#fef3c7';
+                                setTimeout(() => { label.style.background = ''; }, 1500);
+                            }
+                            answerHint = ` + 自動選擇正解：${parsed.answer === 'O' ? '⭕ 是' : '❌ 否'}`;
+                        }
+                    } else {
+                        answerHint = '（AI 未判斷正解，請老師手動選擇）';
+                    }
+                    textarea.focus();
+                    showMessage(`✅ AI 已辨識題目並填入${answerHint}`, 'success', 4000);
+                    return; // tf 模式結束
+                }
+
+                // mode === 'mc'：保留原邏輯，填入 textarea
                 const existing = textarea.value.trim();
                 textarea.value = existing ? (existing + '\n' + generated) : generated;
                 textarea.focus();
