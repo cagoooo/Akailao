@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.2** ｜ 更新時間：2026-04-16
+> **版本：V3.8.3** ｜ 更新時間：2026-04-16
 
 ---
 
@@ -583,6 +583,27 @@
 | V3.7.13 | 📏 監控區高度 +90%（h-96 → 80vh）| 老師可視範圍 |
 | V3.7.14 | 🛡️ AI 辨識圖片三層防禦容錯 | 容錯性 |
 | V3.7.15 | 🏆 等待頁配對遊戲升級為班級即時排行榜 | 學生互動 |
+
+---
+
+### 🟢 V3.8.3 (2026-04-16) - A-4：班級答題趨勢面板（自動歸檔 + 統計儀表板）
+*   **🎯 痛點**：每次互動結束就清空資料，老師無法回顧整學期班級表現變化
+*   **🆕 自動歸檔**：`endInteraction()` 之前自動呼叫 `archiveCurrentQuizSnapshot()`
+    - Firestore 路徑：`classrooms/{code}/historicalQuizzes/{autoId}`
+    - 紀錄欄位：`mode`, `modeLabel`, `questionCount`, `submittedCount`, `onlineCount`, `avgAccuracy`, `topStudent`, `timestamp`
+    - 自動跳過非評分型模式（waiting / drawing / recording / text_input / quick_answer / url_dispatch）
+*   **🧮 智慧統計**：
+    - **閱讀測驗**：依 `readingComprehensionData.questions` 比對每位學生答案，算平均答對率 + 第一名
+    - **選擇題**：依 `currentMultipleChoiceQuestions` 比對 + 算平均
+    - **是非題**：記錄 O/X 比率（無正解時 avgAccuracy=null）
+    - 送分題（correctAnswer === 0）一律算對
+*   **📊 教師端「📊 歷史趨勢」按鈕**（紫色按鈕，永久顯示在工具列）
+*   **🎨 趨勢 Modal 內容**：
+    - **總體統計卡片**：總互動次數 / 總提交人次 / 總平均答對率（綠/黃/紅 顏色 by 答對率）
+    - **互動列表**：最近 30 次紀錄，每行顯示「模式 + 時間 + N/M 人提交 + 題數 + 第一名 + 答對率徽章」
+    - 答對率 ≥80% 綠色 / ≥60% 黃色 / <60% 紅色
+*   **♻️ 向後相容**：歸檔失敗不影響結束流程；老師可隨時關閉 Modal；Firestore 寫入採 fire-and-forget 不阻塞 UI
+*   **🔮 下個迭代**（V3.8.4 規劃）：用 Chart.js 畫折線圖、各學生個人成績趨勢、PDF 匯出親師報告
 
 ---
 

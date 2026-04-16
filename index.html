@@ -3226,6 +3226,12 @@
                     <button id="rescore-all-students-btn"
                         class="btn bg-green-600 hover:bg-green-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden">更新學生答案
                         ✏️</button>
+                    <!-- 🆕 NEW [v3.8.3] A-4: 歷史趨勢按鈕（任何模式都顯示） -->
+                    <button id="show-historical-quizzes-btn"
+                        class="btn bg-purple-600 hover:bg-purple-700 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3"
+                        title="查看本教室過去所有評分型互動的趨勢統計">
+                        📊 歷史趨勢
+                    </button>
                     <!-- 🆕 NEW [v3.7.1]: 允許學生提前交卷（只在閱讀測驗模式顯示） -->
                     <button id="allow-early-submit-btn"
                         class="btn bg-amber-500 hover:bg-amber-600 text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-2 md:px-3 hidden"
@@ -4028,6 +4034,23 @@
     </div>
 
     <!-- 🆕 NEW [v3.7.3]: 結束互動再確認 Modal（防止老師忘記儲存學生作答紀錄） -->
+    <!-- 🆕 NEW [v3.8.3] A-4: 班級歷史互動趨勢 Modal -->
+    <div id="historical-quizzes-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 720px; max-height: 85vh;">
+            <button id="historical-quizzes-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-1 text-gray-800 flex items-center gap-2">
+                📊 班級歷史互動趨勢
+            </h4>
+            <p class="text-sm text-gray-500 mb-4">本教室所有評分型互動的歷史紀錄（最新在上）</p>
+            <div id="historical-quizzes-list" class="overflow-y-auto" style="max-height: 60vh;">
+                <p class="text-center text-gray-500 py-8">📊 讀取中...</p>
+            </div>
+            <div class="mt-4 text-right">
+                <button id="historical-quizzes-close-bottom-btn" class="btn btn-gray text-sm px-4">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <div id="end-interaction-confirm-modal" class="magnified-image-modal hidden">
         <div class="magnified-image-modal-content" style="max-width: 560px;">
             <button id="end-interaction-confirm-close-btn" class="magnified-image-modal-close">×</button>
@@ -14210,8 +14233,219 @@
             document.getElementById('end-interaction-confirm-modal').classList.add('hidden');
         }
 
+        // ==========================================================
+        // 🆕 NEW [v3.8.3] A-4: 班級答題趨勢 - 歷史 Quiz Snapshot 歸檔
+        // ==========================================================
+        // Firestore 路徑：classrooms/{code}/historicalQuizzes/{autoId}
+        // 結構：{
+        //   mode: string,            // 'reading_comprehension' | 'multiple_choice' | 'true_false' | ...
+        //   modeLabel: string,       // 中文模式名稱
+        //   questionCount: number,   // 題數
+        //   submittedCount: number,  // 已提交人數
+        //   onlineCount: number,     // 課堂在線人數（提交當下）
+        //   avgAccuracy: number|null,// 平均答對率（0-100）
+        //   avgScore: number|null,   // 平均分數（reading_comprehension/multiple_choice 才有）
+        //   topStudent: string|null, // 第一名學生名
+        //   timestamp: serverTimestamp
+        // }
+
+        async function archiveCurrentQuizSnapshot() {
+            if (!classroomCode || !currentInteractionMode || currentInteractionMode === 'waiting') return;
+
+            // 不歸檔的模式（無評分意義）
+            const skipModes = ['waiting', 'url_dispatch', 'drawing', 'recording', 'text_input', 'quick_answer'];
+            if (skipModes.includes(currentInteractionMode)) {
+                console.log(`[archiveQuiz] 跳過模式 '${currentInteractionMode}' （非評分型互動）`);
+                return;
+            }
+
+            try {
+                // 抓當前所有 studentResponses
+                const studentsRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                const snap = await getDocs(studentsRef);
+                const submitted = [];
+                snap.forEach(d => {
+                    const data = d.data();
+                    if (data.answer != null && data.answer !== '') submitted.push(data);
+                });
+
+                if (submitted.length === 0) {
+                    console.log('[archiveQuiz] 無人提交，不歸檔');
+                    return;
+                }
+
+                // 計算平均答對率（依 mode 不同邏輯）
+                let avgAccuracy = null;
+                let avgScore = null;
+                let topStudent = null;
+                let topScore = -Infinity;
+                let questionCount = 0;
+
+                if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData?.questions) {
+                    questionCount = readingComprehensionData.questions.length;
+                    let totalAcc = 0;
+                    submitted.forEach(s => {
+                        try {
+                            const ans = JSON.parse(s.answer);
+                            if (!Array.isArray(ans)) return;
+                            let correct = 0;
+                            ans.forEach((a, i) => {
+                                const q = readingComprehensionData.questions[i];
+                                if (q && (q.correctAnswer === 0 || String(a) === String(q.correctAnswer))) correct++;
+                            });
+                            const acc = (correct / questionCount) * 100;
+                            totalAcc += acc;
+                            const score = s.totalScore != null ? s.totalScore : (s.baseScore || acc);
+                            if (score > topScore) { topScore = score; topStudent = s.name; }
+                        } catch (e) { /* skip */ }
+                    });
+                    avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
+                    avgScore = avgAccuracy; // 對閱讀測驗來說一致
+                } else if (currentInteractionMode === 'multiple_choice' && currentMultipleChoiceQuestions?.length > 0) {
+                    questionCount = currentMultipleChoiceQuestions.length;
+                    let totalAcc = 0;
+                    submitted.forEach(s => {
+                        if (!Array.isArray(s.answer)) return;
+                        let correct = 0;
+                        s.answer.forEach(a => {
+                            const q = currentMultipleChoiceQuestions[a.qIndex];
+                            if (q && (q.correctAnswer === 0 || String(a.ans) === String(q.correctAnswer))) correct++;
+                        });
+                        const acc = (correct / questionCount) * 100;
+                        totalAcc += acc;
+                        if (acc > topScore) { topScore = acc; topStudent = s.name; }
+                    });
+                    avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
+                    avgScore = avgAccuracy;
+                } else if (currentInteractionMode === 'true_false') {
+                    questionCount = 1;
+                    // 是非題無「正解」當下儲存（除非備題模式有 true_false_question.correctAnswer）
+                    // 簡單統計 O / X 比率
+                    const oCount = submitted.filter(s => s.answer === 'O').length;
+                    avgAccuracy = null; // 沒正解就不算 accuracy
+                    avgScore = null;
+                }
+
+                const modeLabelMap = {
+                    'reading_comprehension': '📖 閱讀測驗',
+                    'multiple_choice': '🔢 選擇題',
+                    'true_false': '✓ 是非題',
+                    'sequencing': '🔀 排序題',
+                    'matching': '🔗 配對題'
+                };
+
+                const archive = {
+                    mode: currentInteractionMode,
+                    modeLabel: modeLabelMap[currentInteractionMode] || currentInteractionMode,
+                    questionCount,
+                    submittedCount: submitted.length,
+                    onlineCount: activeStudentNames?.length || submitted.length,
+                    avgAccuracy,
+                    avgScore,
+                    topStudent: topStudent || null,
+                    timestamp: serverTimestamp()
+                };
+
+                const archiveRef = doc(collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'historicalQuizzes'));
+                await setDoc(archiveRef, archive);
+                console.log('[archiveQuiz] ✅ 歸檔成功：', archive);
+            } catch (err) {
+                console.error('[archiveQuiz] 歸檔失敗：', err);
+            }
+        }
+
+        // 🆕 顯示歷史趨勢 Modal
+        async function showHistoricalQuizzesModal() {
+            const modal = document.getElementById('historical-quizzes-modal');
+            const listEl = document.getElementById('historical-quizzes-list');
+            if (!modal || !listEl) return;
+
+            modal.classList.remove('hidden');
+            listEl.innerHTML = '<p class="text-center text-gray-500 py-8">📊 讀取中...</p>';
+
+            try {
+                const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'historicalQuizzes');
+                const snap = await getDocs(colRef);
+                const quizzes = [];
+                snap.forEach(d => {
+                    const data = d.data();
+                    quizzes.push({
+                        ...data,
+                        id: d.id,
+                        timestampMs: data.timestamp?.toMillis ? data.timestamp.toMillis() : 0
+                    });
+                });
+                // 倒序：最新在上
+                quizzes.sort((a, b) => b.timestampMs - a.timestampMs);
+
+                if (quizzes.length === 0) {
+                    listEl.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄。<br>結束評分型互動（閱讀測驗/選擇題/是非題等）時會自動歸檔。</p>';
+                    return;
+                }
+
+                // 計算總體統計
+                const totalQuizzes = quizzes.length;
+                const totalSubmissions = quizzes.reduce((s, q) => s + (q.submittedCount || 0), 0);
+                const validAccs = quizzes.map(q => q.avgAccuracy).filter(a => a != null);
+                const overallAvg = validAccs.length ? (validAccs.reduce((s, a) => s + a, 0) / validAccs.length).toFixed(1) : '—';
+
+                // 渲染
+                listEl.innerHTML = `
+                    <!-- 總體統計卡片 -->
+                    <div class="grid grid-cols-3 gap-2 mb-4">
+                        <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
+                            <div class="text-2xl font-bold text-blue-700">${totalQuizzes}</div>
+                            <div class="text-xs text-gray-600">總互動次數</div>
+                        </div>
+                        <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                            <div class="text-2xl font-bold text-green-700">${totalSubmissions}</div>
+                            <div class="text-xs text-gray-600">總提交人次</div>
+                        </div>
+                        <div class="bg-purple-50 p-3 rounded text-center border border-purple-200">
+                            <div class="text-2xl font-bold text-purple-700">${overallAvg}${validAccs.length ? '%' : ''}</div>
+                            <div class="text-xs text-gray-600">總平均答對率</div>
+                        </div>
+                    </div>
+
+                    <!-- 趨勢條列表 -->
+                    <h5 class="text-sm font-bold text-gray-700 mb-2">📅 最近互動紀錄（最新在上）</h5>
+                    <div class="space-y-2">
+                        ${quizzes.slice(0, 30).map(q => {
+                            const date = q.timestampMs ? new Date(q.timestampMs).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—';
+                            const accBadge = q.avgAccuracy != null
+                                ? `<span class="px-2 py-0.5 rounded text-xs font-bold ${q.avgAccuracy >= 80 ? 'bg-green-100 text-green-700' : q.avgAccuracy >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">${q.avgAccuracy}%</span>`
+                                : '<span class="text-xs text-gray-400">無評分</span>';
+                            return `
+                                <div class="flex items-center gap-2 p-2 bg-gray-50 rounded border hover:bg-white">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-semibold text-sm">${q.modeLabel || q.mode}</div>
+                                        <div class="text-xs text-gray-500">${date} · ${q.submittedCount}/${q.onlineCount} 人提交 · ${q.questionCount} 題${q.topStudent ? ' · 🏆 ' + q.topStudent : ''}</div>
+                                    </div>
+                                    ${accBadge}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } catch (err) {
+                console.error('[showHistoricalQuizzes] 失敗：', err);
+                listEl.innerHTML = '<p class="text-center text-red-500 py-4">❌ 讀取失敗：' + err.message + '</p>';
+            }
+        }
+
+        function hideHistoricalQuizzesModal() {
+            document.getElementById('historical-quizzes-modal')?.classList.add('hidden');
+        }
+
         async function endInteraction({ fullReset = true, navigateToMenu = true } = {}) {
             console.log(`[endInteraction] Called with fullReset=${fullReset}, navigateToMenu=${navigateToMenu}`);
+
+            // 🆕 NEW [v3.8.3] A-4: 結束互動前自動歸檔當前 quiz snapshot 到 historicalQuizzes
+            try {
+                await archiveCurrentQuizSnapshot();
+            } catch (err) {
+                console.warn('[endInteraction] 歸檔失敗（不影響結束流程）:', err);
+            }
 
             // 🔥 CRITICAL FIX: 重置搶答狀態（無論 fullReset 是否為真）
             console.log('[endInteraction] 🎯 FIX: Resetting quick answer state');
@@ -16255,6 +16489,10 @@
 
             // 🚀 NEW: Rescore All Students Button Listener
             document.getElementById('rescore-all-students-btn')?.addEventListener('click', rescoreAllStudents);
+            // 🆕 NEW [v3.8.3] A-4: 歷史趨勢按鈕
+            document.getElementById('show-historical-quizzes-btn')?.addEventListener('click', showHistoricalQuizzesModal);
+            document.getElementById('historical-quizzes-close-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
+            document.getElementById('historical-quizzes-close-bottom-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
             // 🆕 NEW [v3.7.1]: 允許提前交卷 toggle
             document.getElementById('allow-early-submit-btn')?.addEventListener('click', toggleAllowEarlyReadingSubmit);
 
