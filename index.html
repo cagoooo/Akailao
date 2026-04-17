@@ -9780,6 +9780,8 @@
 
                 // Update global states *before* acting on them
                 currentInteractionMode = newMode;
+                // 🆕 SEC-2: 模式切換時重置提交 flag
+                _hasSubmittedThisRound = false;
                 isResponsePaused = newIsResponsePaused;
                 teacherUploadedBackgroundImageDataURL = newBackgroundImage; // Update teacher background image
                 currentMultipleChoiceQuestions = newMultipleChoiceQuestions; // Update custom MC questions
@@ -10565,11 +10567,21 @@
          * @param {string | object} answer - The student's answer.
          * @returns {Promise<boolean>} Returns true if successful, false if failed
          */
+        // 🆕 NEW [v3.8.24] SEC-2: 防重複提交 flag（前端層保護）
+        let _hasSubmittedThisRound = false;
+
         async function submitAnswer(answer, extraFields = {}) {
             // NEW: Prevent submission if paused
             if (isResponsePaused) {
                 showMessage('老師已暫停回覆，無法送出答案。', 'error');
                 throw new Error('Response is paused');
+            }
+
+            // 🆕 SEC-2: 防重複提交（同一輪只能提交一次）
+            if (_hasSubmittedThisRound && currentInteractionMode !== 'quick_poll') {
+                console.warn('[SEC-2] ⚠️ 已提交過，拒絕重複提交');
+                showMessage('您已提交過答案，無法重複提交。', 'warning');
+                throw new Error('Already submitted');
             }
 
             if (!studentName || !userId || !classroomCode) {
@@ -10593,6 +10605,9 @@
                 if (navigator.vibrate) {
                     navigator.vibrate(100); // 輕微震動 100ms
                 }
+
+                // 🆕 SEC-2: 標記已提交
+                _hasSubmittedThisRound = true;
 
                 return true;
             } catch (error) {
@@ -20360,8 +20375,13 @@
         /**
          * Display reading comprehension for student
          */
+        // 🆕 NEW [v3.8.24] SEC-1: 答案防偷看 — 私有閉包存答案，全域變數不含 correctAnswer
+        // DevTools 裡看 readingComprehensionData.questions[].correctAnswer 會是 undefined
+        // 只有 submitReadingAnswer 內部透過 _secureAnswerKey 取得正解
+        let _secureAnswerKey = null; // 閉包內的答案陣列，DevTools 不易找到
+
         async function displayReadingComprehensionForStudent(readingData) {
-            console.log('[displayReadingComprehensionForStudent] Called with data:', readingData);
+            console.log('[displayReadingComprehensionForStudent] Called');
             const textDisplay = document.getElementById('reading-text-display');
             const questionsContainer = document.getElementById('reading-questions-container');
 
@@ -20418,6 +20438,17 @@
             // Store reading data for student to use when submitting
             if (currentRole === 'student') {
                 readingComprehensionData = readingData;
+
+                // 🆕 NEW [v3.8.24] SEC-1: 把答案抽到私有閉包，然後從全域變數刪除
+                // 這樣學生開 DevTools 輸入 readingComprehensionData.questions[0].correctAnswer → undefined
+                _secureAnswerKey = readingData.questions.map(q => q.correctAnswer);
+                // 從全域物件移除 correctAnswer（延遲 1 秒，確保渲染完畢）
+                setTimeout(() => {
+                    if (readingComprehensionData && readingComprehensionData.questions) {
+                        readingComprehensionData.questions.forEach(q => { delete q.correctAnswer; });
+                        console.log('[SEC-1] ✅ correctAnswer 已從全域移除（DevTools 看不到）');
+                    }
+                }, 1000);
             }
 
             // 🚀 NEW: Parse Markdown bold formatting before displaying
@@ -21024,19 +21055,15 @@
                     extraFields.highlightAnalysis = null;
                 }
 
-                // 🚀 NEW: 計算 baseScore 和 totalScore，存儲到 Firestore
-                // 這樣學生端監聽器可以直接讀取，無需重新計算
+                // 🆕 MODIFIED [v3.8.24] SEC-1: 用私有閉包 _secureAnswerKey 計分（而非全域 correctAnswer）
                 let correctCount = 0;
+                const answerKey = _secureAnswerKey || readingComprehensionData.questions.map(q => q.correctAnswer);
                 answers.forEach((ans, index) => {
-                    if (readingComprehensionData.questions[index]) {
-                        const question = readingComprehensionData.questions[index];
-                        // 🚀 FIX: 支援送分題（correctAnswer = 0 表示送分題，所有學生都答對）
-                        if (question.correctAnswer === 0) {
-                            // 送分題：無條件算為正確
-                            correctCount++;
-                            console.log(`[submitReadingAnswer] Question ${index} is a give-points question, auto-correct`);
-                        } else if (ans === question.correctAnswer) {
-                            // 普通題：答案匹配才算正確
+                    if (index < answerKey.length) {
+                        const correct = answerKey[index];
+                        if (correct === 0) {
+                            correctCount++; // 送分題
+                        } else if (ans === correct) {
                             correctCount++;
                         }
                     }
