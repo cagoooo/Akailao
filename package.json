@@ -4,7 +4,9 @@
   "description": "> **版本：V3.8.9** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署",
   "main": "tailwind.config.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "build:css": "tailwindcss -i tailwind.input.css -o tailwind-build.css --minify",
     "watch:css": "tailwindcss -i tailwind.input.css -o tailwind-build.css --watch"
   },
@@ -22,6 +24,11 @@
   "homepage": "https://github.com/cagoooo/Akailao#readme",
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.1",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "vite": "^8.0.8",
+    "vite-plugin-singlefile": "^2.3.2"
+  },
+  "dependencies": {
+    "firebase": "^11.6.1"
   }
 }

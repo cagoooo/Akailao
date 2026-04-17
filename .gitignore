@@ -23,6 +23,13 @@ GIVE_POINTS_OPTIMIZATION.md
 IMPLEMENTATION_VERIFICATION.md
 IMPLEMENTATION_VERIFICATION_v2.md
 
+# 🆕 [v3.8.25] D-1: Vite 構建輸出 + Node.js 套件
+dist/
+node_modules/
+
+# Claude 工具配置
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]

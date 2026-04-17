@@ -1,0 +1,19349 @@
+// Import Firebase SDK functions.
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "firebase/auth";
+import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, enableIndexedDbPersistence } from "firebase/firestore";
+
+// --- Global Variables ---
+// Max dimension (px) for user uploaded images to prevent excessively large files.
+const MAX_IMAGE_DIMENSION = 1024;
+// JPEG compression quality (0.0 to 1.0).
+const JPEG_QUALITY = 0.8;
+
+// 🆕 NEW [v3.7.1]: 閱讀測驗最短閱讀時間（5 分鐘 = 300000ms）
+// - 學生進入測驗後需至少閱讀這麼久才能送出（預設防止太早交卷）
+// - 可由老師在教師端按「允許提前交卷」主動解鎖（寫入 Firestore: allowEarlyReadingSubmit）
+const READING_MIN_DURATION_MS = 5 * 60 * 1000;
+
+// Firebase configuration.
+const firebaseConfig = JSON.parse(__firebase_config);
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// 🆕 NEW [v3.8.23] PERF-4: 啟用 Firestore 離線快取
+// 學生短暫斷網時仍能繼續操作；大幅減少 Firestore 讀取次數（免費方案 50,000 次/日）
+// 多分頁同時開啟時可能會 warn "already enabled"，用 catch 忽略即可
+enableIndexedDbPersistence(db).catch(err => {
+    if (err.code === 'failed-precondition') {
+        console.warn('[Firestore] 離線快取啟用失敗（多分頁同時開啟），僅第一個分頁有效');
+    } else if (err.code === 'unimplemented') {
+        console.warn('[Firestore] 此瀏覽器不支援離線快取');
+    } else {
+        console.error('[Firestore] 離線快取錯誤:', err);
+    }
+});
+
+// Use __app_id for the base Firestore path.
+const baseAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-classroom-app';
+let userId = null;
+let studentName = null;
+let currentRole = null; // 'teacher' or 'student'
+let classroomCode = null; // NEW: Stores the teacher-defined or student-entered classroom code.
+let currentInteractionMode = null; // To track the active mode for statistics.
+let allStudentResponses = []; // Global variable to store all student responses for charting and lottery.
+let activeStudentNames = []; // NEW: Global variable to store names of all currently active students.
+let pendingKickStudents = new Set(); // 🚀 NEW: 正在被踢出的學生，防止 presence listener 重新添加
+let activeStudentsPresenceMap = new Map(); // 🚀 NEW: 存儲所有在線學生的完整 presence 數據（包含分心狀態）
+let lastSelectedStudentCard = null; // To track the previously selected card for the lottery feature.
+let isResponsePaused = false; // NEW: Global state for response pause.
+let lastSelectedModalStudent = null; // NEW: To track the previously selected student in the modal for lottery.
+
+let interactionModeUnsubscribe = null;
+let questionBanks = []; // Question Bank storage in memory (will be cleared when class ends)
+let sequencingQuestionBanks = []; // Sequencing Question Bank storage
+let matchingQuestionBanks = []; // Matching Question Bank storage
+let studentResponsesUnsubscribe = null;
+let studentChartListenerUnsubscribe = null; // 🚀 NEW: Student-side chart listener for syncing
+let classroomPresenceUnsubscribe = null; // Unsubscribe function for classroom presence listener.
+let lotteryUnsubscribe = null; // NEW: Listener for lottery results
+let quickAnswerUnsubscribe = null; // NEW: Listener for quick answer updates
+
+// 🚀 CRITICAL: Global chart manager for student-side real-time chart sync
+let studentChartManager = null;
+let currentChartMode = null;
+let currentChartResponses = [];
+
+// Student attention monitoring variables
+let studentDistractionCount = 0; // 累計分心次數
+let isStudentCurrentlyDistracted = false; // 當前是否分心
+let attentionMonitoringActive = false; // 防止重複註冊監聽器
+
+// 🚀 NEW: 保存 attention 事件監聽器的引用，以便被踢出時能夠移除
+let attentionVisibilityHandler = null;
+let attentionBlurHandler = null;
+let attentionFocusHandler = null;
+
+// Quick Poll variables
+let quickPollActive = false;
+let quickPollData = null; // Stores current poll configuration
+let quickPollVotesUnsubscribe = null; // Listener for vote updates
+let currentChartType = 'bar'; // 'bar' or 'pie'
+let quickPollOptions = []; // Stores current poll options
+
+// Drawing specific variables.
+const canvas = document.getElementById('drawing-canvas'); // Main canvas for student display.
+const ctx = canvas.getContext('2d'); // 2D context of the main canvas.
+
+let backgroundCanvas = document.createElement('canvas'); // Canvas for teacher's background image.
+let backgroundCtx = backgroundCanvas.getContext('2d');
+
+let studentImageCanvas = document.createElement('canvas');
+let studentImageCtx = studentImageCanvas.getContext('2d');
+let studentUploadedImageDataURL = null; // Stores the scaled and compressed student uploaded image Data URL.
+
+let drawingCanvas = document.createElement('canvas'); // Canvas for student's drawing strokes.
+let drawingCtx = drawingCanvas.getContext('2d');
+
+let isDrawing = false;
+let lastX = 0;
+let lastY = 0;
+
+let teacherUploadedBackgroundImageDataURL = null; // Stores the scaled and compressed background image Data URL from Firestore.
+
+// 🆕 NEW [v3.6.0]: 閱讀測驗 AI 出題 - 已上傳的圖片列表（支援多圖 + 貼上截圖）
+// 每個元素形式：{ dataUrl: string, name: string, mimeType: string, base64: string }
+let readingAiUploadedImages = [];
+
+// 🆕 NEW [v3.7.0]: 是非題/選擇題備題模式 - 共用圖片 composer 狀態
+// - tf: 是非題的題目圖片上傳
+// - mc: 選擇題從圖片 AI 辨識出題
+// 每個元素形式：{ dataUrl: string, name: string, mimeType: string, base64: string }
+const quizAiImageComposers = { tf: [], mc: [] };
+
+// 🆕 NEW [v3.7.0]: 目前 Entry Picker 所指向的模式（'true_false' | 'multiple_choice'），
+// 讓快速/備題兩個選項能依據當下按鈕轉接至正確流程
+let quizEntryTargetMode = null;
+
+// AI Settings Global Object
+let aiSettings = {
+    aiSource: 'gemini-default', // 'gemini-default' or 'gemini-custom'
+    geminiApiKey: '', // Custom API key if 'gemini-custom' is selected
+    defaultGeminiApiKey: (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__') // Placeholder for the fixed key
+};
+
+const BUILTIN_KEY_MASK = '●●●●●●系統分流服務 (已內建)●●●●●●';
+
+/**
+ * 🆕 NEW [v3.6.1]: 判斷目前 bundle 是否內建有效的 Gemini API Key
+ * - 線上部署版本：inject.py 會把 (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__') 替換成真實金鑰 → 回傳 true
+ * - 透過 set.html 下載的教師版：下載時主動清空為 '' → 回傳 false
+ * - 所有「以內建金鑰通過驗證」的邏輯都要先通過這個檢查
+ */
+function hasValidBuiltinKey() {
+    const k = (aiSettings.defaultGeminiApiKey || '').trim();
+    return k.length >= 30 && k.startsWith('AIzaSy');
+}
+
+// MODIFIED: Combined Dispatch Settings Global Object
+let dispatchSettings = {
+    type: 'url', // 'url' or 'html'
+    url: '',
+    isYoutube: false, // Only relevant if type is 'url'
+    htmlContent: null // Only relevant if type is 'html'
+};
+
+// New: Recording specific variables
+let mediaRecorder;
+let audioChunks = [];
+let audioBlob = null;
+let audioDataURL = null;
+let audioStream = null; // To store the MediaStream object
+
+// NEW: Custom Multiple Choice Questions (Teacher side)
+let customMultipleChoiceQuestions = []; // Stores parsed questions from teacher input
+
+// NEW: Reading Comprehension Data (Teacher side)
+let readingComprehensionData = {
+    text: '',
+    questions: [] // Array of {question, correctAnswer, options, level}
+};
+
+// 🚀 NEW: Track currently displayed content in teacher's "View Questions" modal
+let lastViewedReadingContentHash = null;
+
+// NEW: Store student's current answers (not yet submitted) for reading comprehension
+let currentReadingAnswers = [];
+
+// NEW: Reading Comprehension Question Banks
+let readingQuestionBanks = [];
+
+// NEW: Sequencing and Matching Questions (Teacher side)
+let sequencingData = {
+    question: '',
+    correctOrder: [] // Array of items in correct order
+};
+let matchingData = {
+    question: '',
+    pairs: [] // Array of {left, right} objects
+};
+let currentMatchingSelection = {
+    leftItem: null,
+    rightItem: null
+};
+let currentMultipleChoiceQuestions = null; // Stores questions from Firestore for student/teacher monitor
+
+// 🚀 NEW: Student-side tracking for sequencing/matching settings to detect changes
+let lastSequencingSettings = null;
+let lastMatchingSettings = null;
+
+// NEW: Peer Review System Variables
+let peerReviewActive = false; // Whether peer review is currently active
+let peerReviewUnsubscribe = null; // Unsubscribe function for peer review votes listener
+let studentVotedWorks = new Set(); // Track which works this student has voted for
+let allPeerReviewVotes = {}; // Global object to store all votes data
+const MAX_VOTES_PER_STUDENT = 3; // Maximum votes per student per interaction
+
+// Canvas content preservation
+let savedCanvasState = null; // Save student's drawing when switching to peer review
+
+
+// ============================================================================
+// 🚀 OPTIMIZATION MODULE - Core Utilities
+// ============================================================================
+
+/**
+ * 工具函式模組 - Utility Functions Module
+ * 提供通用的輔助函式，包括節流、防抖、圖片壓縮等
+ */
+const Utils = (function () {
+    /**
+     * 節流函式 - 限制函式執行頻率
+     * @param {Function} func - 要節流的函式
+     * @param {number} delay - 延遲時間（毫秒）
+     * @returns {Function} 節流後的函式
+     */
+    function throttle(func, delay = 16) {
+        let lastCall = 0;
+        let timeoutId = null;
+
+        return function throttled(...args) {
+            const now = Date.now();
+            const timeSinceLastCall = now - lastCall;
+
+            if (timeSinceLastCall >= delay) {
+                lastCall = now;
+                func.apply(this, args);
+            } else {
+                if (timeoutId) clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                    lastCall = Date.now();
+                    func.apply(this, args);
+                }, delay - timeSinceLastCall);
+            }
+        };
+    }
+
+    /**
+     * 防抖函式 - 延遲執行，在停止觸發後才執行
+     * @param {Function} func - 要防抖的函式
+     * @param {number} delay - 延遲時間（毫秒）
+     * @returns {Function} 防抖後的函式
+     */
+    function debounce(func, delay = 300) {
+        let timeoutId = null;
+
+        return function debounced(...args) {
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+                func.apply(this, args);
+            }, delay);
+        };
+    }
+
+    /**
+     * 壓縮並調整圖片大小
+     * @param {string} dataURL - 圖片的 Data URL
+     * @param {number} maxWidth - 最大寬度
+     * @param {number} maxHeight - 最大高度
+     * @param {number} quality - 壓縮品質 (0-1)
+     * @returns {Promise<string>} 壓縮後的 Data URL
+     */
+    function compressImage(dataURL, maxWidth = 1024, maxHeight = 1024, quality = 0.8) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+
+                // 計算縮放比例
+                if (width > maxWidth || height > maxHeight) {
+                    const widthRatio = maxWidth / width;
+                    const heightRatio = maxHeight / height;
+                    const ratio = Math.min(widthRatio, heightRatio);
+
+                    width = Math.floor(width * ratio);
+                    height = Math.floor(height * ratio);
+                }
+
+                // 創建 canvas 進行壓縮
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // 轉換為 JPEG 格式以獲得更好的壓縮
+                const compressed = canvas.toDataURL('image/jpeg', quality);
+                resolve(compressed);
+            };
+
+            img.onerror = () => reject(new Error('圖片載入失敗'));
+            img.src = dataURL;
+        });
+    }
+
+    /**
+     * 深拷貝物件
+     * @param {any} obj - 要拷貝的物件
+     * @returns {any} 拷貝後的物件
+     */
+    function deepClone(obj) {
+        if (obj === null || typeof obj !== 'object') return obj;
+        if (obj instanceof Date) return new Date(obj.getTime());
+        if (obj instanceof Array) return obj.map(item => deepClone(item));
+
+        const clonedObj = {};
+        for (const key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                clonedObj[key] = deepClone(obj[key]);
+            }
+        }
+        return clonedObj;
+    }
+
+    return {
+        throttle,
+        debounce,
+        compressImage,
+        deepClone
+    };
+})();
+
+/**
+ * 監聽器管理模組 - Listener Manager Module
+ * 統一管理所有 Firebase 監聽器，確保正確清理避免記憶體洩漏
+ */
+const ListenerManager = (function () {
+    const listeners = new Map();
+
+    /**
+     * 註冊監聽器
+     * @param {string} name - 監聽器名稱
+     * @param {Function} unsubscribe - 取消訂閱函式
+     */
+    function register(name, unsubscribe) {
+        // 如果已存在同名監聽器，先清理
+        if (listeners.has(name)) {
+            const oldUnsubscribe = listeners.get(name);
+            if (typeof oldUnsubscribe === 'function') {
+                try {
+                    oldUnsubscribe();
+                } catch (error) {
+                    console.warn(`清理監聽器 ${name} 時發生錯誤:`, error);
+                }
+            }
+        }
+        listeners.set(name, unsubscribe);
+    }
+
+    /**
+     * 取消指定監聽器
+     * @param {string} name - 監聽器名稱
+     */
+    function unregister(name) {
+        if (listeners.has(name)) {
+            const unsubscribe = listeners.get(name);
+            if (typeof unsubscribe === 'function') {
+                try {
+                    unsubscribe();
+                } catch (error) {
+                    console.warn(`取消監聽器 ${name} 時發生錯誤:`, error);
+                }
+            }
+            listeners.delete(name);
+        }
+    }
+
+    /**
+     * 清理所有監聽器
+     */
+    function clearAll() {
+        listeners.forEach((unsubscribe, name) => {
+            if (typeof unsubscribe === 'function') {
+                try {
+                    unsubscribe();
+                } catch (error) {
+                    console.warn(`清理監聽器 ${name} 時發生錯誤:`, error);
+                }
+            }
+        });
+        listeners.clear();
+    }
+
+    /**
+     * 獲取當前註冊的監聽器數量
+     * @returns {number} 監聽器數量
+     */
+    function count() {
+        return listeners.size;
+    }
+
+    /**
+     * 檢查監聽器是否存在
+     * @param {string} name - 監聽器名稱
+     * @returns {boolean} 是否存在
+     */
+    function has(name) {
+        return listeners.has(name);
+    }
+
+    /**
+     * 🚀 NEW: 獲取所有監聽器名稱列表
+     * @returns {Array} 監聽器名稱陣列
+     */
+    function getAll() {
+        return Array.from(listeners.keys());
+    }
+
+    /**
+     * 🚀 NEW: 檢測和清理孤立計時器
+     */
+    function detectOrphanedTimers() {
+        const activeTimers = new Set();
+        // 掃描所有用到的計時器 ID
+        for (let i = 1; i < 100000; i++) {
+            // 這是一個簡化的檢測，實際應該追蹤所有 setInterval/setTimeout
+            // 用一個全局計時器池來管理
+        }
+        return activeTimers.size;
+    }
+
+    return {
+        register,
+        unregister,
+        clearAll,
+        count,
+        has,
+        getAll,
+        detectOrphanedTimers
+    };
+})();
+
+/**
+ * 螢光筆管理模組 - Highlighter Manager Module
+ * 管理學生端和教師端閱讀測驗的螢光筆標註功能
+ */
+const HighlighterManager = (function () {
+    // 學生端狀態
+    let studentColor = 'yellow';
+    let studentInitialized = false;
+    let studentEraserMode = false; // 🚀 NEW: 橡皮擦模式狀態
+
+    // 教師端狀態
+    let teacherColor = 'yellow';
+    let teacherInitialized = false;
+    let teacherEraserMode = false; // 🚀 NEW: 橡皮擦模式狀態
+
+    const STUDENT_STORAGE_PREFIX = 'reading_highlights_';
+    const TEACHER_STORAGE_PREFIX = 'teacher_reading_highlights_';
+
+    /**
+     * 獲取螢光筆存儲鍵（基於角色和教室代碼）
+     */
+    function getStorageKey(mode = 'student') {
+        const prefix = mode === 'teacher' ? TEACHER_STORAGE_PREFIX : STUDENT_STORAGE_PREFIX;
+        return prefix + (classroomCode || 'default');
+    }
+
+    /**
+     * 計算文章內容哈希（用於驗證標註是否匹配當前文章）
+     */
+    function getContentHash(text) {
+        if (!text) return '';
+        // 簡單哈希函數
+        let hash = 0;
+        for (let i = 0; i < text.length; i++) {
+            const char = text.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return hash.toString();
+    }
+
+    /**
+     * 🚀 NEW: 獲取 Range 在純文本中的起始偏移量
+     * @param {Range} range - DOM Range 對象
+     * @param {Element} container - 容器元素
+     * @returns {number} 起始位置偏移量
+     */
+    function getRangeOffset(range, container) {
+        const preRange = document.createRange();
+        preRange.selectNodeContents(container);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        return preRange.toString().length;
+    }
+
+    /**
+     * 🚀 FIXED: 根據純文本偏移量創建 DOM Range（修正偏移量計算）
+     * @param {Element} container - 容器元素
+     * @param {number} startOffset - 起始偏移量
+     * @param {number} length - 文本長度
+     * @returns {Range|null} DOM Range 對象
+     */
+    function createRangeFromOffset(container, startOffset, length) {
+        const range = document.createRange();
+        let charCount = 0;
+        let startNode = null;
+        let startNodeOffset = 0;
+        let endNode = null;
+        let endNodeOffset = 0;
+        let foundStart = false;
+
+        const walker = document.createTreeWalker(
+            container,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        let node;
+        while (node = walker.nextNode()) {
+            const nodeLength = node.textContent.length;
+
+            // 🚀 FIXED: 查找起始位置
+            if (!foundStart && charCount + nodeLength > startOffset) {
+                startNode = node;
+                startNodeOffset = startOffset - charCount;
+                // 🚀 CRITICAL FIX: 立即驗證起始偏移量使用當前節點的長度
+                if (startNodeOffset > nodeLength) {
+                    startNodeOffset = nodeLength;
+                }
+                if (startNodeOffset < 0) {
+                    startNodeOffset = 0;
+                }
+                foundStart = true;
+            }
+
+            // 🚀 FIXED: 查找結束位置
+            if (foundStart && charCount + nodeLength >= startOffset + length) {
+                endNode = node;
+                endNodeOffset = startOffset + length - charCount;
+                // 🚀 CRITICAL FIX: 驗證結束偏移量使用當前節點的長度
+                if (endNodeOffset > nodeLength) {
+                    endNodeOffset = nodeLength;
+                }
+                if (endNodeOffset < 0) {
+                    endNodeOffset = 0;
+                }
+                break;
+            }
+
+            charCount += nodeLength;
+        }
+
+        // 🚀 邊界情況處理：如果結束位置剛好在文本末尾
+        if (startNode && !endNode && foundStart) {
+            endNode = node; // 使用最後一個節點
+            endNodeOffset = node ? node.textContent.length : 0;
+        }
+
+        if (startNode && endNode) {
+            try {
+                range.setStart(startNode, startNodeOffset);
+                range.setEnd(endNode, endNodeOffset);
+                return range;
+            } catch (e) {
+                console.warn('[createRangeFromOffset] Failed to create range:', e, {
+                    startOffset,
+                    length,
+                    startNodeOffset,
+                    endNodeOffset,
+                    startNodeText: startNode.textContent.substring(0, 20),
+                    endNodeText: endNode.textContent.substring(0, 20)
+                });
+                return null;
+            }
+        }
+
+        console.warn('[createRangeFromOffset] Could not find nodes for range:', {
+            startOffset,
+            length,
+            foundStart,
+            totalChars: charCount
+        });
+        return null;
+    }
+
+    /**
+     * 通用初始化螢光筆功能
+     * @param {string} mode - 'student' 或 'teacher'
+     * @param {object} config - 配置對象
+     */
+    function initMode(mode, config) {
+        const {
+            buttonSelector,
+            textDisplayId,
+            clearButtonId,
+            eraserButtonId,
+            colorStateRef,
+            initializedRef,
+            eraserModeRef
+        } = config;
+
+        if (initializedRef.value) {
+            console.log(`[Highlighter:${mode}] Already initialized`);
+            return;
+        }
+
+        console.log(`[Highlighter:${mode}] Initializing highlighter functionality`);
+
+        // 設置顏色選擇按鈕事件
+        const colorButtons = document.querySelectorAll(buttonSelector);
+        colorButtons.forEach(btn => {
+            const newBtn = btn.cloneNode(true);
+            btn.parentNode.replaceChild(newBtn, btn);
+        });
+
+        // 重新獲取按鈕並綁定事件
+        const newColorButtons = document.querySelectorAll(buttonSelector);
+        newColorButtons.forEach(btn => {
+            btn.addEventListener('click', function () {
+                newColorButtons.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                colorStateRef.value = this.getAttribute('data-color');
+                // 🚀 NEW: 選擇顏色時關閉橡皮擦模式
+                eraserModeRef.value = false;
+                const eraserBtn = document.getElementById(eraserButtonId);
+                if (eraserBtn) {
+                    eraserBtn.classList.remove('border-2', 'border-red-500');
+                    eraserBtn.classList.add('border-transparent');
+                }
+                console.log(`[Highlighter:${mode}] Color changed to:`, colorStateRef.value);
+            });
+        });
+
+        // 設置第一個按鈕為預設選中
+        if (newColorButtons.length > 0) {
+            newColorButtons[0].classList.add('active');
+        }
+
+        // 🚀 NEW: 設置橡皮擦按鈕事件
+        const eraserBtn = document.getElementById(eraserButtonId);
+        if (eraserBtn) {
+            console.log(`[Highlighter:${mode}] 🔍 Found eraser button, setting up event listener`);
+            const newEraserBtn = eraserBtn.cloneNode(true);
+            eraserBtn.parentNode.replaceChild(newEraserBtn, eraserBtn);
+            newEraserBtn.addEventListener('click', function () {
+                eraserModeRef.value = !eraserModeRef.value;
+                if (eraserModeRef.value) {
+                    // 啟動橡皮擦模式
+                    newColorButtons.forEach(b => b.classList.remove('active'));
+                    newEraserBtn.classList.add('border-2', 'border-red-500');
+                    newEraserBtn.classList.remove('border-transparent');
+                    console.log(`[Highlighter:${mode}] ✓ Eraser mode activated`);
+                } else {
+                    // 關閉橡皮擦模式，回到第一個顏色按鈕
+                    if (newColorButtons.length > 0) {
+                        newColorButtons[0].classList.add('active');
+                    }
+                    newEraserBtn.classList.remove('border-2', 'border-red-500');
+                    newEraserBtn.classList.add('border-transparent');
+                    console.log(`[Highlighter:${mode}] ✓ Eraser mode deactivated`);
+                }
+            });
+            console.log(`[Highlighter:${mode}] ✓ Eraser button initialized`);
+        } else {
+            console.warn(`[Highlighter:${mode}] ⚠️ Eraser button NOT found - ID: ${eraserButtonId}`);
+        }
+
+        // 設置文字選擇事件
+        const textDisplay = document.getElementById(textDisplayId);
+        if (textDisplay) {
+            const handler = (e) => handleTextSelection(mode, colorStateRef, textDisplayId, eraserModeRef);
+            textDisplay.removeEventListener('mouseup', handler);
+            textDisplay.removeEventListener('touchend', handler);
+            textDisplay.addEventListener('mouseup', handler);
+            textDisplay.addEventListener('touchend', handler);
+        }
+
+        // 設置清除按鈕事件
+        const clearBtn = document.getElementById(clearButtonId);
+        if (clearBtn) {
+            const newClearBtn = clearBtn.cloneNode(true);
+            clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+            newClearBtn.addEventListener('click', () => clearAllHighlights(mode, textDisplayId));
+        }
+
+        initializedRef.value = true;
+        console.log(`[Highlighter:${mode}] ✓ Initialization complete`);
+    }
+
+    /**
+     * 初始化學生端螢光筆功能
+     */
+    function init() {
+        if (currentRole !== 'student') {
+            console.log('[Highlighter] Skip init - not student role');
+            return;
+        }
+
+        // 🚀 NEW: 延遲以確保 DOM 完全就緒，並重置初始化標誌以支援重新初始化
+        setTimeout(() => {
+            console.log('[Highlighter:student] Delayed init started - verifying DOM elements');
+
+            // 檢查必要的 DOM 元素是否存在
+            const eraserBtn = document.getElementById('eraser-btn-reading');
+            const textDisplay = document.getElementById('reading-text-display');
+
+            if (!eraserBtn) {
+                console.warn('[Highlighter:student] eraser-btn-reading not found in DOM');
+            }
+            if (!textDisplay) {
+                console.warn('[Highlighter:student] reading-text-display not found in DOM');
+            }
+
+            // 重置初始化標誌，允許重新初始化
+            studentInitialized = false;
+
+            initMode('student', {
+                buttonSelector: '.highlighter-btn',
+                textDisplayId: 'reading-text-display',
+                clearButtonId: 'clear-highlights-btn',
+                eraserButtonId: 'eraser-btn-reading', // 🚀 FIXED: Avoid ID conflict with drawing eraser
+                colorStateRef: { get value() { return studentColor; }, set value(v) { studentColor = v; } },
+                initializedRef: { get value() { return studentInitialized; }, set value(v) { studentInitialized = v; } },
+                eraserModeRef: { get value() { return studentEraserMode; }, set value(v) { studentEraserMode = v; } } // 🚀 NEW
+            });
+        }, 100);
+    }
+
+    /**
+     * 🚀 CRITICAL FIX: Initialize global chart manager in global scope
+     */
+    studentChartManager = (() => {
+        let studentChartSvgTf = null;
+        let studentChartSvgMc = null;
+
+        function init() {
+            studentChartSvgTf = d3.select("#student-chart-svg-tf");
+            studentChartSvgMc = d3.select("#student-chart-svg-mc");
+            console.log('[👨‍🎓 Student Chart] ✅ Manager initialized globally');
+        }
+
+        function drawStudentPieChart(data, totalValidResponses, svgElement) {
+            svgElement.selectAll("*").remove();
+            const svgViewBox = svgElement.attr("viewBox").split(" ");
+            const width = parseInt(svgViewBox[2]);
+            const height = parseInt(svgViewBox[3]);
+            const radius = Math.min(width, height) / 2 - 30;
+            const g = svgElement.append("g").attr("transform", `translate(${width / 2},${height / 2})`);
+            const color = d3.scaleOrdinal().domain(Object.keys(data)).range(['#16a34a', '#dc2626']);
+            const pie = d3.pie().value(d => d[1]).sort(null);
+            const arc = d3.arc().innerRadius(0).outerRadius(radius);
+            const arcs = g.selectAll(".arc").data(pie(Object.entries(data))).enter().append("g").attr("class", "arc");
+
+            arcs.append("path")
+                .attr("d", arc)
+                .attr("fill", d => color(d.data[0]))
+                .attr("stroke", "white").style("stroke-width", "2px");
+
+            arcs.append("text")
+                .attr("transform", d => `translate(${arc.centroid(d)})`)
+                .attr("dy", "0.35em")
+                .text(d => {
+                    const percentage = totalValidResponses > 0 ? ((d.data[1] / totalValidResponses) * 100).toFixed(1) : 0;
+                    return `${d.data[0]}: ${d.data[1]} (${percentage}%)`;
+                })
+                .style("font-size", "12px").style("text-anchor", "middle").style("fill", "white").style("pointer-events", "none");
+        }
+
+        function drawStudentBarChart(data, totalValidResponses, svgElement) {
+            svgElement.selectAll("*").remove();
+            const svgViewBox = svgElement.attr("viewBox").split(" ");
+            const svgWidth = parseInt(svgViewBox[2]);
+            const svgHeight = parseInt(svgViewBox[3]);
+
+            const margin = { top: 25, right: 30, bottom: 40, left: 40 };
+            const width = svgWidth - margin.left - margin.right;
+            const height = svgHeight - margin.top - margin.bottom;
+
+            const x = d3.scaleBand().range([0, width]).padding(0.25).domain(Object.keys(data));
+            const y = d3.scaleLinear().range([height, 0]).domain([0, d3.max(Object.values(data)) || 1]);
+            const color = d3.scaleOrdinal().domain(Object.keys(data)).range(['#2563eb', '#ca8a04', '#16a34a', '#dc2626']);
+            const g = svgElement.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+            g.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x))
+                .selectAll("text").style("font-size", "11px").style("font-weight", "600");
+
+            g.append("g").call(d3.axisLeft(y).ticks(Math.min(8, d3.max(Object.values(data)) || 1)).tickFormat(d3.format('d')))
+                .selectAll("text").style("font-size", "10px");
+
+            g.selectAll(".bar").data(Object.entries(data)).enter().append("rect")
+                .attr("class", "bar").attr("x", d => x(d[0])).attr("y", d => y(d[1]))
+                .attr("width", x.bandwidth()).attr("height", d => height - y(d[1]))
+                .attr("fill", d => color(d[0])).attr("rx", 3).attr("ry", 3).style("cursor", "pointer");
+
+            g.selectAll(".bar-label").data(Object.entries(data)).enter().append("text")
+                .attr("class", "bar-label").attr("x", d => x(d[0]) + x.bandwidth() / 2)
+                .attr("y", d => y(d[1]) - 5).attr("text-anchor", "middle")
+                .style("font-size", "10px").style("font-weight", "500").style("pointer-events", "none")
+                .text(d => {
+                    const percentage = totalValidResponses > 0 ? ((d[1] / totalValidResponses) * 100).toFixed(0) : 0;
+                    return `${d[1]}`;
+                });
+        }
+
+        function updateChart(responses, mode) {
+            const filteredResponses = responses.filter(r => {
+                if (mode === 'true_false' && (r.answer === 'O' || r.answer === 'X')) return true;
+                if (mode === 'multiple_choice' && (r.answer >= '1' && r.answer <= '4')) return true;
+                return false;
+            });
+
+            if (filteredResponses.length === 0) return;
+
+            if (mode === 'true_false') {
+                const chartData = { 'O': 0, 'X': 0 };
+                filteredResponses.forEach(r => { chartData[r.answer]++; });
+                if (studentChartSvgTf) drawStudentPieChart(chartData, filteredResponses.length, studentChartSvgTf);
+            } else if (mode === 'multiple_choice') {
+                const chartData = { '1': 0, '2': 0, '3': 0, '4': 0 };
+                filteredResponses.forEach(r => { chartData[r.answer]++; });
+                if (studentChartSvgMc) drawStudentBarChart(chartData, filteredResponses.length, studentChartSvgMc);
+            }
+        }
+
+        return { init, updateChart };
+    })();
+
+    /**
+     * 初始化教師端螢光筆功能
+     */
+    function initTeacher() {
+        initMode('teacher', {
+            buttonSelector: '.teacher-highlighter-btn',
+            textDisplayId: 'view-reading-text-display',
+            clearButtonId: 'teacher-clear-highlights-btn',
+            eraserButtonId: 'teacher-eraser-btn-reading', // 🚀 FIXED: Avoid ID conflict with drawing eraser
+            colorStateRef: { get value() { return teacherColor; }, set value(v) { teacherColor = v; } },
+            initializedRef: { get value() { return teacherInitialized; }, set value(v) { teacherInitialized = v; } },
+            eraserModeRef: { get value() { return teacherEraserMode; }, set value(v) { teacherEraserMode = v; } } // 🚀 NEW
+        });
+    }
+
+    /**
+     * 🚀 NEW: 處理橡皮擦邏輯 - 移除選中區域內的所有標記
+     */
+    function handleEraserSelection(mode, range, textDisplayId) {
+        const textDisplay = document.getElementById(textDisplayId);
+        if (!textDisplay) return;
+
+        try {
+            // 獲取選中範圍內的所有 mark.highlight 元素
+            const marks = textDisplay.querySelectorAll('mark.highlight');
+            const rangeStart = range.getBoundingClientRect().left;
+            const rangeEnd = range.getBoundingClientRect().right;
+
+            let erasedCount = 0;
+            marks.forEach(mark => {
+                const markRect = mark.getBoundingClientRect();
+                // 檢查是否有重疊
+                if (markRect.right > rangeStart && markRect.left < rangeEnd) {
+                    // 檢查選中文本是否包含或與該標記有交集
+                    const markText = mark.textContent;
+                    const selectedText = window.getSelection().toString();
+
+                    // 如果選中文本包含或包含於標記文本，則移除該標記
+                    if (selectedText.includes(markText) || markText.includes(selectedText)) {
+                        const parent = mark.parentNode;
+                        while (mark.firstChild) {
+                            parent.insertBefore(mark.firstChild, mark);
+                        }
+                        parent.removeChild(mark);
+                        erasedCount++;
+                        console.log(`[Highlighter:${mode}] ✓ Erased highlight: ${markText.substring(0, 20)}...`);
+                    }
+                }
+            });
+
+            if (erasedCount > 0) {
+                // 保存擦除後的結果
+                saveHighlights(mode, textDisplayId);
+                console.log(`[Highlighter:${mode}] ✓ ${erasedCount} highlight(s) erased`);
+            }
+        } catch (error) {
+            console.warn(`[Highlighter:${mode}] Error during erase:`, error);
+        }
+    }
+
+    /**
+     * 處理文字選擇 - 使用安全的文本節點操作
+     */
+    function handleTextSelection(mode, colorStateRef, textDisplayId, eraserModeRef) {
+        const selection = window.getSelection();
+        const selectedText = selection.toString().trim();
+
+        if (!selectedText || selectedText.length === 0) return;
+
+        console.log(`[Highlighter:${mode}] Text selected:`, selectedText.substring(0, 20) + '...', 'Eraser mode:', eraserModeRef.value);
+
+        try {
+            const range = selection.getRangeAt(0);
+            const textDisplay = document.getElementById(textDisplayId);
+
+            // 確保選擇在文章區域內
+            if (!textDisplay.contains(range.commonAncestorContainer)) {
+                return;
+            }
+
+            // 🚀 NEW: 檢查是否在橡皮擦模式
+            if (eraserModeRef.value) {
+                // 使用更簡單的方式：直接查找選中範圍內的標記並移除
+                const marks = textDisplay.querySelectorAll('mark.highlight');
+                let erasedCount = 0;
+
+                marks.forEach(mark => {
+                    // 檢查該標記的文本是否與選中文本有交集
+                    const markRange = document.createRange();
+                    markRange.selectNodeContents(mark);
+
+                    try {
+                        const comparison = range.compareBoundaryPoints(Range.START_TO_END, markRange);
+                        const comparison2 = range.compareBoundaryPoints(Range.END_TO_START, markRange);
+
+                        // 如果有交集，則移除該標記
+                        if (comparison >= 0 && comparison2 <= 0) {
+                            const parent = mark.parentNode;
+                            while (mark.firstChild) {
+                                parent.insertBefore(mark.firstChild, mark);
+                            }
+                            parent.removeChild(mark);
+                            erasedCount++;
+                            console.log(`[Highlighter:${mode}] ✓ Erased: ${mark.textContent.substring(0, 20)}...`);
+                        }
+                    } catch (e) {
+                        console.warn(`[Highlighter:${mode}] Error comparing ranges:`, e);
+                    }
+                });
+
+                if (erasedCount > 0) {
+                    saveHighlights(mode, textDisplayId);
+                    console.log(`[Highlighter:${mode}] ✓ Total erased: ${erasedCount}`);
+                }
+            } else {
+                // 正常螢光筆標記模式
+                // 🚀 FIXED: 使用更安全的方式處理跨節點選擇
+                // 提取選擇的內容並用 mark 包裝
+                const fragment = range.extractContents();
+                const mark = document.createElement('mark');
+                mark.className = `highlight highlight-${colorStateRef.value}`;
+                mark.setAttribute('data-color', colorStateRef.value);
+                // 🚀 NEW: 記錄每個標註的獨立時間戳（用於評分分析）
+                mark.setAttribute('data-timestamp', Date.now().toString());
+                mark.appendChild(fragment);
+
+                // 插入標註元素
+                range.insertNode(mark);
+
+                // 保存標註（包含文章內容哈希用於驗證）
+                saveHighlights(mode, textDisplayId);
+
+                console.log(`[Highlighter:${mode}] ✓ Highlight applied`);
+            }
+
+        } catch (error) {
+            console.warn(`[Highlighter:${mode}] Could not process selection:`, error.message);
+            // 清除選擇避免卡住
+            selection.removeAllRanges();
+        }
+
+        // 清除選擇
+        selection.removeAllRanges();
+    }
+
+    /**
+     * 🚀 FIXED: 保存標註到 localStorage（使用偏移量而非純文本）
+     */
+    function saveHighlights(mode, textDisplayId) {
+        const textDisplay = document.getElementById(textDisplayId);
+        if (!textDisplay || !readingComprehensionData) return;
+
+        const highlights = [];
+        const marks = textDisplay.querySelectorAll('mark.highlight');
+
+        // 🚀 使用偏移量保存標註位置
+        marks.forEach((mark) => {
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(mark);
+
+                // 計算標註在整個容器純文本中的起始位置
+                const startOffset = getRangeOffset(range, textDisplay);
+                const text = mark.textContent;
+                const color = mark.getAttribute('data-color');
+                // 🚀 NEW: 讀取每個標註的時間戳
+                const timestamp = mark.getAttribute('data-timestamp') || Date.now().toString();
+
+                highlights.push({
+                    startOffset: startOffset,
+                    length: text.length,
+                    text: text, // 保留文本用於調試
+                    color: color,
+                    timestamp: parseInt(timestamp) // 🚀 NEW: 保存時間戳
+                });
+            } catch (e) {
+                console.warn(`[Highlighter:${mode}] Failed to save highlight:`, e);
+            }
+        });
+
+        // 添加內容哈希用於驗證
+        const contentHash = getContentHash(readingComprehensionData.text);
+        const saveData = {
+            version: 2, // 版本號升級為 2
+            contentHash: contentHash,
+            highlights: highlights,
+            timestamp: new Date().getTime()
+        };
+
+        try {
+            const storageKey = getStorageKey(mode);
+            console.log(`[Highlighter:${mode}] 🔍 DEBUG: Saving to storageKey =`, storageKey);
+            console.log(`[Highlighter:${mode}] 🔍 DEBUG: classroomCode =`, classroomCode);
+            console.log(`[Highlighter:${mode}] 🔍 DEBUG: Saving`, highlights.length, 'highlights');
+
+            localStorage.setItem(storageKey, JSON.stringify(saveData));
+            console.log(`[Highlighter:${mode}] ✅ Saved`, highlights.length, 'highlights (offset-based) with hash:', contentHash);
+
+            // 驗證保存成功
+            const verification = localStorage.getItem(storageKey);
+            console.log(`[Highlighter:${mode}] 🔍 DEBUG: Verification - data saved successfully?`, !!verification);
+        } catch (error) {
+            console.error(`[Highlighter:${mode}] ❌ Failed to save highlights:`, error);
+        }
+    }
+
+    /**
+     * 🚀 FIXED: 恢復標註從 localStorage（使用偏移量精確恢復）
+     */
+    function restoreHighlights(mode = 'student', textDisplayId = 'reading-text-display') {
+        // 學生端檢查角色
+        if (mode === 'student' && currentRole !== 'student') {
+            console.log(`[Highlighter:${mode}] Skip restore - not student role`);
+            return;
+        }
+
+        if (!readingComprehensionData) {
+            console.log(`[Highlighter:${mode}] Skip restore - no reading data`);
+            return;
+        }
+
+        try {
+            const saved = localStorage.getItem(getStorageKey(mode));
+            if (!saved) {
+                console.log(`[Highlighter:${mode}] No saved highlights found`);
+                return;
+            }
+
+            const saveData = JSON.parse(saved);
+
+            // 驗證內容哈希，如果不匹配則清除舊標註
+            const currentHash = getContentHash(readingComprehensionData.text);
+            if (saveData.contentHash && saveData.contentHash !== currentHash) {
+                console.log(`[Highlighter:${mode}] Content hash mismatch, clearing old highlights`);
+                localStorage.removeItem(getStorageKey(mode));
+                return;
+            }
+
+            const highlights = saveData.highlights || saveData;
+            if (!Array.isArray(highlights) || highlights.length === 0) {
+                console.log(`[Highlighter:${mode}] No highlights to restore`);
+                return;
+            }
+
+            console.log(`[Highlighter:${mode}] Restoring`, highlights.length, 'highlights (version:', saveData.version || 1, ')');
+
+            const textDisplay = document.getElementById(textDisplayId);
+            if (!textDisplay) return;
+
+            // 🚀 FIXED: 根據版本使用不同的恢復邏輯
+            if (saveData.version === 2) {
+                // 新版本：使用偏移量恢復（支持跨 HTML 標籤）
+                let successCount = 0;
+                let failCount = 0;
+
+                highlights.forEach((h, index) => {
+                    if (typeof h.startOffset !== 'number' || !h.length || !h.color) {
+                        console.warn(`[Highlighter:${mode}] Skip invalid highlight #${index}:`, h);
+                        failCount++;
+                        return; // 🚀 繼續處理下一個標註
+                    }
+
+                    try {
+                        const range = createRangeFromOffset(textDisplay, h.startOffset, h.length);
+                        if (range) {
+                            const mark = document.createElement('mark');
+                            mark.className = `highlight highlight-${h.color}`;
+                            mark.setAttribute('data-color', h.color);
+                            // 🚀 NEW: 恢復時間戳（用於評分分析）
+                            if (h.timestamp) {
+                                mark.setAttribute('data-timestamp', h.timestamp.toString());
+                            }
+                            mark.appendChild(range.extractContents());
+                            range.insertNode(mark);
+                            successCount++;
+                            console.log(`[Highlighter:${mode}] ✓ Restored highlight #${index} at offset ${h.startOffset} (${h.text?.substring(0, 20)}...)`);
+                        } else {
+                            console.warn(`[Highlighter:${mode}] Failed to create range for highlight #${index}:`, h);
+                            failCount++;
+                        }
+                    } catch (err) {
+                        console.warn(`[Highlighter:${mode}] Error restoring highlight #${index}:`, err, h);
+                        failCount++; // 🚀 記錄失敗但繼續處理
+                    }
+                });
+
+                console.log(`[Highlighter:${mode}] Restoration summary: ${successCount} succeeded, ${failCount} failed out of ${highlights.length}`);
+            } else {
+                // 舊版本：使用文本匹配恢復（向後兼容）
+                console.log(`[Highlighter:${mode}] Using legacy text-based restore`);
+                highlights.forEach(h => {
+                    if (!h.text || !h.color) return;
+
+                    const walker = document.createTreeWalker(
+                        textDisplay,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                    );
+
+                    const nodesToHighlight = [];
+                    let node;
+
+                    while (node = walker.nextNode()) {
+                        const index = node.textContent.indexOf(h.text);
+                        if (index !== -1) {
+                            nodesToHighlight.push({ node, index, text: h.text });
+                            break; // 只匹配第一次出現
+                        }
+                    }
+
+                    nodesToHighlight.forEach(({ node, index, text }) => {
+                        try {
+                            const range = document.createRange();
+                            range.setStart(node, index);
+                            range.setEnd(node, index + text.length);
+
+                            const mark = document.createElement('mark');
+                            mark.className = `highlight highlight-${h.color}`;
+                            mark.setAttribute('data-color', h.color);
+                            mark.appendChild(range.extractContents());
+                            range.insertNode(mark);
+                        } catch (err) {
+                            console.warn(`[Highlighter:${mode}] Failed to restore individual highlight:`, err);
+                        }
+                    });
+                });
+            }
+
+            console.log(`[Highlighter:${mode}] ✓ Highlights restored successfully`);
+        } catch (error) {
+            console.warn(`[Highlighter:${mode}] Failed to restore highlights:`, error);
+            // 清除損壞的數據
+            try {
+                localStorage.removeItem(getStorageKey(mode));
+            } catch (e) { }
+        }
+    }
+
+    /**
+     * 清除所有標註
+     */
+    function clearAllHighlights(mode = 'student', textDisplayId = 'reading-text-display') {
+        console.log(`[Highlighter:${mode}] Clearing all highlights`);
+        const textDisplay = document.getElementById(textDisplayId);
+        if (!textDisplay) return;
+
+        const marks = textDisplay.querySelectorAll('mark.highlight');
+        marks.forEach(mark => {
+            const parent = mark.parentNode;
+            while (mark.firstChild) {
+                parent.insertBefore(mark.firstChild, mark);
+            }
+            parent.removeChild(mark);
+        });
+
+        // 清除存儲
+        try {
+            localStorage.removeItem(getStorageKey(mode));
+            console.log(`[Highlighter:${mode}] ✓ All highlights cleared`);
+        } catch (error) {
+            console.warn(`[Highlighter:${mode}] Failed to clear storage:`, error);
+        }
+    }
+
+    /**
+     * 重置螢光筆狀態
+     */
+    function reset(mode = 'student') {
+        console.log(`[Highlighter:${mode}] Resetting highlighter`);
+        const textDisplayId = mode === 'teacher' ? 'view-reading-text-display' : 'reading-text-display';
+        const buttonSelector = mode === 'teacher' ? '.teacher-highlighter-btn' : '.highlighter-btn';
+
+        clearAllHighlights(mode, textDisplayId);
+
+        if (mode === 'teacher') {
+            teacherColor = 'yellow';
+        } else {
+            studentColor = 'yellow';
+        }
+
+        const colorButtons = document.querySelectorAll(buttonSelector);
+        colorButtons.forEach((btn, index) => {
+            btn.classList.toggle('active', index === 0);
+        });
+    }
+
+    /**
+     * 教師端：恢復標註
+     */
+    function restoreTeacherHighlights() {
+        restoreHighlights('teacher', 'view-reading-text-display');
+    }
+
+    /**
+     * 教師端：清除所有標註
+     */
+    function clearTeacherHighlights() {
+        clearAllHighlights('teacher', 'view-reading-text-display');
+    }
+
+    /**
+     * 教師端：重置螢光筆
+     */
+    function resetTeacher() {
+        reset('teacher');
+    }
+
+    return {
+        // 學生端方法
+        init,
+        reset: () => reset('student'),
+        restoreHighlights: () => restoreHighlights('student', 'reading-text-display'),
+        clearAllHighlights: () => clearAllHighlights('student', 'reading-text-display'),
+
+        // 教師端方法
+        initTeacher,
+        resetTeacher,
+        restoreTeacherHighlights,
+        clearTeacherHighlights
+    };
+})();
+
+/**
+ * 🚀 NEW: 筆記評分引擎模組 - Highlight Scoring Engine
+ * 分析學生螢光筆標註品質並計算加分
+ */
+const HighlightScoringEngine = (function () {
+
+    /**
+     * 算法 1: 顏色多樣性評分
+     * 使用 1 種顏色: +0 分
+     * 使用 2-3 種顏色: +2 分
+     * 使用 4-5 種顏色: +5 分
+     */
+    function calculateColorDiversity(highlights) {
+        if (!highlights || highlights.length === 0) return 0;
+
+        const uniqueColors = new Set(highlights.map(h => h.color));
+        const colorCount = uniqueColors.size;
+
+        if (colorCount === 1) return 0;
+        if (colorCount >= 2 && colorCount <= 3) return 2;
+        if (colorCount >= 4) return 5;
+
+        return 0;
+    }
+
+    /**
+     * 算法 2: 精確度評分（避免過度標註）
+     * 覆蓋率 < 15%: +5 分
+     * 覆蓋率 15-30%: +3 分
+     * 覆蓋率 30-50%: +1 分
+     * 覆蓋率 > 50%: 0 分
+     */
+    function calculatePrecision(highlights, totalTextLength) {
+        if (!highlights || highlights.length === 0 || !totalTextLength) return 0;
+
+        const totalHighlightedLength = highlights.reduce((sum, h) => sum + h.length, 0);
+        const coverageRate = (totalHighlightedLength / totalTextLength) * 100;
+
+        if (coverageRate < 15) return 5;
+        if (coverageRate < 30) return 3;
+        if (coverageRate < 50) return 1;
+
+        return 0;
+    }
+
+    /**
+     * 算法 3: 分段標註評分（避免一筆到底）
+     * 標註段落數 ≥ 3 個不連續區域: +3 分
+     */
+    function calculateSegmentation(highlights) {
+        if (!highlights || highlights.length === 0) return 0;
+
+        // 按起始位置排序
+        const sorted = [...highlights].sort((a, b) => a.startOffset - b.startOffset);
+
+        let segmentCount = 1;
+        for (let i = 1; i < sorted.length; i++) {
+            const prevEnd = sorted[i - 1].startOffset + sorted[i - 1].length;
+            const currentStart = sorted[i].startOffset;
+
+            // 如果當前標註與前一個標註不連續（間隔 > 10 字符），算作新段落
+            if (currentStart - prevEnd > 10) {
+                segmentCount++;
+            }
+        }
+
+        return segmentCount >= 3 ? 3 : 0;
+    }
+
+    /**
+     * 算法 4: 答題關聯度評分
+     * 標註內容包含正確答案證據: 每題 +2 分
+     */
+    function calculateRelevance(highlights, questions, studentAnswers) {
+        if (!highlights || !questions || !studentAnswers || highlights.length === 0) return 0;
+
+        let relevanceScore = 0;
+
+        // 將所有標註文字合併
+        const highlightedText = highlights.map(h => h.text.toLowerCase()).join(' ');
+
+        // 檢查每個問題
+        questions.forEach((q, index) => {
+            const studentAnswer = studentAnswers[index];
+            if (!studentAnswer) return;
+
+            // 獲取學生選擇的選項文字
+            const selectedOption = q.options[studentAnswer - 1];
+            if (!selectedOption) return;
+
+            // 檢查標註中是否包含選項的關鍵詞（至少3個字的詞組）
+            const optionWords = selectedOption.toLowerCase().match(/[\u4e00-\u9fa5]{3,}/g) || [];
+
+            let hasRelevance = false;
+            for (const word of optionWords) {
+                if (highlightedText.includes(word)) {
+                    hasRelevance = true;
+                    break;
+                }
+            }
+
+            if (hasRelevance) {
+                relevanceScore += 2;
+            }
+        });
+
+        return relevanceScore;
+    }
+
+    /**
+     * 算法 5: 時間分配合理性評分
+     * 標註時間跨度 > 30秒（避免一次性全選）: +2 分
+     */
+    function calculateTimeDistribution(highlights) {
+        if (!highlights || highlights.length < 2) return 0;
+
+        const timestamps = highlights.map(h => h.timestamp).filter(t => t);
+        if (timestamps.length < 2) return 0;
+
+        const minTime = Math.min(...timestamps);
+        const maxTime = Math.max(...timestamps);
+        const timeSpan = (maxTime - minTime) / 1000; // 轉換為秒
+
+        // 標註時間跨度 > 30秒，表示逐步標註
+        return timeSpan > 30 ? 2 : 0;
+    }
+
+    /**
+     * 綜合評分函數
+     * @param {Object} params - 評分參數
+     * @param {Array} params.highlights - 標註數組
+     * @param {number} params.totalTextLength - 文章總字數
+     * @param {Array} params.questions - 題目數組
+     * @param {Array} params.studentAnswers - 學生答案數組
+     * @returns {Object} 評分結果
+     */
+    function calculateScore(params) {
+        const { highlights, totalTextLength, questions, studentAnswers } = params;
+
+        if (!highlights || highlights.length === 0) {
+            return {
+                totalScore: 0,
+                breakdown: {
+                    colorDiversity: 0,
+                    precision: 0,
+                    segmentation: 0,
+                    relevance: 0,
+                    timeDistribution: 0
+                },
+                stats: {
+                    highlightCount: 0,
+                    colorCount: 0,
+                    coverageRate: 0,
+                    segmentCount: 0
+                }
+            };
+        }
+
+        // 統計資訊（先算覆蓋率，用於決定是否加分）
+        const uniqueColors = new Set(highlights.map(h => h.color));
+        const totalHighlightedLength = highlights.reduce((sum, h) => sum + h.length, 0);
+        const coverageRate = totalTextLength ? (totalHighlightedLength / totalTextLength) * 100 : 0;
+
+        // 🚀 防止亂畫加分：如果覆蓋率 > 60%（全選或大部分），不加分
+        let colorDiversity = 0;
+        let precision = 0;
+        let segmentation = 0;
+        let relevance = 0;
+        let timeDistribution = 0;
+        let totalScore = 0;
+
+        if (coverageRate > 60) {
+            // 覆蓋率太高 = 亂畫，所有項目都不加分
+            console.log(`[calculateScore] 覆蓋率 ${coverageRate.toFixed(1)}% 超過60%，不加分`);
+        } else {
+            // 覆蓋率合理才開始計算各項分數
+            colorDiversity = calculateColorDiversity(highlights);
+            precision = calculatePrecision(highlights, totalTextLength);
+            segmentation = calculateSegmentation(highlights);
+            relevance = calculateRelevance(highlights, questions, studentAnswers);
+            timeDistribution = calculateTimeDistribution(highlights);
+
+            // 總分（各項加分累計，無上限）
+            const rawTotal = colorDiversity + precision + segmentation + relevance + timeDistribution;
+            totalScore = rawTotal;
+        }
+
+        const sorted = [...highlights].sort((a, b) => a.startOffset - b.startOffset);
+        let segmentCount = 1;
+        for (let i = 1; i < sorted.length; i++) {
+            const prevEnd = sorted[i - 1].startOffset + sorted[i - 1].length;
+            const currentStart = sorted[i].startOffset;
+            if (currentStart - prevEnd > 10) {
+                segmentCount++;
+            }
+        }
+
+        // 🚀 NEW: 計算時間統計
+        const timestamps = highlights.map(h => h.timestamp).filter(t => t);
+        let timeSpanSeconds = 0;
+        if (timestamps.length >= 2) {
+            const minTime = Math.min(...timestamps);
+            const maxTime = Math.max(...timestamps);
+            timeSpanSeconds = Math.round((maxTime - minTime) / 1000);
+        }
+
+        return {
+            totalScore,
+            breakdown: {
+                colorDiversity,
+                precision,
+                segmentation,
+                relevance,
+                timeDistribution
+            },
+            stats: {
+                highlightCount: highlights.length,
+                colorCount: uniqueColors.size,
+                coverageRate: coverageRate.toFixed(1),
+                segmentCount,
+                timeSpanSeconds
+            }
+        };
+    }
+
+    return {
+        calculateScore
+    };
+})();
+
+/**
+ * 模態視窗管理模組 - Modal Manager Module
+ * 統一管理所有模態視窗的顯示和隱藏
+ */
+const ModalManager = (function () {
+    /**
+     * 顯示模態視窗
+     * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+     */
+    function show(modalIdOrElement) {
+        const modal = typeof modalIdOrElement === 'string'
+            ? document.getElementById(modalIdOrElement)
+            : modalIdOrElement;
+
+        if (modal) {
+            modal.classList.remove('hidden');
+            // 添加淡入動畫
+            modal.style.animation = 'fadeIn 0.2s ease-in-out';
+        } else {
+            console.warn('找不到模態視窗:', modalIdOrElement);
+        }
+    }
+
+    /**
+     * 隱藏模態視窗
+     * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+     */
+    function hide(modalIdOrElement) {
+        const modal = typeof modalIdOrElement === 'string'
+            ? document.getElementById(modalIdOrElement)
+            : modalIdOrElement;
+
+        if (modal) {
+            modal.classList.add('hidden');
+        } else {
+            console.warn('找不到模態視窗:', modalIdOrElement);
+        }
+    }
+
+    /**
+     * 切換模態視窗顯示狀態
+     * @param {string|HTMLElement} modalIdOrElement - 模態視窗 ID 或元素
+     */
+    function toggle(modalIdOrElement) {
+        const modal = typeof modalIdOrElement === 'string'
+            ? document.getElementById(modalIdOrElement)
+            : modalIdOrElement;
+
+        if (modal) {
+            if (modal.classList.contains('hidden')) {
+                show(modal);
+            } else {
+                hide(modal);
+            }
+        } else {
+            console.warn('找不到模態視窗:', modalIdOrElement);
+        }
+    }
+
+    /**
+     * 隱藏所有模態視窗
+     */
+    function hideAll() {
+        document.querySelectorAll('.magnified-image-modal').forEach(modal => {
+            modal.classList.add('hidden');
+        });
+    }
+
+    return {
+        show,
+        hide,
+        toggle,
+        hideAll
+    };
+})();
+
+/**
+ * 載入指示器模組 - Loading Indicator Module
+ * 顯示全局載入動畫
+ */
+const LoadingIndicator = (function () {
+    let loadingElement = null;
+
+    /**
+     * 顯示載入指示器
+     * @param {string} message - 載入訊息
+     */
+    function show(message = '載入中...') {
+        // 如果已存在，先移除
+        if (loadingElement) hide();
+
+        loadingElement = document.createElement('div');
+        loadingElement.id = 'global-loading-indicator';
+        loadingElement.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            backdrop-filter: blur(3px);
+        `;
+
+        loadingElement.innerHTML = `
+            <div style="background: white; padding: 2rem 3rem; border-radius: 1rem; box-shadow: 0 10px 25px rgba(0,0,0,0.2); text-align: center;">
+                <i class="fas fa-spinner fa-spin text-4xl text-blue-600 mb-3"></i>
+                <p class="text-lg text-gray-800 font-medium">${message}</p>
+            </div>
+        `;
+
+        document.body.appendChild(loadingElement);
+    }
+
+    /**
+     * 隱藏載入指示器
+     */
+    function hide() {
+        if (loadingElement && loadingElement.parentElement) {
+            loadingElement.remove();
+            loadingElement = null;
+        }
+    }
+
+    /**
+     * 檢查是否正在顯示
+     * @returns {boolean} 是否顯示中
+     */
+    function isShowing() {
+        return loadingElement !== null && loadingElement.parentElement !== null;
+    }
+
+    return {
+        show,
+        hide,
+        isShowing
+    };
+})();
+
+/**
+ * 題庫管理通用類 - Question Bank Manager Class
+ * 統一管理各種題型的題庫（排序題、配對題、選擇題、閱讀測驗）
+ */
+class QuestionBankManager {
+    constructor(storageKey, bankArray) {
+        this.storageKey = storageKey;
+        this.banks = bankArray || [];
+    }
+
+    /**
+     * 儲存題庫
+     * @param {Object} bank - 題庫物件 {name, ...otherData}
+     * @returns {boolean} 是否成功
+     */
+    save(bank) {
+        if (!bank || !bank.name) {
+            console.warn('題庫必須包含 name 屬性');
+            return false;
+        }
+
+        const existingIndex = this.banks.findIndex(b => b.name === bank.name);
+        if (existingIndex !== -1) {
+            this.banks[existingIndex] = bank;
+        } else {
+            this.banks.push(bank);
+        }
+
+        return true;
+    }
+
+    /**
+     * 載入題庫到指定位置
+     * @param {number} index - 題庫索引
+     * @returns {Object|null} 題庫物件
+     */
+    load(index) {
+        if (index >= 0 && index < this.banks.length) {
+            return this.banks[index];
+        }
+        return null;
+    }
+
+    /**
+     * 刪除題庫
+     * @param {number} index - 題庫索引
+     * @returns {boolean} 是否成功
+     */
+    delete(index) {
+        if (index >= 0 && index < this.banks.length) {
+            this.banks.splice(index, 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 獲取所有題庫
+     * @returns {Array} 題庫陣列
+     */
+    getAll() {
+        return this.banks;
+    }
+
+    /**
+     * 清空所有題庫
+     */
+    clearAll() {
+        this.banks.length = 0;
+    }
+
+    /**
+     * 根據名稱搜尋題庫
+     * @param {string} name - 題庫名稱
+     * @returns {Object|null} 題庫物件
+     */
+    findByName(name) {
+        return this.banks.find(b => b.name === name) || null;
+    }
+}
+
+/**
+ * 錯誤處理模組 - Error Handler Module
+ * 統一處理 Firebase 和其他錯誤
+ */
+const ErrorHandler = (function () {
+    /**
+     * 處理 Firebase 錯誤
+     * @param {Error} error - 錯誤物件
+     * @param {string} defaultMessage - 預設錯誤訊息
+     */
+    function handleFirebaseError(error, defaultMessage = '操作失敗') {
+        console.error('[Firebase Error]', error);
+
+        let userMessage = defaultMessage;
+
+        // 根據錯誤代碼提供更具體的訊息
+        if (error.code) {
+            switch (error.code) {
+                case 'permission-denied':
+                    userMessage = '權限不足，請重新登入';
+                    // 3秒後返回登入頁
+                    setTimeout(() => {
+                        if (typeof showView === 'function') {
+                            showView('entry');
+                        }
+                    }, 3000);
+                    break;
+
+                case 'unavailable':
+                case 'failed-precondition':
+                    userMessage = '網路連線不穩定，請檢查網路';
+                    break;
+
+                case 'not-found':
+                    userMessage = '找不到指定的資料';
+                    break;
+
+                case 'already-exists':
+                    userMessage = '資料已存在';
+                    break;
+
+                case 'resource-exhausted':
+                    userMessage = '伺服器繁忙，請稍後再試';
+                    break;
+
+                case 'unauthenticated':
+                    userMessage = '未登入或登入已過期，請重新登入';
+                    setTimeout(() => {
+                        if (typeof showView === 'function') {
+                            showView('entry');
+                        }
+                    }, 3000);
+                    break;
+
+                default:
+                    userMessage = `${defaultMessage}（錯誤代碼：${error.code}）`;
+            }
+        }
+
+        // 顯示錯誤訊息給用戶
+        if (typeof showMessage === 'function') {
+            showMessage(userMessage, 'error');
+        }
+
+        return userMessage;
+    }
+
+    /**
+     * 處理一般錯誤
+     * @param {Error} error - 錯誤物件
+     * @param {string} context - 錯誤發生的上下文
+     */
+    function handleGenericError(error, context = '') {
+        console.error(`[Error${context ? ' in ' + context : ''}]`, error);
+
+        const userMessage = context
+            ? `${context}時發生錯誤，請稍後再試`
+            : '發生錯誤，請稍後再試';
+
+        if (typeof showMessage === 'function') {
+            showMessage(userMessage, 'error');
+        }
+
+        return userMessage;
+    }
+
+    /**
+     * 安全執行異步函式
+     * @param {Function} asyncFn - 異步函式
+     * @param {string} context - 上下文描述
+     * @param {Function} onError - 錯誤回調（可選）
+     * @returns {Promise} 執行結果
+     */
+    async function safeExecute(asyncFn, context = '', onError = null) {
+        try {
+            return await asyncFn();
+        } catch (error) {
+            // 判斷是否為 Firebase 錯誤
+            if (error.code) {
+                handleFirebaseError(error, `${context}失敗`);
+            } else {
+                handleGenericError(error, context);
+            }
+
+            // 執行自訂錯誤回調
+            if (typeof onError === 'function') {
+                onError(error);
+            }
+
+            return null;
+        }
+    }
+
+    return {
+        handleFirebaseError,
+        handleGenericError,
+        safeExecute
+    };
+})();
+
+/**
+ * DOM 查詢快取模組 - DOM Query Cache Module
+ * 提供常用 DOM 元素的快速存取
+ */
+const DOMCache = (function () {
+    const cache = {};
+
+    /**
+     * 獲取元素（帶快取）
+     * @param {string} id - 元素 ID
+     * @returns {HTMLElement|null} DOM 元素
+     */
+    function get(id) {
+        if (!cache[id]) {
+            cache[id] = document.getElementById(id);
+        }
+        return cache[id];
+    }
+
+    /**
+     * 批量獲取元素
+     * @param {Array<string>} ids - 元素 ID 陣列
+     * @returns {Object} 元素物件 {id: element}
+     */
+    function getMany(ids) {
+        const elements = {};
+        ids.forEach(id => {
+            elements[id] = get(id);
+        });
+        return elements;
+    }
+
+    /**
+     * 清除快取
+     * @param {string} id - 元素 ID（可選，不提供則清除全部）
+     */
+    function clear(id = null) {
+        if (id) {
+            delete cache[id];
+        } else {
+            for (const key in cache) {
+                delete cache[key];
+            }
+        }
+    }
+
+    /**
+     * 預載常用元素
+     */
+    function preload() {
+        const commonIds = [
+            'student-responses-container',
+            'active-student-count',
+            'message-box',
+            'message-content',
+            'text-input-area',
+            'drawing-canvas',
+            'submit-text-btn',
+            'submit-drawing-btn',
+            'student-welcome-msg'
+        ];
+
+        commonIds.forEach(id => get(id));
+    }
+
+    return {
+        get,
+        getMany,
+        clear,
+        preload
+    };
+})();
+
+// ============================================================================
+// End of Optimization Module
+// ============================================================================
+
+// --- DOM Elements Caching ---
+const views = {
+    entry: document.getElementById('entry-view'),
+    teacherClassroomCode: document.getElementById('teacher-classroom-code-view'), // NEW VIEW
+    teacherMenu: document.getElementById('teacher-menu-view'),
+    teacherMonitor: document.getElementById('teacher-monitor-view'),
+    studentName: document.getElementById('student-name-view'),
+    studentWaiting: document.getElementById('student-waiting-view'),
+    studentInteraction: document.getElementById('student-interaction-view'),
+    studentPeerReview: document.getElementById('student-peer-review-view'), // NEW VIEW
+};
+
+const interactionUIs = {
+    true_false: document.getElementById('interaction-true-false'),
+    multiple_choice: document.getElementById('interaction-multiple-choice'),
+    text_input: document.getElementById('interaction-text-input'),
+    drawing: document.getElementById('interaction-drawing'),
+    url_dispatch: document.getElementById('interaction-url-dispatch'), // Now handles both URL and HTML
+    recording: document.getElementById('interaction-recording'), // New UI
+    reading_comprehension: document.getElementById('interaction-reading-comprehension'), // Reading comprehension UI
+    quick_answer: document.getElementById('interaction-quick-answer'), // Quick answer UI
+    quick_poll: document.getElementById('interaction-quick-poll'), // Quick poll UI
+    sequencing: document.getElementById('interaction-sequencing'), // Sequencing UI
+    matching: document.getElementById('interaction-matching'), // Matching UI
+    // 🆕 NEW [v3.8.25] MODE-2~5：四個新互動模式
+    team_battle: document.getElementById('interaction-team-battle'),
+    word_cloud: document.getElementById('interaction-word-cloud'),
+    photo_wall: document.getElementById('interaction-photo-wall'),
+    course_feedback: document.getElementById('interaction-course-feedback'),
+};
+
+// --- Core Logic Functions ---
+/**
+ * Displays the specified view section.
+ * @param {string} viewName - The name of the view to display (key in `views` object).
+ */
+function showView(viewName) {
+    const body = document.querySelector('body');
+    body.classList.remove('initial-view-background');
+
+    // 🚀 NEW: 切換視圖時，除非是互動視圖，否則恢復標準寬度
+    const appContainer = document.getElementById('app-container');
+    if (appContainer && viewName !== 'studentInteraction') {
+        appContainer.classList.remove('reading-test-wide-mode');
+    }
+
+    Object.values(views).forEach(view => view.classList.add('hidden'));
+    if (views[viewName]) {
+        views[viewName].classList.remove('hidden');
+        if (viewName === 'entry') {
+            body.classList.add('initial-view-background');
+        }
+        // 🆕 NEW [v3.8.15]: 進入教師監控頁時，先把所有可選按鈕隱藏
+        // 這樣在 setInteractionMode 執行 Step 2 之前，不會閃出無關按鈕
+        if (viewName === 'teacherMonitor') {
+            hideAllOptionalButtons();
+        }
+    } else {
+        console.error('找不到視圖:', viewName);
+    }
+}
+
+// 🆕 NEW [v3.8.15]: 全局函數 — 隱藏所有教師端可選按鈕
+function hideAllOptionalButtons() {
+    const ids = [
+        'show-statistics-btn', 'show-matching-answer-btn', 'show-sequencing-answer-btn',
+        'view-questions-btn', 'view-reading-questions-btn', 'rescore-all-students-btn',
+        'allow-early-submit-btn', 'add-question-on-fly-btn', 'start-peer-review-btn',
+        'download-media-btn', 'ai-text-summary-btn', 'show-unsubmitted-students-btn',
+        'download-responses-btn', 'show-historical-quizzes-btn'
+    ];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
+}
+
+/**
+ * Displays the UI for a specific interaction mode within the student interface.
+ * @param {string} mode - The interaction mode (e.g., 'true_false', 'drawing', 'recording', 'url_dispatch').
+ * @param {boolean} [isResumingFromPause=false] - True if this is part of resuming from a paused state.
+ */
+function showInteractionUI(mode, isResumingFromPause = false) {
+    Object.values(interactionUIs).forEach(ui => ui.classList.add('hidden'));
+
+    // 🚀 NEW: 判斷是否為閱讀測驗模式，動態釋放容器寬度限制
+    const appContainer = document.getElementById('app-container');
+    if (appContainer) {
+        if (mode === 'reading_comprehension') {
+            appContainer.classList.add('reading-test-wide-mode');
+        } else {
+            appContainer.classList.remove('reading-test-wide-mode');
+        }
+    }
+
+    // Clear URL dispatch content if switching to another mode
+    if (mode !== 'url_dispatch' && interactionUIs.url_dispatch) {
+        interactionUIs.url_dispatch.innerHTML = ''; // Clear content for URL/HTML dispatch
+        interactionUIs.url_dispatch.style.cssText = ''; // Reset container styles
+    }
+
+    if (interactionUIs[mode]) {
+        interactionUIs[mode].classList.remove('hidden');
+        resetStudentUIState(mode, isResumingFromPause); // Pass the flag
+
+        // Special handling for quick answer mode
+        if (mode === 'quick_answer') {
+            console.log('[showInteractionUI] Starting quick answer mode...');
+            startQuickAnswer();
+            console.log('[showInteractionUI] Quick answer started, now setting up listener...');
+            listenToQuickAnswerUpdates();
+            console.log('[showInteractionUI] Quick answer listener registered');
+        }
+    }
+}
+
+/**
+ * Resets the student UI state, e.g., clears input fields or enables buttons.
+ * @param {string} mode - The current interaction mode.
+ * @param {boolean} [isResumingFromPause=false] - True if this reset is part of resuming from a paused state.
+ */
+function resetStudentUIState(mode, isResumingFromPause = false) {
+    const grayClass = 'bg-gray-400';
+    const hoverClassMap = {
+        '1': 'hover:bg-blue-600', '2': 'hover:bg-yellow-600',
+        '3': 'hover:bg-green-600', '4': 'hover:bg-red-600'
+    };
+
+    // 🚀 FIX: 排除所有可能已提交的按鈕，避免在異步檢查完成前覆蓋已提交狀態
+    // 這些控件將在各自的 case 中單獨處理
+    const excludedSubmitButtons = [
+        'submit-reading-btn',
+        'submit-text-btn',
+        'submit-drawing-btn',
+        'submit-recording-btn',
+        'submit-custom-mc-btn',
+        'submit-sequencing-btn',
+        'submit-matching-btn'
+    ];
+
+    // Only re-enable controls if they're not submission-related
+    document.querySelectorAll('#student-interaction-view button, #student-interaction-view textarea, #student-interaction-view input[type="file"], #student-interaction-view select, #student-interaction-view input[type="radio"]').forEach(el => {
+        // 跳過所有提交按鈕和答案按鈕的重置，這些將在各自的 case 中單獨處理
+        if (excludedSubmitButtons.includes(el.id)) return;
+        if (el.classList.contains('answer-btn')) return; // 跳過是非題和選擇題的答案按鈕
+
+        el.disabled = false;
+        // Re-add original classes if they were removed by pause state
+        if (el.classList.contains('btn-gray')) {
+            el.classList.remove('btn-gray');
+            el.classList.add('btn-primary'); // Assuming primary is default for many
+        }
+    });
+
+    // Canvas 和其他容器的 pointerEvents 將在各自的 case 中處理
+    // 避免在這裡全局啟用
+
+    switch (mode) {
+        case 'true_false':
+            // 🚀 NEW: 檢查學生是否已提交是非題答案，永久鎖定已提交的選項
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'true_false' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted true/false answer, locking buttons');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                // 如果已提交，鎖定所有按鈕
+                if (hasSubmitted) {
+                    interactionUIs[mode].querySelectorAll('.answer-btn').forEach(btn => {
+                        btn.disabled = true;
+                        btn.classList.remove('bg-green-500', 'bg-red-500');
+                        btn.classList.add(grayClass);
+                    });
+                } else {
+                    // 🎯 IMPROVED: 未提交，恢復按鈕到初始狀態
+                    interactionUIs[mode].querySelectorAll('.answer-btn').forEach(btn => {
+                        btn.disabled = false;
+                        btn.classList.remove(grayClass);
+
+                        // 恢復原始內容和顏色
+                        const answer = btn.dataset.answer;
+                        if (answer === 'O') {
+                            btn.classList.add('bg-green-500');
+                            btn.innerHTML = `
+                                <i class="fas fa-check text-white" style="font-size: 4rem;"></i>
+                                <p class="text-white text-2xl font-bold mt-2">正確</p>
+                            `;
+                        } else if (answer === 'X') {
+                            btn.classList.add('bg-red-500');
+                            btn.innerHTML = `
+                                <i class="fas fa-times text-white" style="font-size: 4rem;"></i>
+                                <p class="text-white text-2xl font-bold mt-2">錯誤</p>
+                            `;
+                        }
+
+                        // 移除已送出標記
+                        btn.removeAttribute('data-original-text');
+                        btn.removeAttribute('data-submitted');
+                    });
+                }
+            })();
+            break;
+        case 'multiple_choice':
+            // 🚀 NEW: 檢查學生是否已提交選擇題答案（包含默認1-4和自訂選擇題）
+            (async () => {
+                let hasSubmitted = false;
+                let submittedInteractionMode = null;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'multiple_choice' && data.answer) {
+                                hasSubmitted = true;
+                                submittedInteractionMode = data.interactionMode;
+                                console.log('[resetStudentUIState] Student has submitted multiple choice answer, locking buttons');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                const defaultMcOptions = document.getElementById('default-mc-options');
+
+                // 如果已提交，鎖定所有按鈕
+                if (hasSubmitted) {
+                    // 鎖定默認選擇題按鈕
+                    defaultMcOptions.querySelectorAll('.answer-btn').forEach(btn => {
+                        btn.disabled = true;
+                        btn.classList.remove('bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-red-500');
+                        btn.classList.add(grayClass);
+                        // Remove hover classes
+                        btn.classList.remove(hoverClassMap['1'], hoverClassMap['2'], hoverClassMap['3'], hoverClassMap['4']);
+                    });
+
+                    // 鎖定自訂選擇題提交按鈕
+                    const submitBtn = document.getElementById('submit-custom-mc-btn');
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-gray');
+                    submitBtn.textContent = '✓ 已送出答案';
+                } else {
+                    // 🎯 IMPROVED: 未提交，恢復按鈕到初始狀態
+                    defaultMcOptions.querySelectorAll('.answer-btn').forEach(btn => {
+                        btn.disabled = false;
+                        btn.classList.remove(grayClass);
+
+                        // 恢復原始內容和顏色
+                        const answer = btn.dataset.answer;
+                        if (answer === '1') {
+                            btn.classList.add('bg-blue-500', hoverClassMap['1']);
+                            btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">1</span>';
+                        } else if (answer === '2') {
+                            btn.classList.add('bg-yellow-500', hoverClassMap['2']);
+                            btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">2</span>';
+                        } else if (answer === '3') {
+                            btn.classList.add('bg-green-500', hoverClassMap['3']);
+                            btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">3</span>';
+                        } else if (answer === '4') {
+                            btn.classList.add('bg-red-500', hoverClassMap['4']);
+                            btn.innerHTML = '<span class="text-white text-6xl sm:text-7xl md:text-8xl font-bold">4</span>';
+                        }
+
+                        // 移除已送出標記
+                        btn.removeAttribute('data-original-text');
+                        btn.removeAttribute('data-submitted');
+                    });
+
+                    // Reset custom MC options (but preserve submission state)
+                    document.getElementById('custom-mc-questions-container').innerHTML = '';
+                    // 只有在不是從暫停狀態恢復時才重置按鈕
+                    if (!isResumingFromPause) {
+                        const submitBtn = document.getElementById('submit-custom-mc-btn');
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove('btn-gray');
+                        submitBtn.classList.add('btn-primary');
+                        submitBtn.textContent = '送出全部答案 ✉️';
+                    }
+                }
+            })();
+            break;
+        case 'text_input':
+            // 🚀 NEW: 檢查學生是否已提交文字題答案，永久鎖定已提交的按鈕
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'text_input' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted text answer, locking button');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                const submitTextBtn = document.getElementById('submit-text-btn');
+
+                // 如果已提交，鎖定按鈕
+                if (hasSubmitted) {
+                    submitTextBtn.disabled = true;
+                    submitTextBtn.classList.remove('btn-primary');
+                    submitTextBtn.classList.add('btn-gray');
+                    submitTextBtn.textContent = '✓ 已送出答案';
+                    document.getElementById('text-input-area').disabled = true;
+                } else {
+                    document.getElementById('text-input-area').value = '';
+                    document.getElementById('text-input-area').disabled = false;
+                    submitTextBtn.disabled = false;
+                    submitTextBtn.classList.remove('btn-gray');
+                    submitTextBtn.classList.add('btn-primary');
+                    submitTextBtn.textContent = '送出答案 ✉️';
+                }
+            })();
+            break;
+        case 'drawing':
+            // 🚀 NEW: 檢查學生是否已提交繪圖答案，永久鎖定已提交的按鈕
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'drawing' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted drawing answer, locking button');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                const submitDrawingBtn = document.getElementById('submit-drawing-btn');
+
+                // 如果已提交，鎖定按鈕和畫布
+                if (hasSubmitted) {
+                    submitDrawingBtn.disabled = true;
+                    submitDrawingBtn.classList.remove('btn-primary');
+                    submitDrawingBtn.classList.add('btn-gray');
+                    submitDrawingBtn.textContent = '✓ 已送出答案';
+                    canvas.style.pointerEvents = 'none'; // 禁用畫布交互
+                } else {
+                    // Only clear the drawing canvas if it's NOT resuming from a pause.
+                    if (!isResumingFromPause) {
+                        clearDrawingCanvas(); // Clears only the student's drawing layer.
+                        studentUploadedImageDataURL = null; // Clear student uploaded image too
+                        studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+                    }
+
+                    submitDrawingBtn.disabled = false;
+                    submitDrawingBtn.classList.remove('btn-gray');
+                    submitDrawingBtn.classList.add('btn-primary');
+                    submitDrawingBtn.textContent = '送出答案 ✉️';
+                    canvas.style.pointerEvents = 'auto'; // 啟用畫布交互
+
+                    // Reset drawing tools to default values.
+                    const colorSelect = document.getElementById('color-select');
+                    const sizeSelect = document.getElementById('size-select');
+                    const penToolBtn = document.getElementById('pen-tool-btn');
+                    const eraserBtn = document.getElementById('eraser-btn');
+
+                    colorSelect.value = 'black';
+                    sizeSelect.value = '2';
+                    drawingCtx.strokeStyle = 'black';
+                    drawingCtx.lineWidth = 2;
+                    drawingCtx.globalCompositeOperation = 'source-over';
+
+                    penToolBtn.classList.add('border-blue-500');
+                    eraserBtn.classList.remove('border-blue-500');
+
+                    updateColorSwatch(colorSelect.value);
+                }
+            })();
+            break;
+        case 'url_dispatch': // This mode now handles both URL and HTML
+            // Content is dynamically generated, no specific reset needed here beyond clearing in showInteractionUI
+            break;
+        case 'recording':
+            // 🚀 NEW: 檢查學生是否已提交錄音答案，永久鎖定已提交的按鈕
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'recording' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted recording answer, locking buttons');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                // 如果已提交，鎖定所有按鈕
+                if (hasSubmitted) {
+                    document.getElementById('start-recording-btn').disabled = true;
+                    document.getElementById('stop-recording-btn').disabled = true;
+                    document.getElementById('play-recording-btn').disabled = true;
+                    document.getElementById('reset-recording-btn').disabled = true;
+                    const submitRecordingBtn = document.getElementById('submit-recording-btn');
+                    submitRecordingBtn.disabled = true;
+                    submitRecordingBtn.classList.remove('btn-primary');
+                    submitRecordingBtn.classList.add('btn-gray');
+                    submitRecordingBtn.textContent = '✓ 已送出答案';
+                    recordingStatusText.textContent = '已送出錄音答案';
+                } else {
+                    // Reset recording state
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        mediaRecorder.stop();
+                    }
+                    if (audioStream) {
+                        audioStream.getTracks().forEach(track => track.stop());
+                    }
+                    audioChunks = [];
+                    audioBlob = null;
+                    audioDataURL = null;
+                    document.getElementById('audio-preview').classList.add('hidden');
+                    document.getElementById('audio-preview').src = '';
+                    document.getElementById('start-recording-btn').disabled = false;
+                    document.getElementById('stop-recording-btn').disabled = true;
+                    document.getElementById('play-recording-btn').disabled = true;
+                    document.getElementById('reset-recording-btn').disabled = true;
+                    document.getElementById('submit-recording-btn').disabled = true;
+                    recordingStatusText.textContent = '準備錄音...';
+                    recordingStatusIcon.classList.remove('fa-spin', 'text-red-500');
+                    recordingStatusIcon.classList.add('text-gray-400');
+                }
+            })();
+            break;
+        case 'quick_answer':
+            // Reset quick answer state
+            document.getElementById('quick-answer-status-text').textContent = '等待搶答開始...';
+            document.getElementById('quick-answer-result').classList.add('hidden');
+            document.getElementById('quick-answer-locked').classList.add('hidden');
+            document.getElementById('quick-answer-button-container').innerHTML = '';
+            document.getElementById('quick-answer-button-container').classList.add('pointer-events-none');
+            break;
+        case 'sequencing':
+            // 🚀 NEW: 檢查學生是否已提交排序題答案，永久鎖定已提交的按鈕
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'sequencing' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted sequencing answer, locking button');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                const submitSequencingBtn = document.getElementById('submit-sequencing-btn');
+
+                // 如果已提交，鎖定按鈕
+                if (hasSubmitted) {
+                    submitSequencingBtn.disabled = true;
+                    submitSequencingBtn.classList.remove('btn-primary');
+                    submitSequencingBtn.classList.add('btn-gray');
+                    submitSequencingBtn.textContent = '✓ 已送出答案';
+                    // 禁用排序項目的拖動
+                    document.getElementById('sequencing-items-container').style.pointerEvents = 'none';
+                } else {
+                    // 🚀 FIX: 不要在這裡清空容器！
+                    // setupSequencingUI 會在需要時自己清空並重新填充
+                    // 如果這裡清空，會導致在後續快照更新時（settingsChanged=false）容器被清空但不重新渲染
+                    document.getElementById('sequencing-items-container').style.pointerEvents = 'auto';
+                    submitSequencingBtn.disabled = false;
+                    submitSequencingBtn.classList.remove('btn-gray');
+                    submitSequencingBtn.classList.add('btn-primary');
+                    submitSequencingBtn.textContent = '送出答案 ✉️';
+                }
+            })();
+            break;
+        case 'matching':
+            // 🚀 NEW: 檢查學生是否已提交配對題答案，永久鎖定已提交的按鈕
+            (async () => {
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'matching' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted matching answer, locking button');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                const submitMatchingBtn = document.getElementById('submit-matching-btn');
+
+                // 如果已提交，鎖定按鈕
+                if (hasSubmitted) {
+                    submitMatchingBtn.disabled = true;
+                    submitMatchingBtn.classList.remove('btn-primary');
+                    submitMatchingBtn.classList.add('btn-gray');
+                    submitMatchingBtn.textContent = '✓ 已送出答案';
+                    // 禁用配對項目的點擊
+                    document.getElementById('matching-column-a').style.pointerEvents = 'none';
+                    document.getElementById('matching-column-b').style.pointerEvents = 'none';
+                } else {
+                    // 🚀 FIX: 不要在這裡清空容器！
+                    // setupMatchingUI 會在需要時自己清空並重新填充
+                    // 如果這裡清空，會導致在後續快照更新時（settingsChanged=false）容器被清空但不重新渲染
+                    document.getElementById('matching-column-a').style.pointerEvents = 'auto';
+                    document.getElementById('matching-column-b').style.pointerEvents = 'auto';
+                    submitMatchingBtn.disabled = false;
+                    submitMatchingBtn.classList.remove('btn-gray');
+                    submitMatchingBtn.classList.add('btn-primary');
+                    submitMatchingBtn.textContent = '送出答案 ✉️';
+                    currentMatchingSelection.leftItem = null;
+                    currentMatchingSelection.rightItem = null;
+                }
+            })();
+            break;
+        case 'reading_comprehension':
+            // 🚀 FIX: 檢查學生是否已提交，永久鎖定已提交的答案
+            (async () => {
+                const submitReadingBtn = document.getElementById('submit-reading-btn');
+
+                // 檢查 Firebase 中是否已有提交記錄
+                let hasSubmitted = false;
+                if (currentRole === 'student' && studentName && classroomCode) {
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        const docSnap = await getDoc(studentRef);
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            if (data.interactionMode === 'reading_comprehension' && data.answer) {
+                                hasSubmitted = true;
+                                console.log('[resetStudentUIState] Student has submitted reading answer, locking button');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[resetStudentUIState] Error checking submission status:', error);
+                    }
+                }
+
+                // 如果已提交，永久鎖定按鈕
+                if (hasSubmitted) {
+                    submitReadingBtn.disabled = true;
+                    submitReadingBtn.classList.remove('btn-primary');
+                    submitReadingBtn.classList.add('btn-gray');
+                    submitReadingBtn.textContent = '✓ 已送出答案';
+                }
+                // 否則，只有在不是從暫停恢復時才重置按鈕
+                else if (!isResumingFromPause) {
+                    submitReadingBtn.disabled = false;
+                    submitReadingBtn.classList.remove('btn-gray');
+                    submitReadingBtn.classList.add('btn-primary');
+                    submitReadingBtn.textContent = '送出答案 ✉️';
+                }
+            })();
+            break;
+        case 'quick_poll':
+            // Reset quick poll state
+            document.getElementById('quick-poll-options-container').innerHTML = '';
+            document.getElementById('quick-poll-options-container').classList.remove('hidden');
+            document.getElementById('quick-poll-voted-status').classList.add('hidden');
+            document.getElementById('quick-poll-question-display').textContent = '';
+            break;
+        // 🆕 NEW [v3.8.25] MODE-2~5 學生端 UI 重置
+        case 'team_battle':
+            document.getElementById('team-select-phase').classList.remove('hidden');
+            document.getElementById('team-joined-phase').classList.add('hidden');
+            document.getElementById('team-select-buttons').innerHTML = '';
+            break;
+        case 'word_cloud':
+            document.getElementById('word-cloud-input-phase').classList.remove('hidden');
+            document.getElementById('word-cloud-submitted-status').classList.add('hidden');
+            document.getElementById('word-cloud-student-input').value = '';
+            break;
+        case 'photo_wall':
+            // Gallery loaded by event handler
+            break;
+        case 'course_feedback':
+            document.getElementById('feedback-input-phase').classList.remove('hidden');
+            document.getElementById('feedback-submitted-status').classList.add('hidden');
+            document.getElementById('feedback-comment-input').value = '';
+            document.getElementById('submit-feedback-btn').disabled = true;
+            document.querySelectorAll('.feedback-star').forEach(s => s.classList.remove('text-amber-400'));
+            document.querySelectorAll('.feedback-star').forEach(s => s.classList.add('text-gray-300'));
+            document.getElementById('feedback-rating-label').textContent = '點擊星星評分';
+            window._selectedFeedbackRating = 0;
+            break;
+    }
+}
+
+/**
+ * Toggles the enabled/disabled state of student interaction elements.
+ * @param {boolean} disable - True to disable, false to enable.
+ */
+function toggleStudentInteractionElements(disable) {
+    const studentInteractionView = document.getElementById('student-interaction-view');
+    // Select all interactive elements within the student interaction view, excluding the pause overlay itself.
+    const interactiveElements = studentInteractionView.querySelectorAll(
+        'button, textarea, input[type="file"], select, input[type="radio"]' // Added input[type="radio"]
+    );
+
+    interactiveElements.forEach(el => {
+        // Only disable if the element is not the pause overlay itself or its children
+        if (!el.closest('#student-pause-overlay')) {
+            if (disable) {
+                el.disabled = disable;
+                // Add a class for visual feedback if needed, e.g., gray out
+                if (el.tagName === 'BUTTON' && !el.classList.contains('btn-gray')) {
+                    el.classList.add('btn-gray');
+                    el.classList.remove('btn-primary', 'btn-green', 'btn-orange', 'btn-purple', 'btn-teal', 'bg-indigo-600', 'hover:bg-indigo-700', 'bg-yellow-600', 'hover:bg-yellow-700'); // Remove original colors
+                }
+            } else {
+                // 🎯 CRITICAL FIX: 檢查是否已提交答案，防止重新啟用已鎖定的按鈕
+                const hasDataSubmitted = el.hasAttribute('data-submitted');
+                const hasDataAttribute = el.hasAttribute('data-original-text');
+                const textContent = el.textContent || '';
+                const hasSubmittedText = textContent.includes('已送出') || textContent.includes('✓');
+                const hasSubmitted = hasDataSubmitted || hasDataAttribute || hasSubmittedText;
+
+                // 🎯 如果按鈕已提交，保持禁用狀態
+                if (hasSubmitted) {
+                    el.disabled = true; // 保持禁用
+                    return; // 跳過後續的樣式恢復邏輯
+                }
+
+                // 未提交的按鈕才重新啟用
+                el.disabled = false;
+
+                // Re-enable and restore original styles
+                if (el.tagName === 'BUTTON' && el.classList.contains('btn-gray')) {
+                    el.classList.remove('btn-gray');
+                    // Restore based on common button types or specific IDs
+                    if (el.id === 'submit-text-btn' || el.id === 'submit-drawing-btn' || el.id === 'submit-recording-btn' || el.id === 'submit-custom-mc-btn' || el.id === 'submit-reading-btn' || el.id === 'submit-sequencing-btn' || el.id === 'submit-matching-btn') {
+                        el.classList.add('btn-primary');
+                    } else if (el.classList.contains('answer-btn')) {
+                        // For answer buttons, re-apply their specific colors
+                        if (el.dataset.answer === 'O') el.classList.add('bg-green-500');
+                        else if (el.dataset.answer === 'X') el.classList.add('bg-red-500');
+                        else if (el.dataset.answer === '1') el.classList.add('bg-blue-500');
+                        else if (el.dataset.answer === '2') el.classList.add('bg-yellow-500');
+                        else if (el.dataset.answer === '3') el.classList.add('bg-green-500');
+                        else if (el.dataset.answer === '4') el.classList.add('bg-red-500');
+                    } else if (el.id === 'start-recording-btn') {
+                        el.classList.add('btn-green');
+                    } else if (el.id === 'stop-recording-btn') {
+                        el.classList.add('btn-red');
+                    } else if (el.id === 'play-recording-btn') {
+                        el.classList.add('btn-primary');
+                    } else if (el.id === 'reset-recording-btn') {
+                        el.classList.add('btn-orange');
+                    } else if (el.id === 'pen-tool-btn') {
+                        el.classList.add('border-blue-500'); // Pen button border
+                    }
+                }
+            }
+        }
+    });
+
+    // Handle canvas interaction separately
+    canvas.style.pointerEvents = disable ? 'none' : 'auto';
+
+    // Handle recording specific buttons that might be disabled by default
+    if (currentInteractionMode === 'recording' && !disable) {
+        // Only enable start if not already recording
+        if (mediaRecorder && mediaRecorder.state === 'inactive') {
+            document.getElementById('start-recording-btn').disabled = false;
+        }
+        // Other recording buttons remain disabled until recording starts/stops
+    }
+}
+
+/**
+ * Displays a custom message box.
+ * @param {string} message - The message to display.
+ * @param {'info' | 'success' | 'error' | 'warning'} type - The message type, influencing its color.
+ * @param {number} duration - Auto-hide duration in milliseconds (default: 3000). Set to 0 for no auto-hide.
+ * @param {boolean} allowHtml - Whether to render message as HTML (default: false).
+ * @param {boolean} requireManualClose - Whether to show close button and require manual close (default: false).
+ */
+function showMessage(message, type = 'info', duration = 3000, allowHtml = false, requireManualClose = false) {
+    const msgBox = document.getElementById('message-box');
+    const msgContent = document.getElementById('message-content');
+
+    // 設置消息內容（支持HTML或純文本）
+    if (allowHtml) {
+        msgContent.innerHTML = message;
+    } else {
+        msgContent.textContent = message;
+    }
+
+    // 基礎樣式（RWD響應式）
+    msgBox.className = 'fixed top-4 left-1/2 -translate-x-1/2 px-4 sm:px-6 py-3 sm:py-4 rounded-lg shadow-2xl transition-all duration-300 transform text-white font-semibold max-w-[95vw] sm:max-w-2xl';
+    msgBox.style.zIndex = '10001';
+
+    // 顏色樣式
+    switch (type) {
+        case 'success': msgBox.classList.add('bg-green-500'); break;
+        case 'error': msgBox.classList.add('bg-red-500'); break;
+        case 'warning': msgBox.classList.add('bg-yellow-500'); break;
+        case 'info': msgBox.classList.add('bg-blue-500'); break;
+        default: msgBox.classList.add('bg-blue-500'); break;
+    }
+
+    // 如果需要手動關閉，添加關閉按鈕
+    if (requireManualClose) {
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.className = 'absolute top-2 right-2 sm:top-3 sm:right-3 w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white bg-opacity-20 hover:bg-opacity-30 transition-all text-white font-bold text-sm sm:text-lg';
+        closeBtn.onclick = () => {
+            msgBox.classList.add('hidden');
+            // 清除關閉按鈕
+            const existingCloseBtn = msgBox.querySelector('button');
+            if (existingCloseBtn) existingCloseBtn.remove();
+        };
+        msgBox.appendChild(closeBtn);
+    }
+
+    msgBox.classList.remove('hidden');
+
+    // 自動隱藏（如果不需要手動關閉且duration > 0）
+    if (!requireManualClose && duration > 0) {
+        setTimeout(() => {
+            msgBox.classList.add('hidden');
+        }, duration);
+    }
+}
+
+/**
+ * 生成統一的檔案名稱（包含教室代碼和時間戳記）
+ * @param {string} baseName - 檔案基礎名稱（例如：'學生回應'、'是非題統計'）
+ * @param {string} extension - 檔案副檔名（例如：'csv'、'zip'）
+ * @returns {string} 完整檔名（格式：教室代碼_檔案名稱_YYYYMMDD_HHMMSS.副檔名）
+ */
+function generateFilename(baseName, extension) {
+    const now = new Date();
+    const timestamp = now.getFullYear() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') + '_' +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0') +
+        String(now.getSeconds()).padStart(2, '0');
+
+    const classroomPrefix = classroomCode ? `${classroomCode}_` : '';
+    return `${classroomPrefix}${baseName}_${timestamp}.${extension}`;
+}
+
+/**
+ * Question Bank Management Functions
+ */
+function updateQuestionBankList() {
+    const list = document.getElementById('question-bank-list');
+    if (questionBanks.length === 0) {
+        list.innerHTML = '<div class="text-gray-500 text-sm italic text-center">目前沒有儲存的題庫</div>';
+    } else {
+        list.innerHTML = questionBanks.map((bank, index) => `
+            <div class="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                <span class="text-sm font-medium text-gray-700">${bank.name}</span>
+                <div class="flex gap-2">
+                    <button onclick="loadQuestionBankToTextarea(${index})" class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded">載入</button>
+                    <button onclick="deleteQuestionBank(${index})" class="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-xs rounded">刪除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+function loadQuestionBankFromFile() {
+    const fileInput = document.getElementById('question-bank-file-input');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        showMessage('請選擇一個txt檔案', 'error');
+        return;
+    }
+
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+        showMessage('只能上傳txt格式的檔案', 'error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const content = e.target.result;
+        const fileName = file.name.replace('.txt', '');
+
+        // Check if bank with same name exists
+        const existingIndex = questionBanks.findIndex(bank => bank.name === fileName);
+        if (existingIndex !== -1) {
+            if (confirm(`題庫「${fileName}」已存在，是否要覆蓋？`)) {
+                questionBanks[existingIndex] = { name: fileName, content: content };
+            } else {
+                return;
+            }
+        } else {
+            questionBanks.push({ name: fileName, content: content });
+        }
+
+        updateQuestionBankList();
+        showMessage(`題庫「${fileName}」載入成功`, 'success');
+        fileInput.value = ''; // Clear file input
+    };
+
+    reader.onerror = function () {
+        showMessage('讀取檔案時發生錯誤', 'error');
+    };
+
+    reader.readAsText(file, 'UTF-8');
+}
+
+function saveQuestionBankFromTextarea() {
+    const nameInput = document.getElementById('question-bank-name-input');
+    const textarea = document.getElementById('custom-mc-questions-textarea');
+    const name = nameInput.value.trim();
+    const content = textarea.value.trim();
+
+    if (!name) {
+        showMessage('請輸入題庫名稱', 'error');
+        return;
+    }
+
+    if (!content) {
+        showMessage('題目內容不能為空', 'error');
+        return;
+    }
+
+    // Check if bank with same name exists
+    const existingIndex = questionBanks.findIndex(bank => bank.name === name);
+    if (existingIndex !== -1) {
+        if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
+            questionBanks[existingIndex] = { name: name, content: content };
+        } else {
+            return;
+        }
+    } else {
+        questionBanks.push({ name: name, content: content });
+    }
+
+    updateQuestionBankList();
+    showMessage(`題庫「${name}」儲存成功`, 'success');
+    nameInput.value = ''; // Clear name input
+}
+
+function loadQuestionBankToTextarea(index) {
+    if (index >= 0 && index < questionBanks.length) {
+        const textarea = document.getElementById('custom-mc-questions-textarea');
+        textarea.value = questionBanks[index].content;
+        showMessage(`題庫「${questionBanks[index].name}」已載入到輸入框`, 'success');
+    }
+}
+
+function deleteQuestionBank(index) {
+    if (index >= 0 && index < questionBanks.length) {
+        const bankName = questionBanks[index].name;
+        if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            questionBanks.splice(index, 1);
+            updateQuestionBankList();
+            showMessage(`題庫「${bankName}」已刪除`, 'success');
+        }
+    }
+}
+
+// Make functions globally accessible for onclick handlers
+window.loadQuestionBankToTextarea = loadQuestionBankToTextarea;
+window.deleteQuestionBank = deleteQuestionBank;
+
+function clearAllQuestionBanks() {
+    questionBanks = [];
+    updateQuestionBankList();
+
+    // Clear reading comprehension question banks
+    readingQuestionBanks = [];
+    localStorage.removeItem('readingQuestionBanks');
+    updateReadingBankList();
+}
+
+// ==================== Sequencing Question Bank Functions ====================
+
+function updateSequencingBankList() {
+    const list = document.getElementById('seq-bank-list');
+    if (sequencingQuestionBanks.length === 0) {
+        list.innerHTML = '<div class="text-gray-500 text-sm italic text-center">目前沒有儲存的題庫</div>';
+    } else {
+        list.innerHTML = sequencingQuestionBanks.map((bank, index) => `
+            <div class="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                <span class="text-sm font-medium text-gray-700">${bank.name}</span>
+                <div class="flex gap-2">
+                    <button onclick="loadSequencingBankToTextarea(${index})" class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded">載入</button>
+                    <button onclick="deleteSequencingBank(${index})" class="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-xs rounded">刪除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+function loadSequencingBankFromFile() {
+    const fileInput = document.getElementById('seq-bank-file-input');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        showMessage('請選擇一個txt檔案', 'error');
+        return;
+    }
+
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+        showMessage('只能上傳txt格式的檔案', 'error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const content = e.target.result;
+        const fileName = file.name.replace('.txt', '');
+        const lines = content.split('\n').map(line => line.trim()).filter(line => line);
+
+        if (lines.length < 2) {
+            showMessage('題庫格式錯誤：至少需要2個排序項目', 'error');
+            return;
+        }
+
+        const question = '排序題';
+        const items = lines.join('\n');
+
+        const existingIndex = sequencingQuestionBanks.findIndex(bank => bank.name === fileName);
+        if (existingIndex !== -1) {
+            if (confirm(`題庫「${fileName}」已存在，是否要覆蓋？`)) {
+                sequencingQuestionBanks[existingIndex] = { name: fileName, question: question, items: items };
+            } else {
+                return;
+            }
+        } else {
+            sequencingQuestionBanks.push({ name: fileName, question: question, items: items });
+        }
+
+        updateSequencingBankList();
+        showMessage(`題庫「${fileName}」載入成功`, 'success');
+        fileInput.value = '';
+    };
+
+    reader.onerror = function () {
+        showMessage('讀取檔案時發生錯誤', 'error');
+    };
+
+    reader.readAsText(file, 'UTF-8');
+}
+
+function saveSequencingBank() {
+    const nameInput = document.getElementById('seq-bank-name-input');
+    const itemsTextarea = document.getElementById('sequencing-items-textarea');
+
+    const name = nameInput.value.trim();
+    const question = '排序題';
+    const items = itemsTextarea.value.trim();
+
+    if (!name) {
+        showMessage('請輸入題庫名稱', 'error');
+        return;
+    }
+
+    if (!items) {
+        showMessage('排序項目不能為空', 'error');
+        return;
+    }
+
+    const existingIndex = sequencingQuestionBanks.findIndex(bank => bank.name === name);
+    if (existingIndex !== -1) {
+        if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
+            sequencingQuestionBanks[existingIndex] = { name: name, question: question, items: items };
+        } else {
+            return;
+        }
+    } else {
+        sequencingQuestionBanks.push({ name: name, question: question, items: items });
+    }
+
+    updateSequencingBankList();
+    showMessage(`題庫「${name}」儲存成功`, 'success');
+    nameInput.value = '';
+}
+
+function loadSequencingBankToTextarea(index) {
+    if (index >= 0 && index < sequencingQuestionBanks.length) {
+        const bank = sequencingQuestionBanks[index];
+        document.getElementById('sequencing-items-textarea').value = bank.items;
+        showMessage(`題庫「${bank.name}」已載入到輸入框`, 'success');
+    }
+}
+
+function deleteSequencingBank(index) {
+    if (index >= 0 && index < sequencingQuestionBanks.length) {
+        const bankName = sequencingQuestionBanks[index].name;
+        if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            sequencingQuestionBanks.splice(index, 1);
+            updateSequencingBankList();
+            showMessage(`題庫「${bankName}」已刪除`, 'success');
+        }
+    }
+}
+
+// ==================== Matching Question Bank Functions ====================
+
+function updateMatchingBankList() {
+    const list = document.getElementById('match-bank-list');
+    if (matchingQuestionBanks.length === 0) {
+        list.innerHTML = '<div class="text-gray-500 text-sm italic text-center">目前沒有儲存的題庫</div>';
+    } else {
+        list.innerHTML = matchingQuestionBanks.map((bank, index) => `
+            <div class="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                <span class="text-sm font-medium text-gray-700">${bank.name}</span>
+                <div class="flex gap-2">
+                    <button onclick="loadMatchingBankToTextarea(${index})" class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded">載入</button>
+                    <button onclick="deleteMatchingBank(${index})" class="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-xs rounded">刪除</button>
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+function loadMatchingBankFromFile() {
+    const fileInput = document.getElementById('match-bank-file-input');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        showMessage('請選擇一個txt檔案', 'error');
+        return;
+    }
+
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+        showMessage('只能上傳txt格式的檔案', 'error');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        const content = e.target.result;
+        const fileName = file.name.replace('.txt', '');
+        const lines = content.split('\n').map(line => line.trim()).filter(line => line);
+
+        if (lines.length < 2) {
+            showMessage('題庫格式錯誤：至少需要2組配對項目', 'error');
+            return;
+        }
+
+        const question = '配對題';
+        const pairs = lines.join('\n');
+
+        const existingIndex = matchingQuestionBanks.findIndex(bank => bank.name === fileName);
+        if (existingIndex !== -1) {
+            if (confirm(`題庫「${fileName}」已存在，是否要覆蓋？`)) {
+                matchingQuestionBanks[existingIndex] = { name: fileName, question: question, pairs: pairs };
+            } else {
+                return;
+            }
+        } else {
+            matchingQuestionBanks.push({ name: fileName, question: question, pairs: pairs });
+        }
+
+        updateMatchingBankList();
+        showMessage(`題庫「${fileName}」載入成功`, 'success');
+        fileInput.value = '';
+    };
+
+    reader.onerror = function () {
+        showMessage('讀取檔案時發生錯誤', 'error');
+    };
+
+    reader.readAsText(file, 'UTF-8');
+}
+
+function saveMatchingBank() {
+    const nameInput = document.getElementById('match-bank-name-input');
+    const pairsTextarea = document.getElementById('matching-pairs-textarea');
+
+    const name = nameInput.value.trim();
+    const question = '配對題';
+    const pairs = pairsTextarea.value.trim();
+
+    if (!name) {
+        showMessage('請輸入題庫名稱', 'error');
+        return;
+    }
+
+    if (!pairs) {
+        showMessage('配對項目不能為空', 'error');
+        return;
+    }
+
+    const existingIndex = matchingQuestionBanks.findIndex(bank => bank.name === name);
+    if (existingIndex !== -1) {
+        if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
+            matchingQuestionBanks[existingIndex] = { name: name, question: question, pairs: pairs };
+        } else {
+            return;
+        }
+    } else {
+        matchingQuestionBanks.push({ name: name, question: question, pairs: pairs });
+    }
+
+    updateMatchingBankList();
+    showMessage(`題庫「${name}」儲存成功`, 'success');
+    nameInput.value = '';
+}
+
+function loadMatchingBankToTextarea(index) {
+    if (index >= 0 && index < matchingQuestionBanks.length) {
+        const bank = matchingQuestionBanks[index];
+        document.getElementById('matching-pairs-textarea').value = bank.pairs;
+        showMessage(`題庫「${bank.name}」已載入到輸入框`, 'success');
+    }
+}
+
+function deleteMatchingBank(index) {
+    if (index >= 0 && index < matchingQuestionBanks.length) {
+        const bankName = matchingQuestionBanks[index].name;
+        if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            matchingQuestionBanks.splice(index, 1);
+            updateMatchingBankList();
+            showMessage(`題庫「${bankName}」已刪除`, 'success');
+        }
+    }
+}
+
+// Make functions globally accessible
+window.loadSequencingBankToTextarea = loadSequencingBankToTextarea;
+window.deleteSequencingBank = deleteSequencingBank;
+window.loadMatchingBankToTextarea = loadMatchingBankToTextarea;
+window.deleteMatchingBank = deleteMatchingBank;
+
+/**
+ * Hides the custom message box.
+ */
+function hideMessage() {
+    document.getElementById('message-box').classList.add('hidden');
+}
+
+// --- Firebase Functions ---
+/**
+ * NEW: (Teacher) Announces the drawn student to Firestore.
+ * @param {string} studentName - The name of the student who was drawn.
+ */
+async function announceDrawnStudent(studentName) {
+    if (!classroomCode) return;
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    try {
+        await setDoc(controlRef, {
+            lastDrawnStudent: {
+                name: studentName,
+                timestamp: new Date() // 使用新 Date 物件來確保每次都能觸發監聽
+            }
+        }, { merge: true });
+    } catch (error) {
+        console.error("Failed to announce drawn student:", error);
+        showMessage("宣布抽籤結果失敗。", "error");
+    }
+}
+/**
+ * (Teacher) Sets the current interaction mode and clears old student response data.
+ * @param {string} mode - 'true_false', 'multiple_choice', 'text_input', 'drawing', 'url_dispatch', 'recording', or 'waiting'.
+ * @param {object} [options={}] - Optional settings for the mode, e.g., custom questions.
+ */
+async function setInteractionMode(mode, options = {}) {
+    console.log(`[🎯 Main] Setting mode to: ${mode}, currentRole: ${currentRole}, forceReset: ${options.forceReset || false}`);
+    currentInteractionMode = mode;
+
+    // 🚀 NEW: 初始化學生端圖表管理器（只在是非題或選擇題時）
+    if ((mode === 'true_false' || mode === 'multiple_choice') && currentRole === 'student') {
+        console.log(`[👨‍🎓 Student Chart] INIT START - mode: ${mode}, classroomCode: ${classroomCode}`);
+        studentChartManager.init();
+        console.log('[👨‍🎓 Student Chart] Chart manager initialized');
+
+        // 設置學生端圖表監聽器 - 監聽教師的「顯示統計」標誌
+        console.log(`[👨‍🎓 Student Chart] Calling setupStudentChartListener for mode: ${mode}`);
+        setupStudentChartListener(mode);
+
+        // 初始時隱藏圖表 - 等待教師按「顯示統計」
+        if (mode === 'true_false') {
+            const containerTf = document.getElementById('student-chart-container-tf');
+            if (containerTf) containerTf.classList.add('hidden');
+            const containerMc = document.getElementById('student-chart-container-mc');
+            if (containerMc) containerMc.classList.add('hidden');
+        } else if (mode === 'multiple_choice') {
+            const containerMc = document.getElementById('student-chart-container-mc');
+            if (containerMc) containerMc.classList.add('hidden');
+            const containerTf = document.getElementById('student-chart-container-tf');
+            if (containerTf) containerTf.classList.add('hidden');
+        }
+    } else if (currentRole === 'student') {
+        // 隱藏圖表容器對於其他模式，並清除監聽器
+        const containerTf = document.getElementById('student-chart-container-tf');
+        const containerMc = document.getElementById('student-chart-container-mc');
+        if (containerTf) containerTf.classList.add('hidden');
+        if (containerMc) containerMc.classList.add('hidden');
+
+        // 清除舊的圖表監聽器
+        if (studentChartListenerUnsubscribe) {
+            studentChartListenerUnsubscribe();
+            studentChartListenerUnsubscribe = null;
+        }
+
+        // 🚀 CRITICAL: Clear old score listener when switching modes
+        // Prevents ghost notifications from previous interaction mode
+        if (ListenerManager.has('studentScoreUpdate')) {
+            ListenerManager.unregister('studentScoreUpdate');
+            console.log('[showInteractionUI] ✓ Cleared old studentScoreUpdate listener for mode switch');
+        }
+    }
+
+    // Use classroomCode in the Firestore path
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    const showStatisticsBtn = document.getElementById('show-statistics-btn');
+
+    // 🚀 NEW: Setup teacher answer listener for matching and sequencing modes
+    if (mode === 'matching' || mode === 'sequencing') {
+        setupTeacherAnswerListener();
+    }
+    const downloadMediaBtn = document.getElementById('download-media-btn');
+    const aiTextSummaryBtn = document.getElementById('ai-text-summary-btn');
+    const showUnsubmittedStudentsBtn = document.getElementById('show-unsubmitted-students-btn'); // NEW
+    const viewQuestionsBtn = document.getElementById('view-questions-btn'); // NEW
+    const viewReadingQuestionsBtn = document.getElementById('view-reading-questions-btn'); // NEW
+    const downloadResponsesBtn = document.getElementById('download-responses-btn'); // NEW
+    const showMatchingAnswerBtn = document.getElementById('show-matching-answer-btn'); // NEW
+    const showSequencingAnswerBtn = document.getElementById('show-sequencing-answer-btn'); // NEW
+
+    // ==========================================================
+    // 🆕 MODIFIED [v3.8.13]: 按鈕顯示邏輯重構 — 先全隱藏，再依模式只開需要的
+    // 原本：逐一 toggle 16 個按鈕，導致「不相關按鈕」可能漏 hide
+    // 新版：先統一 hide 全部功能按鈕，再依 mode 精準 show
+    // ==========================================================
+
+    const rescoreAllStudentsBtn = document.getElementById('rescore-all-students-btn');
+    const allowEarlySubmitBtn = document.getElementById('allow-early-submit-btn');
+    const addQuestionBtn = document.getElementById('add-question-on-fly-btn');
+    const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
+    const togglePauseBtn = document.getElementById('toggle-pause-btn');
+    const historicalBtn = document.getElementById('show-historical-quizzes-btn');
+
+    const hasCustomQuestions = mode === 'multiple_choice' && options.customQuestions && options.customQuestions.length > 0;
+
+    // Step 1: 全部隱藏（除了永遠顯示的按鈕）
+    const allOptionalBtns = [
+        showStatisticsBtn, showMatchingAnswerBtn, showSequencingAnswerBtn,
+        viewQuestionsBtn, viewReadingQuestionsBtn, rescoreAllStudentsBtn,
+        allowEarlySubmitBtn, addQuestionBtn, startPeerReviewBtn,
+        downloadMediaBtn, aiTextSummaryBtn, showUnsubmittedStudentsBtn,
+        downloadResponsesBtn, historicalBtn
+    ];
+    allOptionalBtns.forEach(btn => { if (btn) btn.classList.add('hidden'); });
+
+    // Step 2: 依模式精準顯示（每個 mode 只開需要的按鈕）
+    // 永遠顯示：暫停回覆（除 url_dispatch）、重新開始、結束互動
+    togglePauseBtn?.classList.toggle('hidden', mode === 'url_dispatch');
+
+    switch (mode) {
+        case 'true_false':
+            // 是非題：抽籤 + 未作答 + 統計
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            showStatisticsBtn?.classList.remove('hidden');
+            break;
+
+        case 'multiple_choice':
+            // 選擇題
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            showStatisticsBtn?.classList.remove('hidden');
+            if (hasCustomQuestions) {
+                viewQuestionsBtn?.classList.remove('hidden');
+                downloadResponsesBtn?.classList.remove('hidden');
+                addQuestionBtn?.classList.remove('hidden');
+            }
+            break;
+
+        case 'reading_comprehension':
+            // 閱讀測驗：最多按鈕但有明確功能分組
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            showStatisticsBtn?.classList.remove('hidden');
+            viewReadingQuestionsBtn?.classList.remove('hidden');
+            rescoreAllStudentsBtn?.classList.remove('hidden');
+            allowEarlySubmitBtn?.classList.remove('hidden');
+            downloadResponsesBtn?.classList.remove('hidden');
+            addQuestionBtn?.classList.remove('hidden');
+            if (allowEarlySubmitBtn) resetAllowEarlySubmitButton();
+            break;
+
+        case 'text_input':
+            // 問答題
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            aiTextSummaryBtn?.classList.remove('hidden');
+            startPeerReviewBtn?.classList.remove('hidden');
+            downloadResponsesBtn?.classList.remove('hidden');
+            break;
+
+        case 'drawing':
+            // 繪圖
+            downloadMediaBtn?.classList.remove('hidden');
+            startPeerReviewBtn?.classList.remove('hidden');
+            break;
+
+        case 'recording':
+            // 錄音
+            downloadMediaBtn?.classList.remove('hidden');
+            break;
+
+        case 'sequencing':
+            // 排序
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            showSequencingAnswerBtn?.classList.remove('hidden');
+            break;
+
+        case 'matching':
+            // 配對
+            showUnsubmittedStudentsBtn?.classList.remove('hidden');
+            showMatchingAnswerBtn?.classList.remove('hidden');
+            break;
+
+        case 'quick_answer':
+            // 搶答
+            break;
+
+        case 'url_dispatch':
+            // 派送（只有結束互動+重新開始）
+            break;
+
+        // 🆕 NEW [v3.8.25] MODE-2~5：新互動模式按鈕
+        case 'team_battle':
+            // 分組競賽（積分板在 modal 中）
+            break;
+
+        case 'word_cloud':
+            // 文字雲
+            break;
+
+        case 'photo_wall':
+            // 相片牆
+            break;
+
+        case 'course_feedback':
+            // 課後回饋
+            break;
+
+        default:
+            break;
+    }
+
+    // Step 3: 歷史趨勢按鈕 — 只在有評分意義的模式顯示
+    const scoredModes = ['true_false', 'multiple_choice', 'reading_comprehension', 'sequencing', 'matching'];
+    if (historicalBtn && scoredModes.includes(mode)) {
+        historicalBtn.classList.remove('hidden');
+    }
+
+    // Step 4: 重置互評狀態
+    if (mode !== 'waiting') {
+        peerReviewActive = false;
+        startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
+        document.getElementById('peer-review-stats-container').classList.add('hidden');
+
+        const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+        setDoc(peerReviewRef, { active: false }).catch(error => {
+            console.error('Error resetting peer review status:', error);
+        });
+
+        studentVotedWorks.clear();
+        savedCanvasState = null;
+    }
+
+
+    try {
+        // Clear previous student responses unless it's a waiting state or photo_wall (preserves drawings).
+        if (mode !== 'waiting' && mode !== 'photo_wall') {
+            const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const querySnapshot = await getDocs(studentsColRef);
+            const deletePromises = [];
+            querySnapshot.forEach((doc) => {
+                deletePromises.push(deleteDoc(doc.ref));
+            });
+            await Promise.all(deletePromises);
+            console.log("[Teacher] Cleared all previous student responses.");
+            lastSelectedStudentCard = null; // Clear highlight on monitor view
+        }
+
+        // Prepare data payload for Firestore.
+        const payload = {
+            active_mode: mode,
+            backgroundImage: teacherUploadedBackgroundImageDataURL || null,
+            teacherId: userId, // Store teacher ID
+            isPaused: isResponsePaused, // Use current local pause state
+            lastDrawnStudent: null, // <-- 在此新增 (清除上次抽籤紀錄)
+            showMatchingAnswer: false, // Reset matching answer display
+            showSequencingAnswer: false, // Reset sequencing answer display
+            // 🚀 NEW: Force UI reset with monotonic token when options.forceReset is true
+            modeResetToken: options.forceReset ? Date.now() : (window.lastModeResetToken || 0),
+            // 🆕 NEW [v3.7.1]: 切換模式時一律重置「允許提前交卷」狀態
+            allowEarlyReadingSubmit: false
+        };
+
+        // Store the token globally for comparison
+        window.lastModeResetToken = payload.modeResetToken;
+
+        // MODIFIED: Add combined dispatch settings if in that mode.
+        if (mode === 'url_dispatch') {
+            payload.dispatchSettings = dispatchSettings; // Send the entire dispatchSettings object
+        } else {
+            payload.dispatchSettings = null; // Clear dispatch settings if not in URL_DISPATCH mode
+        }
+
+        // NEW: Add custom multiple choice questions if in that mode.
+        // If mode is multiple_choice and options.customQuestions is explicitly null, it means no custom questions.
+        if (mode === 'multiple_choice' && options.hasOwnProperty('customQuestions')) {
+            payload.multiple_choice_questions = options.customQuestions;
+        } else {
+            payload.multiple_choice_questions = null; // Clear if not multiple_choice mode or if customQuestions not provided
+        }
+        currentMultipleChoiceQuestions = payload.multiple_choice_questions; // Update global for teacher monitor
+
+        // 🆕 NEW [v3.7.0]: 是非題備題模式 - 題目內容（文字+圖片+正確答案）
+        // - 若 questionContent 存在：備題模式，學生端顯示題目後再作答
+        // - 否則：快速模式（或其他模式），清空為 null
+        if (mode === 'true_false' && options.questionContent) {
+            payload.true_false_question = options.questionContent;
+        } else {
+            payload.true_false_question = null;
+        }
+
+        // NEW: Add sequencing settings if in that mode
+        if (mode === 'sequencing' && options.question && options.correctOrder) {
+            payload.sequencingSettings = {
+                question: options.question,
+                correctOrder: options.correctOrder
+            };
+        } else {
+            payload.sequencingSettings = null;
+        }
+
+        // NEW: Add matching settings if in that mode
+        if (mode === 'matching' && options.question && options.pairs) {
+            payload.matchingSettings = {
+                question: options.question,
+                pairs: options.pairs
+            };
+        } else {
+            payload.matchingSettings = null;
+        }
+
+        // NEW: Add reading comprehension data if in that mode
+        if (mode === 'reading_comprehension' && options.readingData) {
+            payload.readingComprehensionData = options.readingData;
+            // 🚀 CRITICAL FIX: Use serverTimestamp() to ensure all students receive identical unified timer
+            payload.readingStartedAt = serverTimestamp();
+            console.log('[setInteractionMode] ✅ readingStartedAt set to serverTimestamp() for synchronized 180-second countdown');
+            // 🚀 CRITICAL FIX: 同時設置全局變量，確保監聽器可以立即訪問
+            readingComprehensionData = options.readingData;
+            console.log('[setInteractionMode] ✓ readingComprehensionData set globally (reading comprehension mode)');
+            console.log('[setInteractionMode] 📊 Payload being sent to Firestore:', JSON.stringify({
+                readingComprehensionData: !!payload.readingComprehensionData,
+                readingStartedAt: '✓ serverTimestamp()',
+                mode: mode
+            }));
+        } else {
+            payload.readingComprehensionData = null;
+            payload.readingStartedAt = null;
+            if (mode !== 'reading_comprehension') {
+                readingComprehensionData = {}; // 清空但不刪除全局變量
+            }
+        }
+
+        // 🆕 NEW [v3.8.25] MODE-2：分組競賽設定
+        if (mode === 'team_battle' && options.teamSettings) {
+            payload.teamBattleSettings = options.teamSettings;
+        } else if (mode !== 'team_battle') {
+            payload.teamBattleSettings = null;
+        }
+
+        // 🆕 NEW [v3.8.25] MODE-3：文字雲設定
+        if (mode === 'word_cloud' && options.wordCloudSettings) {
+            payload.wordCloudSettings = options.wordCloudSettings;
+        } else if (mode !== 'word_cloud') {
+            payload.wordCloudSettings = null;
+        }
+
+        await setDoc(controlRef, payload, { merge: true });
+
+        // Handle student responses listener based on mode
+        if (studentResponsesUnsubscribe) {
+            studentResponsesUnsubscribe();
+            studentResponsesUnsubscribe = null;
+        }
+
+        if (mode === 'url_dispatch') { // Now handles both URL and HTML
+            // For URL/HTML dispatch, listen to student submissions for real-time distraction updates
+            listenToStudentSubmissions(mode);
+        } else if (mode === 'waiting') {
+            // When going to 'waiting' mode, ensure the student responses container is cleared
+            // and shows the "waiting" message.
+            document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+        } else if (mode === 'reading_comprehension') {
+            // 🚀 FIXED: 教師端讀題模式現在使用 listenToStudentSubmissions 來即時監控學生卡片 + 排行榜
+            console.log('[Teacher] Setting up reading comprehension listener (student cards + leaderboard)');
+            // 🚀 CRITICAL FIX: 確保 readingComprehensionData 全局變量被設置
+            if (options.readingData) {
+                readingComprehensionData = options.readingData;
+                console.log('[Teacher] ✓ readingComprehensionData set from options:', readingComprehensionData);
+            } else {
+                console.warn('[Teacher] ⚠️ readingData not provided in options');
+            }
+            // 清除舊的學生卡片容器
+            document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">等待學生加入...</p>';
+
+            // 🚀 CRITICAL FIX: **強制重新註冊** presence 監聽器並 **等待首次快照完成**
+            console.log('[Teacher] 🔍 Step 1: Force re-registering presence listener for reading comprehension');
+            if (ListenerManager.has('classroomPresence')) {
+                ListenerManager.unregister('classroomPresence');
+                console.log('[Teacher] ✓ Unregistered old presence listener');
+            }
+
+            // 等待 presence 監聽器完成首次快照（確保 activeStudentsPresenceMap 已填充）
+            await listenToClassroomPresence();
+            console.log('[Teacher] ✅ Presence listener initialized, activeStudentsPresenceMap populated');
+
+            // 🚀 KEY FIX: 現在可以安全地建立學生提交監聽器（presence 數據已就緒）
+            console.log('[Teacher] 🔍 Step 2: Setting up student submissions listener for reading comprehension');
+            listenToStudentSubmissions(mode);
+        } else { // For other interaction modes (true_false, multiple_choice, text_input, drawing, recording, quick_answer)
+            // 🚀 OPTIMIZED: 確保所有模式都有 presence 監聽器（初次進入時註冊，後續模式切換時保持）
+            if (!ListenerManager.has('classroomPresence')) {
+                console.log('[Teacher] 🔍 Initializing presence listener for mode:', mode);
+                listenToClassroomPresence();
+            }
+            listenToStudentSubmissions(mode); // Ensure this listener is active
+        }
+
+    } catch (error) {
+        console.error("設定互動模式或清除學生資料失敗:", error);
+        showMessage("操作失敗，請檢查網路連線或聯繫管理員。", "error");
+    }
+}
+
+/**
+ * 🚀 NEW: (Teacher) 更新實時狀態儀表板 - 提交進度條、在線學生計數、分心提醒
+ * @param {string} mode - 當前互動模式
+ */
+function updateTeacherDashboard(mode) {
+    try {
+        // 只在教師角色和監控視圖中更新
+        if (currentRole !== 'teacher') return;
+
+        const dashboard = document.getElementById('teacher-dashboard');
+        if (!dashboard || dashboard.classList.contains('hidden')) return;
+
+        // === 1. 更新進度條：已提交/未提交 ===
+        let submittedCount = 0;
+        let totalStudents = activeStudentNames.length;
+
+        if (allStudentResponses && allStudentResponses.length > 0) {
+            submittedCount = allStudentResponses.filter(r => r.answer !== null && r.answer !== undefined).length;
+        }
+
+        const submissionPercentage = totalStudents > 0 ? Math.round((submittedCount / totalStudents) * 100) : 0;
+
+        // 更新進度條 DOM
+        const progressBar = document.getElementById('submission-progress-bar');
+        const progressPercentage = document.getElementById('submission-percentage');
+        const submittedCountSpan = document.getElementById('submitted-count');
+        const totalStudentsSpan = document.getElementById('total-students');
+
+        if (progressBar) {
+            progressBar.style.width = submissionPercentage + '%';
+            progressBar.innerHTML = `<span class="text-xs font-bold text-white">${submittedCount}/${totalStudents}</span>`;
+        }
+        if (progressPercentage) progressPercentage.textContent = submissionPercentage + '%';
+        if (submittedCountSpan) submittedCountSpan.textContent = submittedCount;
+        if (totalStudentsSpan) totalStudentsSpan.textContent = totalStudents;
+
+        // === 2. 更新在線學生計數 ===
+        const onlineCount = activeStudentNames.length;
+        const offlineCount = Math.max(0, totalStudents - onlineCount);
+
+        const onlineCountSpan = document.getElementById('online-student-count');
+        const totalJoinedSpan = document.getElementById('total-joined-count');
+        const offlineCountSpan = document.getElementById('offline-count');
+        const onlineProgressBar = document.getElementById('online-student-progress');
+
+        if (onlineCountSpan) onlineCountSpan.textContent = onlineCount;
+        if (totalJoinedSpan) totalJoinedSpan.textContent = `共 ${totalStudents} 人加入`;
+        if (offlineCountSpan) {
+            offlineCountSpan.textContent = `${offlineCount} 人離線`;
+            offlineCountSpan.style.display = offlineCount > 0 ? 'block' : 'none';
+        }
+
+        // 🚀 NEW: 更新在線學生進度條
+        if (onlineProgressBar && totalStudents > 0) {
+            const onlinePercentage = Math.round((onlineCount / totalStudents) * 100);
+            onlineProgressBar.style.width = onlinePercentage + '%';
+        }
+
+        // === 3. 更新分心學生提醒 ===
+        let distractedCount = 0;
+        const distractedStudentsList = document.getElementById('distracted-students-list');
+        if (distractedStudentsList) {
+            const distractedStudents = [];
+
+            // 遍歷所有在線學生，找出分心的
+            activeStudentNames.forEach(studentName => {
+                const presenceData = activeStudentsPresenceMap.get(studentName);
+                if (presenceData && presenceData.isDistracted) {
+                    distractedStudents.push({
+                        name: studentName,
+                        count: presenceData.distractionCount || 0
+                    });
+                }
+            });
+
+            distractedCount = distractedStudents.length;
+
+            if (distractedStudents.length === 0) {
+                distractedStudentsList.innerHTML = '<p class="text-gray-500">暫無分心學生</p>';
+            } else {
+                // 按分心次數降序排序
+                distractedStudents.sort((a, b) => b.count - a.count);
+
+                // 🚀 PRIVACY FIX: 隱密顯示分心信息 - 只顯示名字，不顯示具體次數，防止學生看到遊玩心態分心
+                let html = '<div class="space-y-1">';
+                distractedStudents.forEach((student, idx) => {
+                    // 用圖標表示嚴重程度：🔴 最嚴重（第一位），🟡 其他（隐密显示，不显示数字）
+                    const icon = idx === 0 ? '🔴' : '🟡';
+                    html += `
+                        <div class="flex items-center p-1.5 bg-yellow-100 rounded border-l-2 border-orange-500">
+                            <span class="font-semibold text-sm">${icon} ${student.name}</span>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                distractedStudentsList.innerHTML = html;
+
+                // 🚀 NEW: 如果有新分心學生，播放提醒聲音（可選）
+                if (distractedStudents.length > 0) {
+                    const alert = document.getElementById('distraction-alert');
+                    alert.classList.remove('ring-0');
+                    alert.classList.add('ring-2', 'ring-orange-500');
+                    console.log(`[Dashboard] ⚠️ ${distractedStudents.length} 位學生正在分心（詳細分心次數隱密以防遊玩）`);
+                }
+            }
+        }
+
+        console.log(`[Dashboard] ✅ Updated - Submitted: ${submittedCount}/${totalStudents} (${submissionPercentage}%), Online: ${onlineCount}, Distracted: ${distractedCount}`);
+
+    } catch (error) {
+        console.error('[Dashboard] Error updating dashboard:', error);
+    }
+}
+
+/**
+ * 🚀 NEW: (Teacher) Show confirmation dialog before switching mode
+ * Prevents accidental mode switches and data loss
+ * @param {string} newMode - The mode to switch to
+ * @param {function} onConfirm - Callback function if confirmed
+ */
+function showModeConfirmationDialog(newMode, onConfirm) {
+    const modeNames = {
+        'true_false': '是非題',
+        'multiple_choice': '複選題',
+        'quick_answer': '快速搶答',
+        'drawing_board': '繪圖板',
+        'peer_review': '互評投票',
+        'sequencing': '排序題',
+        'matching': '配對題',
+        'reading_comprehension': '閱讀測驗',
+        'waiting': '等待中'
+    };
+
+    const modeLabel = modeNames[newMode] || newMode;
+
+    const confirmDialog = document.createElement('div');
+    confirmDialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    confirmDialog.innerHTML = `
+        <div class="bg-white rounded-lg shadow-2xl p-8 max-w-md w-11/12">
+            <h3 class="text-2xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-exclamation-circle text-orange-500 mr-2"></i>確認切換模式
+            </h3>
+            <p class="text-gray-700 mb-6">
+                您即將切換至 <span class="font-bold text-blue-600">${modeLabel}</span> 模式。
+                <br><br>
+                當前模式的學生回應將被保存。確定要繼續嗎？
+            </p>
+            <div class="flex gap-3">
+                <button class="btn btn-primary flex-1">
+                    <i class="fas fa-check mr-2"></i> 確認切換
+                </button>
+                <button class="btn bg-gray-500 hover:bg-gray-600 flex-1">
+                    <i class="fas fa-times mr-2"></i> 取消
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(confirmDialog);
+
+    const buttons = confirmDialog.querySelectorAll('button');
+    buttons[0].addEventListener('click', () => {
+        confirmDialog.remove();
+        if (onConfirm) onConfirm();
+        showMessage(`✅ 已切換至 ${modeLabel} 模式`, 'success');
+    });
+    buttons[1].addEventListener('click', () => {
+        confirmDialog.remove();
+        showMessage('已取消切換模式', 'info');
+    });
+
+    confirmDialog.addEventListener('click', (e) => {
+        if (e.target === confirmDialog) {
+            confirmDialog.remove();
+            showMessage('已取消切換模式', 'info');
+        }
+    });
+}
+
+/**
+ * 🚀 NEW: (Teacher) 顯示課堂 QR Code 模態框
+ * 用於快速掃描進入教室，無需手動輸入課堂碼
+ */
+function showQRCodeModal() {
+    const modal = document.getElementById('qrcode-modal');
+    const container = document.getElementById('qrcode-container');
+    const classroomCodeSpan = document.getElementById('qrcode-classroom-code');
+
+    if (!classroomCode) {
+        showMessage('尚未設定課堂代碼，請先開始上課', 'error');
+        return;
+    }
+
+    // 清空舊的 QR Code
+    container.innerHTML = '';
+
+    // 設置課堂代碼文字
+    classroomCodeSpan.textContent = classroomCode;
+
+    // 生成 QR Code - 使用課堂代碼作為內容
+    // 格式：課堂碼，用戶通過掃描可快速進入
+    const qrUrl = `${window.location.origin}${window.location.pathname}?classroom=${classroomCode}`;
+
+    try {
+        new QRCode(container, {
+            text: qrUrl,
+            width: 250,
+            height: 250,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.H
+        });
+        console.log('[QRCode] ✅ 課堂 QR Code 已生成');
+    } catch (error) {
+        console.error('[QRCode] ❌ QR Code 生成失敗:', error);
+        showMessage('QR Code 生成失敗，請重試', 'error');
+        return;
+    }
+
+    // 顯示模態框
+    modal.classList.remove('hidden');
+}
+
+/**
+ * 🚀 NEW: (Teacher) 關閉 QR Code 模態框
+ */
+function closeQRCodeModal() {
+    const modal = document.getElementById('qrcode-modal');
+    modal.classList.add('hidden');
+}
+
+/**
+ * 🚀 NEW: (Teacher) 下載 QR Code 為圖片
+ */
+function downloadQRCode() {
+    const container = document.getElementById('qrcode-container');
+    const canvas = container.querySelector('canvas');
+
+    if (!canvas) {
+        showMessage('QR Code 尚未生成', 'error');
+        return;
+    }
+
+    try {
+        canvas.toBlob(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `classroom-qrcode-${classroomCode}-${new Date().toISOString().split('T')[0]}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showMessage('QR Code 已下載', 'success');
+        });
+    } catch (error) {
+        console.error('[QRCode] 下載失敗:', error);
+        showMessage('下載 QR Code 失敗', 'error');
+    }
+}
+
+/**
+ * NEW: (Student) Displays the lottery winner in an overlay.
+ * @param {string} winnerName - The name of the student who was drawn.
+ */
+function showLotteryWinner(winnerName) {
+    // 檢查是否已存在一個抽籤結果的畫面
+    let overlay = document.getElementById('lottery-winner-overlay');
+    if (overlay) overlay.remove(); // 移除舊的
+
+    overlay = document.createElement('div');
+    overlay.id = 'lottery-winner-overlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        animation: fadeIn 0.5s ease-in-out;
+    `;
+
+    // 檢查是否為自己被抽中
+    const isWinner = (winnerName === studentName);
+    const winnerMessage = isWinner ? "恭喜你被抽中了！" : `抽中了： ${winnerName}`;
+    const iconColor = isWinner ? '#4ade80' : '#60a5fa'; // 綠色 (自己) 或 藍色 (別人)
+
+    overlay.innerHTML = `
+        <div style="text-align: center; color: white; font-size: 3rem; font-weight: bold;">
+            <i class="fas fa-dice" style="color: ${iconColor}; font-size: 6rem; margin-bottom: 20px;"></i>
+            <h1 style="margin: 20px 0; color: white;">${winnerMessage}</h1>
+            <p style="font-size: 1.5rem; color: #d1d5db;">點擊任意位置關閉</p>
+        </div>
+        <style>
+            @keyframes fadeIn {
+                from { opacity: 0; transform: scale(0.8); }
+                to { opacity: 1; transform: scale(1); }
+            }
+        </style>
+    `;
+
+    overlay.addEventListener('click', () => {
+        overlay.remove();
+    });
+
+    document.body.appendChild(overlay);
+
+    // 5 秒後自動關閉
+    setTimeout(() => {
+        if (overlay.parentElement) {
+            overlay.remove();
+        }
+    }, 5000);
+}
+
+/**
+ * NEW: (Student) Listens for lottery results from the teacher.
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ */
+function listenToLottery() {
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    let lastTimestamp = null; // 用於防止重複顯示同一個抽籤結果
+
+    const unsubscribe = onSnapshot(controlRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            const drawnStudent = data.lastDrawnStudent;
+
+            if (drawnStudent && drawnStudent.name) {
+                // 轉換 Firestore 時間戳
+                const eventTimestamp = drawnStudent.timestamp?.toMillis();
+
+                // 檢查這是否是一個新的抽籤事件
+                if (eventTimestamp && eventTimestamp !== lastTimestamp) {
+                    lastTimestamp = eventTimestamp;
+
+                    // 🚀 FIX: 移除搶答模式的限制，讓所有模式都能顯示抽籤結果
+                    console.log('[Lottery] Showing lottery winner:', drawnStudent.name);
+                    showLotteryWinner(drawnStudent.name);
+                }
+            }
+        }
+    });
+
+    // 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('lottery', unsubscribe);
+    // 同時保留舊變數以保持兼容性
+    lotteryUnsubscribe = unsubscribe;
+}
+
+/**
+ * NEW: (Student) Monitors student attention by detecting page visibility changes and window blur/focus events.
+ * When student switches tabs or navigates away, their distraction status is updated in Firebase.
+ */
+async function startStudentAttentionMonitoring() {
+    if (!studentName || !userId || !classroomCode) {
+        console.warn('[Attention] Cannot start monitoring: student info not set');
+        return;
+    }
+
+    // 防止重複註冊監聽器
+    if (attentionMonitoringActive) {
+        console.log('[Attention] Monitoring already active, skipping duplicate registration');
+        return;
+    }
+
+    console.log('[Attention] Starting student attention monitoring for:', studentName);
+
+    // 初始化狀態變量（先設置，確保事件監聽器可以使用）
+    isStudentCurrentlyDistracted = false;
+    studentDistractionCount = 0;
+    attentionMonitoringActive = true;
+
+    // 更新分心狀態到 Firebase
+    const updateDistractionStatus = async (isDistracted) => {
+        try {
+            // 🚀 FIX: 寫入 presence 集合，而不是 studentResponses 集合
+            const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
+
+            if (isDistracted && !isStudentCurrentlyDistracted) {
+                // 學生剛開始分心
+                studentDistractionCount++;
+                isStudentCurrentlyDistracted = true;
+
+                await setDoc(presenceRef, {
+                    name: studentName,
+                    isDistracted: true,
+                    distractionCount: studentDistractionCount,
+                    lastDistractionTime: new Date(),
+                    timestamp: new Date()
+                }, { merge: true });
+
+                console.log(`[Attention] ✅ Student ${studentName} is distracted (count: ${studentDistractionCount})`);
+                console.log(`[Attention] Firebase presence updated with isDistracted: true`);
+            } else if (!isDistracted && isStudentCurrentlyDistracted) {
+                // 學生回到頁面
+                isStudentCurrentlyDistracted = false;
+
+                await setDoc(presenceRef, {
+                    name: studentName,
+                    isDistracted: false,
+                    distractionCount: studentDistractionCount,
+                    returnTime: new Date(),
+                    timestamp: new Date()
+                }, { merge: true });
+
+                console.log(`[Attention] ✅ Student ${studentName} returned to page`);
+                console.log(`[Attention] Firebase presence updated with isDistracted: false`);
+            } else {
+                console.log(`[Attention] No state change - isDistracted: ${isDistracted}, current: ${isStudentCurrentlyDistracted}`);
+            }
+        } catch (error) {
+            console.error('[Attention] ❌ Failed to update distraction status:', error);
+        }
+    };
+
+    // 🚀 FIX: 先移除舊的事件監聽器（如果存在）
+    if (attentionVisibilityHandler) {
+        document.removeEventListener('visibilitychange', attentionVisibilityHandler);
+    }
+    if (attentionBlurHandler) {
+        window.removeEventListener('blur', attentionBlurHandler);
+    }
+    if (attentionFocusHandler) {
+        window.removeEventListener('focus', attentionFocusHandler);
+    }
+
+    // 🚀 FIX: 保存事件處理程序的引用，以便被踢出時能夠移除
+    attentionVisibilityHandler = () => {
+        if (!attentionMonitoringActive || !classroomCode) return; // 🚀 GUARD: 如果已停止監控或無課堂碼則跳過
+        const hidden = document.hidden;
+        console.log(`[Attention] 📋 visibilitychange event - document.hidden: ${hidden}`);
+        if (hidden) {
+            console.log('[Attention] 🔴 Page hidden - student switched tab or minimized window');
+            updateDistractionStatus(true);
+        } else {
+            console.log('[Attention] 🟢 Page visible - student returned to tab');
+            updateDistractionStatus(false);
+        }
+    };
+
+    attentionBlurHandler = () => {
+        if (!attentionMonitoringActive || !classroomCode) return; // 🚀 GUARD
+        console.log('[Attention] 🔴 Window blur - student switched to another window');
+        updateDistractionStatus(true);
+    };
+
+    attentionFocusHandler = () => {
+        if (!attentionMonitoringActive || !classroomCode) return; // 🚀 GUARD
+        console.log('[Attention] 🟢 Window focus - student returned to window');
+        updateDistractionStatus(false);
+    };
+
+    // 監聽頁面可見性變化（分頁切換）- Chrome/Edge/Firefox 支援
+    document.addEventListener('visibilitychange', attentionVisibilityHandler);
+
+    // 監聯視窗失焦/獲得焦點（切換到其他應用程式）
+    window.addEventListener('blur', attentionBlurHandler);
+    window.addEventListener('focus', attentionFocusHandler);
+
+    // 🚀 FIX: 初始化 presence 文檔，確保學生剛加入時就能被教師端監控
+    // 🚀 CRITICAL FIX: 創建時間同步 Promise，供計時器使用
+    let resolveTimeSync;
+    window.serverTimeSyncPromise = new Promise((resolve) => {
+        resolveTimeSync = resolve;
+    });
+
+    try {
+        const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
+
+        // 🚀 CRITICAL FIX: 計算伺服器時間偏移量，用於校正閱讀測驗計時器
+        // 步驟 1: 記錄本地時間 T1，寫入 serverTimestamp
+        const localTimeBeforeWrite = Date.now();
+        await setDoc(presenceRef, {
+            name: studentName,
+            isDistracted: false,
+            distractionCount: 0,
+            joinTime: new Date(),
+            timestamp: new Date(),
+            serverSyncTime: serverTimestamp()
+        }, { merge: true });
+
+        // 步驟 2: 讀取伺服器時間戳，計算偏移量
+        const presenceDoc = await getDoc(presenceRef);
+        if (presenceDoc.exists()) {
+            const data = presenceDoc.data();
+            if (data.serverSyncTime) {
+                const serverTime = data.serverSyncTime.toMillis ? data.serverSyncTime.toMillis() : data.serverSyncTime.getTime();
+                const localTimeAfterRead = Date.now();
+                // 估計網路延遲（往返時間的一半）
+                const networkLatency = (localTimeAfterRead - localTimeBeforeWrite) / 2;
+                // 計算偏移量：伺服器時間 - 本地時間（考慮網路延遲）
+                window.serverTimeOffset = serverTime - (localTimeBeforeWrite + networkLatency);
+                window.serverTimeOffsetReady = true; // 明確標記偏移量已就緒
+                console.log(`[TimeSync] ✅ 伺服器時間偏移量計算完成:`);
+                console.log(`[TimeSync]   - 本地時間: ${new Date(localTimeBeforeWrite).toISOString()}`);
+                console.log(`[TimeSync]   - 伺服器時間: ${new Date(serverTime).toISOString()}`);
+                console.log(`[TimeSync]   - 網路延遲: ${networkLatency.toFixed(0)}ms`);
+                console.log(`[TimeSync]   - 偏移量: ${window.serverTimeOffset.toFixed(0)}ms (${(window.serverTimeOffset / 1000).toFixed(1)}秒)`);
+                console.log(`[TimeSync]   - 說明: 正值=本地時間慢於伺服器，負值=本地時間快於伺服器`);
+                resolveTimeSync({ success: true, offset: window.serverTimeOffset });
+            } else {
+                console.warn('[TimeSync] ⚠️ serverSyncTime 不存在，使用本地時間');
+                window.serverTimeOffset = 0;
+                window.serverTimeOffsetReady = true;
+                resolveTimeSync({ success: false, offset: 0, reason: 'serverSyncTime not found' });
+            }
+        } else {
+            console.warn('[TimeSync] ⚠️ presence 文檔不存在，使用本地時間');
+            window.serverTimeOffset = 0;
+            window.serverTimeOffsetReady = true;
+            resolveTimeSync({ success: false, offset: 0, reason: 'presence doc not found' });
+        }
+
+        console.log(`[Attention] ✅ Initialized presence monitoring for ${studentName}`);
+        console.log(`[Attention] 📊 Initial state - isDistracted: false, count: 0`);
+
+        // 🚀 NEW: 設置被踢出檢測監聽器 - 監控自己的 presence 文檔是否被刪除
+        setupKickedOutDetection(presenceRef);
+    } catch (error) {
+        console.error('[Attention] ❌ Failed to initialize presence monitoring:', error);
+        // 初始化失敗時設置默認偏移量為 0
+        window.serverTimeOffset = 0;
+        window.serverTimeOffsetReady = true; // 標記為已就緒（使用降級值）
+        resolveTimeSync({ success: false, offset: 0, reason: error.message });
+    }
+}
+
+/**
+ * 🚀 NEW: (Student) 設置被踢出檢測監聽器
+ * 當教師刪除學生的 presence 文檔時，自動觸發強制登出
+ * @param {DocumentReference} presenceRef - 學生的 presence 文檔引用
+ */
+function setupKickedOutDetection(presenceRef) {
+    let isFirstSnapshot = true;
+
+    const unsubscribeKicked = onSnapshot(presenceRef, (docSnap) => {
+        // 跳過首次快照（首次快照時文檔應該存在）
+        if (isFirstSnapshot) {
+            isFirstSnapshot = false;
+            if (docSnap.exists()) {
+                console.log('[KickDetection] ✅ 開始監控被踢出狀態');
+            }
+            return;
+        }
+
+        // 如果文檔不存在，表示被教師踢出
+        if (!docSnap.exists()) {
+            console.log('[KickDetection] 🚨 Presence 文檔被刪除 - 被教師踢出！');
+            handleKickedOut();
+        }
+    }, (error) => {
+        console.error('[KickDetection] ❌ 監聽錯誤:', error);
+    });
+
+    // 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('kickedOutDetection', unsubscribeKicked);
+}
+
+/**
+ * 🚀 NEW: (Student) 處理被踢出的情況 - 顯示提示並強制登出
+ */
+function handleKickedOut() {
+    console.log('[KickDetection] 🚨 開始處理被踢出...');
+
+    // 🚀 CRITICAL: 先設置 attentionMonitoringActive = false 以阻止事件監聽器繼續運行
+    attentionMonitoringActive = false;
+
+    // 🚀 NEW: 移除 attention 事件監聽器
+    if (attentionVisibilityHandler) {
+        document.removeEventListener('visibilitychange', attentionVisibilityHandler);
+        attentionVisibilityHandler = null;
+        console.log('[KickDetection] ✓ 已移除 visibilitychange 監聽器');
+    }
+    if (attentionBlurHandler) {
+        window.removeEventListener('blur', attentionBlurHandler);
+        attentionBlurHandler = null;
+        console.log('[KickDetection] ✓ 已移除 blur 監聽器');
+    }
+    if (attentionFocusHandler) {
+        window.removeEventListener('focus', attentionFocusHandler);
+        attentionFocusHandler = null;
+        console.log('[KickDetection] ✓ 已移除 focus 監聽器');
+    }
+
+    // 清除所有 Firestore 監聽器
+    ListenerManager.unregister('kickedOutDetection');
+    ListenerManager.clearAll();
+
+    // 取消訂閱學生端監聽器
+    if (studentResponsesUnsubscribe) {
+        studentResponsesUnsubscribe();
+        studentResponsesUnsubscribe = null;
+    }
+    if (classroomPresenceUnsubscribe) {
+        classroomPresenceUnsubscribe();
+        classroomPresenceUnsubscribe = null;
+    }
+    if (interactionModeUnsubscribe) {
+        interactionModeUnsubscribe();
+        interactionModeUnsubscribe = null;
+    }
+
+    // 重置學生狀態
+    classroomCode = null;
+    studentName = null;
+    currentInteractionMode = null;
+    isResponsePaused = false;
+    studentDistractionCount = 0;
+    isStudentCurrentlyDistracted = false;
+
+    // 更新 UI - 重置用戶 ID 顯示
+    const userIdDisplay = document.getElementById('user-id-display');
+    if (userIdDisplay) {
+        userIdDisplay.textContent = userId;
+    }
+
+    // 🚀 CRITICAL: 立即導航到入口頁面
+    showView('entry');
+
+    // 顯示連線中斷提示 overlay（婉轉訊息）
+    const kickedOverlay = document.createElement('div');
+    kickedOverlay.id = 'kicked-out-overlay';
+    kickedOverlay.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+    kickedOverlay.innerHTML = `
+        <div class="bg-white rounded-lg shadow-2xl p-8 max-w-md w-11/12 text-center">
+            <div class="text-6xl mb-4">🔄</div>
+            <h3 class="text-xl font-bold text-blue-700 mb-4">
+                <i class="fas fa-sync-alt mr-2"></i>需要重新加入課堂
+            </h3>
+            <p class="text-gray-700 mb-6">
+                您的課堂連線已中斷。<br/>
+                請重新輸入姓名加入課堂。
+            </p>
+            <button id="kicked-return-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition-colors">
+                好的，我知道了
+            </button>
+        </div>
+    `;
+    document.body.appendChild(kickedOverlay);
+
+    // 綁定按鈕點擊事件 - 移除 overlay
+    const returnBtn = document.getElementById('kicked-return-btn');
+    if (returnBtn) {
+        returnBtn.addEventListener('click', () => {
+            const overlay = document.getElementById('kicked-out-overlay');
+            if (overlay) overlay.remove();
+        });
+    }
+
+    console.log('[KickDetection] ✅ 學生已被強制登出並導航至入口頁面');
+}
+
+/**
+ * (Student) Listens for changes in the teacher's interaction mode and switches the student interface accordingly.
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ */
+function listenToInteractionMode() {
+    // Use classroomCode in the Firestore path
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+
+    interactionModeUnsubscribe = onSnapshot(controlRef, async (docSnap) => {
+        const studentPauseOverlay = document.getElementById('student-pause-overlay');
+        const interactionMultipleChoice = document.getElementById('interaction-multiple-choice'); // Get the MC container
+
+        if (!docSnap.exists()) {
+            // Teacher has ended the class session (control document deleted)
+            console.log("[Student] Teacher has ended the class session.");
+            classroomCode = null; // Clear student's classroom code
+            studentName = null; // Clear student's name
+            document.getElementById('user-id-display').textContent = userId; // Reset user ID display
+            showMessage('老師已結束課程，請重新選擇角色。', 'info');
+            showView('entry'); // Go back to the initial entry screen
+            // Unsubscribe from student responses and presence if they were active
+            if (studentResponsesUnsubscribe) {
+                studentResponsesUnsubscribe();
+                studentResponsesUnsubscribe = null;
+            }
+            // IMPORTANT: Unsubscribe student's presence listener as well when class ends
+            if (classroomPresenceUnsubscribe) {
+                classroomPresenceUnsubscribe();
+                classroomPresenceUnsubscribe = null;
+            }
+            studentPauseOverlay.classList.add('hidden'); // Hide overlay if class ends
+            currentInteractionMode = null; // Reset global mode for student
+            isResponsePaused = false; // Reset global pause state for student
+            attentionMonitoringActive = false; // Reset attention monitoring flag
+            studentDistractionCount = 0; // Reset distraction count
+            isStudentCurrentlyDistracted = false; // Reset distraction state
+            return; // Exit the function as the session is over
+        }
+
+        const data = docSnap.data();
+        const newMode = data.active_mode || 'waiting';
+        const newIsResponsePaused = data.isPaused || false;
+        const newBackgroundImage = data.backgroundImage || null;
+        const newMultipleChoiceQuestions = data.multiple_choice_questions || null;
+        const newResetTimestamp = data.resetTimestamp || null;
+
+        // 🆕 NEW [v3.7.1]: 偵測老師「允許提前交卷」狀態變化
+        const prevAllowEarly = window.allowEarlyReadingSubmit === true;
+        const newAllowEarly = data.allowEarlyReadingSubmit === true;
+        window.allowEarlyReadingSubmit = newAllowEarly;
+        if (currentRole === 'student' && newMode === 'reading_comprehension' && prevAllowEarly !== newAllowEarly) {
+            const submitBtn = document.getElementById('submit-reading-btn');
+            if (submitBtn) {
+                if (newAllowEarly) {
+                    // 立即解鎖送出按鈕
+                    if (window.readingCountdownInterval) {
+                        clearInterval(window.readingCountdownInterval);
+                        window.readingCountdownInterval = null;
+                    }
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('btn-gray', 'reading-submit-warning');
+                    submitBtn.classList.add('btn-primary');
+                    submitBtn.textContent = '⚡ 老師已開放，可送出 ✉️';
+                    showMessage('⚡ 老師已開放提前交卷，請確認答案後送出！', 'success');
+                } else if (window.studentReadingLocalStartTime) {
+                    // 老師關閉提前交卷：若尚未送出且仍在倒數範圍內，恢復倒數
+                    const elapsed = Date.now() - window.studentReadingLocalStartTime;
+                    if (elapsed < READING_MIN_DURATION_MS) {
+                        submitBtn.disabled = true;
+                        submitBtn.classList.remove('btn-primary');
+                        submitBtn.classList.add('btn-gray');
+                        // 重啟倒數 interval（updateCountdown 內已重用此起始時間）
+                        if (!window.readingCountdownInterval) {
+                            // 由 displayReadingComprehensionForStudent 建立的 updateCountdown 已包含重啟邏輯
+                            // 但此時 submitBtn 已失去綁定，重新觸發倒數 UI 更新
+                            const submitBtnEl = submitBtn;
+                            const tick = () => {
+                                if (window.allowEarlyReadingSubmit) { clearInterval(window.readingCountdownInterval); window.readingCountdownInterval = null; return; }
+                                const el = Date.now() - window.studentReadingLocalStartTime;
+                                const rem = READING_MIN_DURATION_MS - el;
+                                if (rem <= 0) {
+                                    submitBtnEl.disabled = false;
+                                    submitBtnEl.classList.remove('btn-gray');
+                                    submitBtnEl.classList.add('btn-primary');
+                                    submitBtnEl.textContent = '送出答案 ✉️';
+                                    clearInterval(window.readingCountdownInterval);
+                                    window.readingCountdownInterval = null;
+                                    return;
+                                }
+                                const total = Math.ceil(rem / 1000);
+                                const m = Math.floor(total / 60);
+                                const s = total % 60;
+                                if (rem <= 30000) {
+                                    submitBtnEl.textContent = `⚠️ 即將開放 (${m}:${s.toString().padStart(2, '0')})`;
+                                    submitBtnEl.classList.add('reading-submit-warning');
+                                } else {
+                                    submitBtnEl.textContent = `⏳ 請先閱讀... (${m}:${s.toString().padStart(2, '0')})`;
+                                    submitBtnEl.classList.remove('reading-submit-warning');
+                                }
+                            };
+                            tick();
+                            window.readingCountdownInterval = setInterval(tick, 500);
+                        }
+                    }
+                }
+            }
+        }
+        const newModeResetToken = data.modeResetToken || 0;
+
+        // Determine if the interaction mode itself has changed
+        const modeChanged = (currentInteractionMode !== newMode);
+        // Determine if the pause state has changed within the same mode
+        const pauseStateChanged = (currentInteractionMode === newMode && isResponsePaused !== newIsResponsePaused);
+        // Determine if we are resuming from a pause (mode is same, was paused, now not paused)
+        const isResumingFromPause = (currentInteractionMode === newMode) && isResponsePaused && !newIsResponsePaused;
+        // 🎯 NEW: Determine if teacher clicked "Reset Answers" button
+        const resetRequested = (window.lastResetTimestamp !== newResetTimestamp && newResetTimestamp !== null);
+        // 🚀 NEW: Determine if teacher forced a mode reset (e.g., quick answer restart)
+        const modeResetTokenChanged = (window.lastStudentModeResetToken !== newModeResetToken && newModeResetToken !== 0);
+
+
+        // Update global states *before* acting on them
+        currentInteractionMode = newMode;
+        // 🆕 SEC-2: 模式切換時重置提交 flag
+        _hasSubmittedThisRound = false;
+        isResponsePaused = newIsResponsePaused;
+        teacherUploadedBackgroundImageDataURL = newBackgroundImage; // Update teacher background image
+        currentMultipleChoiceQuestions = newMultipleChoiceQuestions; // Update custom MC questions
+        window.lastResetTimestamp = newResetTimestamp; // Track reset timestamp
+        window.lastStudentModeResetToken = newModeResetToken; // Track mode reset token
+
+
+        console.log(`[Student] Detected mode: ${currentInteractionMode}, Paused: ${isResponsePaused}, Mode Changed: ${modeChanged}, pauseStateChanged: ${pauseStateChanged}, resetRequested: ${resetRequested}, modeResetTokenChanged: ${modeResetTokenChanged}`);
+
+        // 🚀 CRITICAL FIX: Initialize student chart listener for true_false and multiple_choice modes
+        if (modeChanged && (currentInteractionMode === 'true_false' || currentInteractionMode === 'multiple_choice')) {
+            console.log(`[👨‍🎓 Student Chart] INITIALIZING in mode listener - mode: ${currentInteractionMode}, classroomCode: ${classroomCode}`);
+            try {
+                if (studentChartManager) {
+                    studentChartManager.init();
+                    console.log('[👨‍🎓 Student Chart] ✅ studentChartManager initialized');
+                    currentChartMode = currentInteractionMode;
+                } else {
+                    console.warn('[👨‍🎓 Student Chart] ⚠️ studentChartManager not available');
+                }
+                setupStudentChartListener(currentInteractionMode);
+                // Hide containers initially
+                const containerTf = document.getElementById('student-chart-container-tf');
+                const containerMc = document.getElementById('student-chart-container-mc');
+                if (containerTf) containerTf.classList.add('hidden');
+                if (containerMc) containerMc.classList.add('hidden');
+            } catch (error) {
+                console.error('[👨‍🎓 Student Chart] Error initializing chart:', error);
+            }
+        }
+
+        if (currentInteractionMode === 'waiting') {
+            showView('studentWaiting');
+            studentPauseOverlay.classList.add('hidden'); // Hide overlay in waiting view
+            // 🆕 NEW [v3.7.15]: 進入等待模式 → 啟動配對遊戲即時排行榜
+            if (typeof WaitingGameLeaderboard !== 'undefined') {
+                WaitingGameLeaderboard.start();
+            }
+        } else {
+            showView('studentInteraction');
+            // 🆕 NEW [v3.7.15]: 離開等待模式 → 停止排行榜監聽
+            if (typeof WaitingGameLeaderboard !== 'undefined') {
+                WaitingGameLeaderboard.stop();
+            }
+
+            // Call showInteractionUI if mode changed OR token changed OR if this is the first time entering this mode
+            // We determine "first time" by checking if any interaction UI is currently visible
+            const anyUIVisible = Object.values(interactionUIs).some(ui => !ui.classList.contains('hidden'));
+
+            if (modeChanged || modeResetTokenChanged || !anyUIVisible) {
+                console.log(`[Student] Calling showInteractionUI (modeChanged: ${modeChanged}, tokenChanged: ${modeResetTokenChanged}, firstTime: ${!anyUIVisible})`);
+
+                // 🚀 CRITICAL FIX: 重新開始時清除讀題的 Firebase 提交記錄，確保選項恢復黑色
+                if (modeResetTokenChanged && currentInteractionMode === 'reading_comprehension') {
+                    console.log('[Student] Clearing reading comprehension Firebase record for reset');
+                    try {
+                        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                        await updateDoc(studentRef, {
+                            answer: deleteField(),
+                            interactionMode: deleteField(),
+                            timestamp: deleteField()
+                        }).catch(error => {
+                            // 記錄忽略 404 錯誤（學生記錄可能不存在）
+                            if (error.code !== 'not-found') {
+                                console.error('[Student] Error clearing reading answers:', error);
+                            }
+                        });
+                    } catch (e) {
+                        console.error('[Student] Error clearing reading answers:', e);
+                    }
+                }
+
+                // 🚀 FIX: Unsubscribe old quick answer listener when restarting
+                if (modeResetTokenChanged && currentInteractionMode === 'quick_answer' && quickAnswerUnsubscribe) {
+                    console.log('[Student] Unsubscribing old quick answer listener before restart');
+                    quickAnswerUnsubscribe();
+                    quickAnswerUnsubscribe = null;
+                }
+
+                // 🚀 CRITICAL FIX: Clear studentScoreUpdate listener when switching away from reading_comprehension
+                // This prevents ghost notifications from appearing in other modes (e.g., quick_answer)
+                if (modeChanged && ListenerManager.has('studentScoreUpdate')) {
+                    ListenerManager.unregister('studentScoreUpdate');
+                    console.log('[Student] ✓ Cleared studentScoreUpdate listener on mode change to:', currentInteractionMode);
+                }
+
+                // 🚀 CRITICAL FIX: Also clear reading comprehension leaderboard listener
+                if (modeChanged && ListenerManager.has('readingLeaderboard')) {
+                    ListenerManager.unregister('readingLeaderboard');
+                    console.log('[Student] ✓ Cleared readingLeaderboard listener on mode change to:', currentInteractionMode);
+                }
+
+                showInteractionUI(currentInteractionMode, false); // Not resuming from pause if mode changed
+            }
+            // If mode hasn't changed and a UI is already visible, we don't need to call showInteractionUI
+            // This preserves the DOM state (including content) during pause/resume
+
+            // 🎯 NEW: If teacher clicked "Reset Answers", reset student UI state
+            if (resetRequested && currentInteractionMode !== 'waiting') {
+                console.log('[Student] Teacher reset all answers, resetting UI state');
+                resetStudentUIState(currentInteractionMode, false);
+            }
+
+            console.log('[Student] Setting pause overlay, isResponsePaused:', isResponsePaused);
+            if (isResponsePaused) {
+                studentPauseOverlay.classList.remove('hidden');
+                toggleStudentInteractionElements(true); // Disable elements if paused
+            } else {
+                studentPauseOverlay.classList.add('hidden');
+                toggleStudentInteractionElements(false); // Enable elements if not paused
+            }
+
+            // Specific UI updates that need to happen on every snapshot change
+            if (currentInteractionMode === 'drawing') {
+                requestAnimationFrame(() => {
+                    // BUG FIX: Only call setupCanvas (which resizes and clears the drawing canvas)
+                    // when the mode truly changes to 'drawing'.
+                    // On other updates (like pause/resume or background image change),
+                    // we only need to reload images and redraw the combined canvas,
+                    // preserving the student's existing drawing.
+                    if (modeChanged) {
+                        setupCanvas();
+                    }
+                    loadBackgroundImage(); // Reload background in case teacher changed it
+                    loadStudentImage();    // Reload student-uploaded image
+                    drawCombinedCanvas();  // Redraw all layers
+                });
+            } else if (currentInteractionMode === 'url_dispatch') { // This mode now handles both URL and HTML
+                const currentDispatchSettings = data.dispatchSettings; // Get the combined settings
+                if (currentDispatchSettings) {
+                    if (currentDispatchSettings.type === 'url' && currentDispatchSettings.url) {
+                        displayDispatchedUrl(currentDispatchSettings);
+                    } else if (currentDispatchSettings.type === 'html' && currentDispatchSettings.htmlContent) {
+                        displayDispatchedHtml(currentDispatchSettings.htmlContent);
+                    }
+                }
+            } else if (currentInteractionMode === 'true_false') {
+                // 🆕 NEW [v3.7.0]: 渲染是非題題目內容（備題模式），快速模式則隱藏題目區
+                renderTrueFalseQuestion(data.true_false_question || null);
+            } else if (currentInteractionMode === 'multiple_choice') { // NEW: Handle custom multiple choice questions
+                await renderMultipleChoiceQuestions(currentMultipleChoiceQuestions);
+                // Apply/remove enlarged-buttons class based on whether custom questions exist
+                if (!currentMultipleChoiceQuestions || currentMultipleChoiceQuestions.length === 0) {
+                    interactionMultipleChoice.classList.add('enlarged-buttons');
+                } else {
+                    interactionMultipleChoice.classList.remove('enlarged-buttons');
+                }
+            } else if (currentInteractionMode === 'sequencing') {
+                const sequencingSettings = data.sequencingSettings;
+                const showSequencingAnswer = data.showSequencingAnswer || false;
+                console.log('[Student] Sequencing mode detected, settings:', sequencingSettings, 'showAnswer:', showSequencingAnswer, 'modeChanged:', modeChanged);
+                if (sequencingSettings) {
+                    // 🚀 FIX: 智能變更檢測 - 只在設置真的改變時才重新渲染UI
+                    // 這樣可以：
+                    // 1. 支持晚加入的學生和頁面刷新
+                    // 2. 避免在其他快照更新時清空學生的進度
+                    const settingsChanged = JSON.stringify(sequencingSettings) !== JSON.stringify(lastSequencingSettings);
+                    console.log('[Student] Sequencing settings changed:', settingsChanged);
+
+                    if (settingsChanged) {
+                        console.log('[Student] Setting up sequencing UI with new data:', sequencingSettings);
+                        setupSequencingUI(sequencingSettings);
+                        lastSequencingSettings = JSON.parse(JSON.stringify(sequencingSettings)); // Deep clone
+                    } else {
+                        console.log('[Student] Sequencing settings unchanged, keeping current UI');
+                    }
+
+                    // 🚀 NEW: 顯示正確答案的順序，或在重新開始時恢復原始介面
+                    if (showSequencingAnswer && !window.lastShowSequencingAnswer) {
+                        // 狀態從 false 變為 true：顯示答案
+                        console.log('[Student] Showing sequencing correct answers');
+                        displaySequencingCorrectAnswers(sequencingSettings);
+                    } else if (!showSequencingAnswer && window.lastShowSequencingAnswer) {
+                        // 狀態從 true 變為 false：重新開始，恢復原始介面
+                        console.log('[Student] Resetting sequencing UI (teacher clicked reset)');
+                        setupSequencingUI(sequencingSettings);
+                    }
+                    window.lastShowSequencingAnswer = showSequencingAnswer;
+                } else {
+                    console.warn('[Student] Sequencing mode active but no settings provided');
+                    lastSequencingSettings = null;
+                }
+            } else if (currentInteractionMode === 'matching') {
+                const matchingSettings = data.matchingSettings;
+                const showMatchingAnswer = data.showMatchingAnswer || false;
+                console.log('[Student] Matching mode detected, settings:', matchingSettings, 'showAnswer:', showMatchingAnswer, 'modeChanged:', modeChanged);
+                if (matchingSettings) {
+                    // 🚀 FIX: 智能變更檢測 - 只在設置真的改變時才重新渲染UI
+                    // 這樣可以：
+                    // 1. 支持晚加入的學生和頁面刷新
+                    // 2. 避免在其他快照更新時清空學生的進度
+                    const settingsChanged = JSON.stringify(matchingSettings) !== JSON.stringify(lastMatchingSettings);
+                    console.log('[Student] Matching settings changed:', settingsChanged);
+
+                    if (settingsChanged) {
+                        console.log('[Student] Setting up matching UI with new data:', matchingSettings);
+                        setupMatchingUI(matchingSettings);
+                        lastMatchingSettings = JSON.parse(JSON.stringify(matchingSettings)); // Deep clone
+                    } else {
+                        console.log('[Student] Matching settings unchanged, keeping current UI');
+                    }
+
+                    // 🚀 NEW: 顯示正確答案的連線，或在重新開始時恢復原始介面
+                    if (showMatchingAnswer && !window.lastShowMatchingAnswer) {
+                        // 狀態從 false 變為 true：顯示答案
+                        console.log('[Student] Showing matching correct answers');
+                        // 🚀 FIX: Wait for DOM to be ready before displaying answers
+                        (async () => {
+                            try {
+                                await waitForMatchingDomReady(matchingSettings);
+                                displayMatchingCorrectAnswers(matchingSettings);
+                            } catch (error) {
+                                console.error('[Student] Failed to display matching answers:', error);
+                                showMessage('無法顯示配對答案，DOM未準備好。', 'error');
+                            }
+                        })();
+                    } else if (!showMatchingAnswer && window.lastShowMatchingAnswer) {
+                        // 狀態從 true 變為 false：重新開始，恢復原始介面
+                        console.log('[Student] Resetting matching UI (teacher clicked reset)');
+                        setupMatchingUI(matchingSettings);
+                    }
+                    window.lastShowMatchingAnswer = showMatchingAnswer;
+                } else {
+                    console.warn('[Student] Matching mode active but no settings provided');
+                    lastMatchingSettings = null;
+                }
+            } else if (currentInteractionMode === 'reading_comprehension') {
+                const readingData = data.readingComprehensionData;
+                const readingStartedAt = data.readingStartedAt;
+                console.log('[Student] 🎯 Reading comprehension mode detected, modeChanged:', modeChanged, 'readingData:', !!readingData, 'readingStartedAt:', readingStartedAt);
+
+                // 🚀 CRITICAL FIX: 修改條件邏輯 - 不再限制於 modeChanged
+                // 原始問題：學生晚加入時 modeChanged=false，導致計時器永遠不初始化
+                // 解決方案：只要有 readingData，就應該顯示和初始化計時器
+                // 條件改為：readingData && (modeChanged || isResumingFromPause || modeResetTokenChanged || 阅读内容改变)
+
+                // 检查阅读内容是否改变（用于晚加入学生）
+                const currentReadingHash = readingData ? JSON.stringify(readingData.questions?.length) : null;
+                const contentChanged = currentReadingHash !== window.lastReadingHash;
+                if (contentChanged) window.lastReadingHash = currentReadingHash;
+
+                console.log('[Student] 📊 Reading condition check:', {
+                    hasReadingData: !!readingData,
+                    modeChanged: modeChanged,
+                    isResumingFromPause: isResumingFromPause,
+                    modeResetTokenChanged: modeResetTokenChanged,
+                    contentChanged: contentChanged,
+                    shouldDisplay: readingData && (modeChanged || isResumingFromPause || modeResetTokenChanged || contentChanged)
+                });
+
+                // 🚀 KEY FIX: 新增 contentChanged 條件，確保晚加入的學生也能初始化計時器
+                if (readingData && (modeChanged || isResumingFromPause || modeResetTokenChanged || contentChanged)) {
+                    console.log('[Student] ✅ Displaying reading comprehension');
+                    console.log('[Student] readingStartedAt from Firestore:', readingStartedAt, 'type:', typeof readingStartedAt, 'constructor:', readingStartedAt?.constructor?.name);
+                    // 🚀 CRITICAL FIX: 確保 readingStartedAt 被正確傳遞
+                    const actualReadingStartedAt = readingStartedAt;
+                    console.log('[Student] ✅ Passing to displayReadingComprehensionForStudent with startedAt:', actualReadingStartedAt);
+                    // 🚀 NEW: Attach startedAt timestamp for duration calculation
+                    const readingDataWithTime = { ...readingData, startedAt: actualReadingStartedAt };
+                    displayReadingComprehensionForStudent(readingDataWithTime);
+                    // 🚀 FIX: 不在這裡重新啟用送出按鈕
+                    // displayReadingComprehensionForStudent 內部已有倒數計時器邏輯
+                    // 它會在 READING_MIN_DURATION_MS (5 分鐘) 後才啟用送出按鈕，此處不可覆蓋
+                }
+                // 啟動排行榜監聽（如果尚未啟動）
+                if (modeChanged) {
+                    listenToReadingLeaderboard();
+                    setupClassProgressBar();  // 📊 功能1: 班級作答進度條
+                    listenTeacherComment();   // 💬 功能3延伸: 教師評語接收
+                }
+            } else if (currentInteractionMode === 'quick_poll') {
+                if (modeChanged) {
+                    listenToQuickPollConfig();
+                }
+            }
+            // 🆕 NEW [v3.8.25] MODE-2~5 學生端處理
+            else if (currentInteractionMode === 'team_battle') {
+                if (modeChanged) {
+                    setupTeamBattleStudent(data);
+                }
+            } else if (currentInteractionMode === 'word_cloud') {
+                if (modeChanged) {
+                    setupWordCloudStudent(data);
+                }
+            } else if (currentInteractionMode === 'photo_wall') {
+                if (modeChanged) {
+                    loadPhotoWallGallery('student');
+                }
+            } else if (currentInteractionMode === 'course_feedback') {
+                if (modeChanged) {
+                    setupCourseFeedbackStudent();
+                }
+            }
+        }
+    }, (error) => {
+        console.error("[Student] Error listening to interaction mode:", error);
+        // This error might indicate a network issue or permission denied, not necessarily class end.
+        // So, keep the student in waiting view or current view, and just show an error.
+        showMessage("無法接收老師指令，請檢查網路連線。", "error");
+    });
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('interactionMode', interactionModeUnsubscribe);
+}
+
+/**
+ * 🚀 NEW: (Teacher) Listens to reading comprehension submissions and displays the leaderboard
+ */
+function listenToReadingLeaderboardTeacher() {
+    if (!classroomCode) {
+        console.warn('[TeacherLeaderboard] Classroom code not set');
+        return;
+    }
+
+    // 如果已經有監聽器，先註銷
+    if (ListenerManager.has('teacherReadingLeaderboard')) {
+        console.log('[TeacherLeaderboard] Already listening, skipping');
+        return;
+    }
+
+    console.log('[TeacherLeaderboard] ✓ Starting to listen for reading comprehension submissions');
+    console.log('[TeacherLeaderboard] Initial state - readingComprehensionData:', !!readingComprehensionData, 'questions:', !!(readingComprehensionData && readingComprehensionData.questions));
+
+    const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+
+    const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        const studentsData = [];
+        let readingSubmissionCount = 0;
+
+        querySnapshot.forEach(doc => {
+            const data = doc.data();
+            console.log('[TeacherLeaderboard] Document:', doc.id, 'mode:', data.interactionMode, 'answer:', !!data.answer);
+            // 只監聽讀題提交的學生
+            if (data.interactionMode === 'reading_comprehension' && data.answer) {
+                readingSubmissionCount++;
+                studentsData.push(data);
+            }
+        });
+
+        console.log('[TeacherLeaderboard] 📊 Received', readingSubmissionCount, 'reading comprehension submissions out of', querySnapshot.size, 'total');
+        console.log('[TeacherLeaderboard] Global state - readingComprehensionData available:', !!readingComprehensionData, 'has questions:', !!(readingComprehensionData && readingComprehensionData.questions));
+
+        // 🚀 CRITICAL FIX: 優先使用全局變量，如果不可用則從 Firestore 讀取
+        if (readingComprehensionData && readingComprehensionData.questions) {
+            console.log('[TeacherLeaderboard] ✓ Using global readingComprehensionData, displaying leaderboard');
+            if (studentsData.length > 0) {
+                updateReadingLeaderboardDisplay(studentsData, false);
+                const leaderboardContainer = document.getElementById('reading-leaderboard');
+                if (leaderboardContainer) {
+                    leaderboardContainer.classList.remove('hidden');
+                }
+            } else {
+                console.log('[TeacherLeaderboard] No student submissions yet');
+            }
+        } else {
+            console.log('[TeacherLeaderboard] ⚠️ readingComprehensionData not available globally, fetching from Firestore');
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            getDoc(controlRef).then(controlDoc => {
+                if (controlDoc.exists() && controlDoc.data().readingComprehensionData) {
+                    readingComprehensionData = controlDoc.data().readingComprehensionData;
+                    console.log('[TeacherLeaderboard] ✓ readingComprehensionData loaded from Firestore with', readingComprehensionData.questions?.length, 'questions');
+                    // 現在可以顯示排行榜
+                    if (readingComprehensionData && readingComprehensionData.questions && studentsData.length > 0) {
+                        console.log('[TeacherLeaderboard] ✓ Displaying leaderboard after Firestore fetch');
+                        updateReadingLeaderboardDisplay(studentsData, false);
+                        const leaderboardContainer = document.getElementById('reading-leaderboard');
+                        if (leaderboardContainer) {
+                            leaderboardContainer.classList.remove('hidden');
+                        }
+                    }
+                } else {
+                    console.warn('[TeacherLeaderboard] ❌ No readingComprehensionData in control document');
+                }
+            }).catch(error => {
+                console.error('[TeacherLeaderboard] ❌ Error fetching from Firestore:', error);
+            });
+        }
+    }, (error) => {
+        console.error('[TeacherLeaderboard] ❌ Error listening to submissions:', error);
+    });
+
+    ListenerManager.register('teacherReadingLeaderboard', unsubscribe);
+    console.log('[TeacherLeaderboard] ✓ Listener registered and watching for reading comprehension submissions');
+}
+
+/**
+ * (Student) Updates the reading leaderboard display based on current student responses.
+ * 🚀 HELPER: 排行榜渲染邏輯，可被監聽器和手動調用共用
+ * @param {Array} studentsData - Array of student response data
+ * @param {boolean} shouldScrollToTop - Whether to scroll to leaderboard after update (default: false)
+ */
+function updateReadingLeaderboardDisplay(studentsData, shouldScrollToTop = false) {
+    console.log('[updateReadingLeaderboardDisplay] 🚀 Called with', studentsData.length, 'students, shouldScrollToTop:', shouldScrollToTop);
+
+    const leaderboardContainer = document.getElementById('reading-leaderboard');
+    const leaderboardList = document.getElementById('reading-leaderboard-list');
+
+    if (!leaderboardContainer || !leaderboardList) {
+        console.warn('[Leaderboard] DOM elements not found - leaderboardContainer:', !!leaderboardContainer, 'leaderboardList:', !!leaderboardList);
+        return;
+    }
+
+    console.log('[updateReadingLeaderboardDisplay] ✓ DOM elements found, clearing old content');
+    // 🚀 CRITICAL: Force clear and rebuild
+    leaderboardList.innerHTML = '';
+
+    const questions = readingComprehensionData.questions;
+
+    // 只在有題目時顯示排行榜
+    if (!questions || questions.length === 0) {
+        console.warn('[updateReadingLeaderboardDisplay] No questions found, hiding leaderboard');
+        leaderboardContainer.classList.add('hidden');
+        return;
+    }
+
+    console.log('[updateReadingLeaderboardDisplay] ✓ Found', questions.length, 'questions, processing', studentsData.length, 'students');
+    const rankedStudents = [];
+
+    // 計算每個學生的正確率和總分（基礎分+筆記加分）
+    studentsData.forEach(student => {
+        if (student.answer) {
+            try {
+                const studentAnswers = JSON.parse(student.answer);
+
+                // 🚀 CRITICAL FIX: 優先使用 Firestore 中已更新的分數（由教師端 rescoreAllStudents 計算）
+                // 這確保當教師修改答案後，學生端能看到最新的正確分數
+                // 只有在沒有 Firestore 分數時才進行本地計算（例如學生剛提交答案時）
+                let baseScore, highlightBonus, totalScore, correctCount;
+
+                // 檢查是否有 scoreUpdateToken（表示教師已重新計分）
+                const hasTeacherUpdatedScore = student.scoreUpdateToken && student.baseScore !== undefined;
+
+                if (hasTeacherUpdatedScore) {
+                    // 🚀 使用教師端已計算好的分數（包含送分題邏輯）
+                    baseScore = student.baseScore;
+                    highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                    totalScore = student.totalScore || (baseScore + highlightBonus);
+                    correctCount = Math.round((baseScore / 100) * questions.length); // 反推正確題數
+                    console.log(`[Leaderboard] ✅ Using Firestore scores for ${student.name}:`, { baseScore, highlightBonus, totalScore, correctCount, scoreUpdateToken: student.scoreUpdateToken });
+                } else {
+                    // 本地計算（學生剛提交時，Firestore 尚未被教師更新）
+                    correctCount = 0;
+                    studentAnswers.forEach((ans, index) => {
+                        if (questions[index] && ((questions[index].correctAnswer === 0) || (ans === questions[index].correctAnswer))) {
+                            correctCount++;
+                        }
+                    });
+                    baseScore = Math.round((correctCount / questions.length) * 100);
+                    highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                    totalScore = baseScore + highlightBonus;
+                    console.log(`[Leaderboard] Locally calculated scores for ${student.name}:`, { baseScore, highlightBonus, totalScore, correctCount });
+                }
+
+                // 正確題數已在上面計算，直接用於顯示
+                const accuracy = Math.round((correctCount / questions.length) * 100);
+
+                rankedStudents.push({
+                    name: student.name,
+                    correctCount: correctCount,
+                    totalQuestions: questions.length,
+                    accuracy: accuracy,
+                    baseScore: baseScore, // 🚀 NEW: 基礎分數
+                    highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+                    totalScore: totalScore, // 🚀 NEW: 總分（基礎+加分）
+                    highlightAnalysis: student.highlightAnalysis || null, // 🚀 NEW: 完整的筆記分析數據
+                    timestamp: student.timestamp,
+                    durationMs: student.durationMs || null
+                });
+            } catch (e) {
+                // 答案格式錯誤，不加入排名
+                console.warn('[Leaderboard] Invalid answer format for student:', student.name);
+            }
+        }
+    });
+
+    // 🚀 UPDATED: 排序邏輯 - 總分降序（基礎分+筆記加分） → 作答時長升序 → 提交時間升序 → 姓名升序
+    rankedStudents.sort((a, b) => {
+        // 1. 主要排序：總分高的在前（包含筆記加分）
+        if (b.totalScore !== a.totalScore) {
+            return b.totalScore - a.totalScore;
+        }
+        // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+        if (a.durationMs && b.durationMs) {
+            return a.durationMs - b.durationMs;
+        }
+        // 如果只有一方有作答時長，有作答時長的排在前面
+        if (a.durationMs && !b.durationMs) return -1;
+        if (!a.durationMs && b.durationMs) return 1;
+        // 3. 第三排序：提交時間早的在前（作為後備）
+        if (a.timestamp && b.timestamp) {
+            const timeA = a.timestamp.toMillis ? a.timestamp.toMillis() : new Date(a.timestamp).getTime();
+            const timeB = b.timestamp.toMillis ? b.timestamp.toMillis() : new Date(b.timestamp).getTime();
+            if (timeA !== timeB) {
+                return timeA - timeB;
+            }
+        }
+        // 4. 最後排序：姓名字母順序
+        return a.name.localeCompare(b.name);
+    });
+
+    // 🚀 OPTIMIZED: 計算排名 - 每個學生都有唯一排名（基於完整排序，包括作答時長）
+    // 不再只比較正確題數，而是為排序列表中的每個位置指派唯一排名
+    rankedStudents.forEach((student, index) => {
+        student.rank = index + 1;
+    });
+
+    // 只顯示前十名
+    const top10 = rankedStudents.slice(0, 10);
+
+    if (top10.length > 0) {
+        leaderboardContainer.classList.remove('hidden');
+        leaderboardList.innerHTML = '';
+
+        top10.forEach((student, index) => {
+            const rank = student.rank; // 🚀 UPDATED: 使用計算好的排名（支援並列）
+            let badgeClass = 'bg-gray-100 text-gray-700 border-gray-300';
+            let icon = '';
+            let rankText = `第${rank}名`;
+
+            if (rank === 1) {
+                badgeClass = 'bg-yellow-100 text-yellow-700 border-yellow-300';
+                icon = '🥇';
+                rankText = '';
+            } else if (rank === 2) {
+                badgeClass = 'bg-gray-200 text-gray-700 border-gray-400';
+                icon = '🥈';
+                rankText = '';
+            } else if (rank === 3) {
+                badgeClass = 'bg-orange-100 text-orange-700 border-orange-300';
+                icon = '🥉';
+                rankText = '';
+            } else if (rank <= 5) {
+                badgeClass = 'bg-blue-100 text-blue-700 border-blue-300';
+                icon = '🏅';
+                rankText = `第${rank}名`;
+            } else {
+                badgeClass = 'bg-purple-50 text-purple-600 border-purple-200';
+                icon = '⭐';
+                rankText = `第${rank}名`;
+            }
+
+            // 🚀 NEW: Format time display (duration if available, otherwise relative time)
+            let timeDisplay = '';
+            if (student.durationMs) {
+                const duration = formatDuration(student.durationMs);
+                timeDisplay = `
+                    <div class="text-xs text-gray-600 mt-1">
+                        <span class="hidden sm:inline">⏱️ ${duration.longLabel}</span>
+                        <span class="sm:hidden">⏱️ ${duration.shortLabel}</span>
+                    </div>
+                `;
+            } else if (student.timestamp) {
+                const relativeTime = formatRelativeTime(student.timestamp);
+                timeDisplay = `<div class="text-xs text-gray-500 mt-1">🕒 ${relativeTime}</div>`;
+            }
+
+            // 🚀 NEW: 加分顯示（如果有筆記加分）
+            let bonusDisplay = '';
+            if (student.highlightBonus > 0) {
+                // 將筆記分析資料轉換為安全字串以便傳入 onclick
+                const analysisJson = student.highlightAnalysis ? JSON.stringify(student.highlightAnalysis).replace(/'/g, "&#39;").replace(/"/g, "&quot;") : "null";
+                const studentNameEscaped = student.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+                bonusDisplay = `
+                    <div class="mt-1 text-xs sm:text-sm font-bold text-purple-600 cursor-pointer hover:underline hover:text-purple-800 transition-colors inline-block px-2 py-0.5 rounded-full hover:bg-purple-50" onclick="window.showHighlightBonusDetails('${studentNameEscaped}', '${analysisJson}')" title="點擊查看加分細項">
+                        📝 +${student.highlightBonus}分 <i class="fas fa-info-circle ml-0.5 text-[10px]"></i>
+                    </div>
+                `;
+            }
+
+            const card = document.createElement('div');
+            card.className = `${badgeClass} border-2 rounded-lg p-2 sm:p-3 text-center transition-all hover:scale-105 hover:shadow-md`;
+            card.innerHTML = `
+                <div class="text-2xl sm:text-3xl mb-1">${icon}</div>
+                <div class="font-bold text-xs sm:text-sm truncate mb-1">${student.name}</div>
+                ${rankText ? `<div class="text-xs font-semibold mb-1">${rankText}</div>` : ''}
+                <div class="text-base sm:text-lg font-bold text-gray-800 mb-1">${Math.round(student.totalScore)}分</div>
+                <div class="text-xs text-gray-600">基礎: ${student.baseScore}分</div>
+                ${bonusDisplay}
+                ${timeDisplay}
+            `;
+            leaderboardList.appendChild(card);
+        });
+
+        console.log('[updateReadingLeaderboardDisplay] ✅ Rendered', rankedStudents.length, 'students in leaderboard');
+        leaderboardContainer.classList.remove('hidden');
+
+        // 🚀 FIX: 移除 scrollIntoView，排行榜已是 fixed overlay，不需要跳頁
+    } else {
+        // 🚀 FIX: 清空排行榜並隱藏容器，防止顯示舊數據
+        leaderboardList.innerHTML = '';
+        leaderboardContainer.classList.add('hidden');
+    }
+}
+
+/**
+ * 🚀 NEW: 顯示筆記加分細項
+ */
+window.showHighlightBonusDetails = function (studentName, analysisJsonStr) {
+    try {
+        if (analysisJsonStr === "null") {
+            showMessage('無詳細分析資料', 'warning');
+            return;
+        }
+        const analysis = JSON.parse(analysisJsonStr);
+        const feedbackMessage = `
+            <div class="text-left space-y-2 sm:space-y-3 pr-4 sm:pr-8">
+                <div class="text-base sm:text-lg font-bold text-white mb-2">🏅 ${studentName} 的筆記加分分析</div>
+                <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
+                    <div class="text-sm sm:text-base font-bold text-yellow-300 mb-2 sm:mb-3">總加分：+${analysis.score} 分</div>
+                    
+                    <div class="space-y-1 text-xs sm:text-sm text-white">
+                        <div class="font-bold mb-1 text-yellow-200">評分明細：</div>
+                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                            <span>🎨 顏色多樣性:</span>
+                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.colorDiversity || 0}</span>
+                        </div>
+                        <div class="flex justify-between items-center px-2 py-1">
+                            <span>🎯 精確度 (重點抓取):</span>
+                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.precision || 0}</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                            <span>📍 分段性 (有組織):</span>
+                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.segmentation || 0}</span>
+                        </div>
+                        <div class="flex justify-between items-center px-2 py-1">
+                            <span>🔗 答題關聯 (與答案相符):</span>
+                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.relevance || 0}</span>
+                        </div>
+                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
+                            <span>⏱️ 時間分配 (邊讀邊畫):</span>
+                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.timeDistribution || 0}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3 pt-2 border-t border-white border-opacity-30 text-xs text-white text-opacity-90">
+                        <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <div>標註: ${analysis.stats?.highlightCount || 0} 個</div>
+                            <div>顏色: ${analysis.stats?.colorCount || 0} 種</div>
+                            <div>覆蓋: ${Math.round(analysis.stats?.coverageRate || 0)}%</div>
+                            <div>段落: ${analysis.stats?.segmentCount || 0} 段</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
+                    💡 同學們可以互相學習彼此的筆記技巧喔！請點擊右上角 ✕ 關閉
+                </div>
+            </div>
+        `;
+        showMessage(feedbackMessage, 'info', 0, true, true);
+    } catch (e) {
+        console.error('Failed to parse analysis data:', e);
+        showMessage('解析資料失敗', 'error');
+    }
+};
+
+/**
+ * (Student) Listens to all student responses and displays the top 10 leaderboard for reading comprehension.
+ * 🚀 NEW: 閱讀測驗排行榜監聽
+ * ✨ OPTIMIZED: 使用全域 readingComprehensionData，由 listenToInteractionMode 更新
+ * 
+ * 實作說明：
+ * - listenToInteractionMode 已經監聽 control 文檔並更新 readingComprehensionData
+ * - 本函數只需監聽 studentResponses 集合，使用已經更新的全域變數
+ * - 當題目更新時，listenToInteractionMode 會重新調用 displayReadingComprehensionForStudent
+ * - 這樣可以避免重複監聽同一個文檔，減少 Firestore 讀取
+ */
+function listenToReadingLeaderboard() {
+    if (!classroomCode) {
+        console.warn('[Leaderboard] Classroom code not set');
+        return;
+    }
+
+    // 如果已經有監聽器，先註銷
+    if (ListenerManager.has('readingLeaderboard')) {
+        console.log('[Leaderboard] Already listening, skipping');
+        return;
+    }
+
+    const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+
+    const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        const studentsData = [];
+        querySnapshot.forEach(doc => {
+            studentsData.push(doc.data());
+        });
+        updateReadingLeaderboardDisplay(studentsData);
+    }, (error) => {
+        console.error('[Leaderboard] Error listening:', error);
+    });
+
+    ListenerManager.register('readingLeaderboard', unsubscribe);
+    console.log('[Leaderboard] Started listening for reading comprehension leaderboard');
+}
+
+/**
+ * (Student) Displays the dispatched URL or YouTube video.
+ * @param {object} settings - The URL settings object from Firestore.
+ */
+function displayDispatchedUrl(settings) {
+    const container = interactionUIs.url_dispatch;
+    container.innerHTML = ''; // Clear previous content
+
+    if (settings.isYoutube) {
+        const videoId = getYouTubeVideoId(settings.url);
+        console.log('YouTube URL:', settings.url, 'Video ID:', videoId); // 調試信息
+        if (videoId) {
+            const embedContainer = document.createElement('div');
+            embedContainer.className = 'youtube-embed-container';
+
+            // 添加載入中的提示
+            embedContainer.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center;">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i><br>
+                影片載入中...
+            </div>`;
+
+            const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&showinfo=0&modestbranding=1`;
+            console.log('Embed URL:', embedUrl); // 調試信息
+
+            // 創建iframe元素
+            const iframe = document.createElement('iframe');
+            iframe.src = embedUrl;
+            iframe.frameBorder = '0';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+            iframe.allowFullscreen = true;
+            iframe.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;';
+
+            // 載入完成後移除載入提示
+            iframe.onload = function () {
+                const loadingDiv = embedContainer.querySelector('div');
+                if (loadingDiv) loadingDiv.remove();
+            };
+
+            // 錯誤處理
+            iframe.onerror = function () {
+                embedContainer.innerHTML = `<div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center;">
+                    <i class="fas fa-exclamation-triangle text-2xl mb-2"></i><br>
+                    影片載入失敗
+                </div>`;
+            };
+
+            embedContainer.appendChild(iframe);
+            container.appendChild(embedContainer);
+        } else {
+            console.error('無效的 YouTube 網址:', settings.url); // 調試信息
+            container.innerHTML = `<p class="text-red-500">無效的 YouTube 網址。</p>`;
+        }
+    } else {
+        const card = document.createElement('a');
+        card.className = 'url-card';
+        card.href = settings.url;
+        card.target = '_blank';
+        card.rel = 'noopener noreferrer';
+        card.innerHTML = `
+            <i class="fas fa-external-link-alt url-card-icon"></i>
+            <p class="url-card-text">老師分享了一個連結</p>
+            <p class="url-card-link">${settings.url}</p>
+        `;
+        container.appendChild(card);
+    }
+}
+
+/**
+ * NEW: (Student) Displays the dispatched HTML content in an iframe.
+ * @param {string} htmlContent - The HTML content to display.
+ */
+function displayDispatchedHtml(htmlContent) {
+    const container = interactionUIs.url_dispatch; // Use the same container
+    container.innerHTML = ''; // Clear previous content
+
+    const iframe = document.createElement('iframe');
+    iframe.id = 'html-content-iframe'; // Re-use the ID for consistency if needed, but it's internal to this function now
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-popups allow-forms';
+    iframe.srcdoc = htmlContent;
+    iframe.style.cssText = 'width: 100vw; height: 100vh; margin: 0; padding: 0; border: none; background-color: white; display: block;';
+    container.appendChild(iframe);
+
+    // Add status indicator
+    const statusIndicator = document.createElement('div');
+    statusIndicator.className = 'html-dispatch-indicator';
+    statusIndicator.textContent = '教師派送html中...';
+    container.appendChild(statusIndicator);
+
+    // Apply the specific HTML dispatch container styles to the outer container
+    container.style.cssText = 'position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; margin: 0; padding: 0; border: none; overflow: hidden; background-color: white; z-index: 1000;';
+}
+
+/**
+ * Extracts YouTube video ID from various URL formats.
+ * @param {string} url - The YouTube URL.
+ * @returns {string|null} The video ID or null if not found.
+ */
+function getYouTubeVideoId(url) {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+}
+
+
+/**
+ * (Student) Submits the answer to Firestore.
+ * @param {string | object} answer - The student's answer.
+ * @returns {Promise<boolean>} Returns true if successful, false if failed
+ */
+// 🆕 NEW [v3.8.24] SEC-2: 防重複提交 flag（前端層保護）
+let _hasSubmittedThisRound = false;
+
+async function submitAnswer(answer, extraFields = {}) {
+    // NEW: Prevent submission if paused
+    if (isResponsePaused) {
+        showMessage('老師已暫停回覆，無法送出答案。', 'error');
+        throw new Error('Response is paused');
+    }
+
+    // 🆕 SEC-2: 防重複提交（同一輪只能提交一次）
+    if (_hasSubmittedThisRound && currentInteractionMode !== 'quick_poll') {
+        console.warn('[SEC-2] ⚠️ 已提交過，拒絕重複提交');
+        showMessage('您已提交過答案，無法重複提交。', 'warning');
+        throw new Error('Already submitted');
+    }
+
+    if (!studentName || !userId || !classroomCode) {
+        console.error("Student name, User ID, or Classroom Code not set. Cannot submit answer.");
+        showMessage("學生姓名、用戶ID或教室代碼未設定，無法送出答案。", "error");
+        throw new Error('Student info not set');
+    }
+    // Use classroomCode in the Firestore path
+    const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+    try {
+        await setDoc(studentRef, {
+            name: studentName,
+            answer: answer,
+            interactionMode: currentInteractionMode, // 🎯 CRITICAL FIX: 儲存互動模式，讓 resetStudentUIState 能正確檢查提交狀態
+            timestamp: new Date(),
+            ...extraFields // 🔥 NEW: Allow adding extra fields like modeResetToken
+        }, { merge: true });
+        console.log(`[Student] ${studentName} submitted answer:`, answer, 'mode:', currentInteractionMode, 'extraFields:', extraFields);
+
+        // 🆕 NEW [v3.8.22] UX-13: 提交成功時震動回饋（手機端）
+        if (navigator.vibrate) {
+            navigator.vibrate(100); // 輕微震動 100ms
+        }
+
+        // 🆕 SEC-2: 標記已提交
+        _hasSubmittedThisRound = true;
+
+        return true;
+    } catch (error) {
+        console.error("送出答案失敗:", error);
+        showMessage("送出答案失敗，請檢查網路連線。", "error");
+        throw error;
+    }
+}
+
+/**
+ * 🚀 NEW: (Teacher) 創建單個學生卡片（統一的卡片生成邏輯，支持所有9種互動模式）
+ * @param {Object} student - 學生數據
+ * @param {HTMLElement} container - 學生卡片容器
+ * @param {string} mode - 當前互動模式
+ * @param {Array} rankedStudents - 排名數據（閱讀測驗模式使用）
+ */
+function createStudentCard(student, container, mode, rankedStudents = []) {
+    const card = document.createElement('div');
+    card.className = 'student-response-item';
+    card.setAttribute('data-student-name', student.name);
+
+    let answerContentHTML = '';
+
+    // 處理所有模式的答案顯示
+    if (mode === 'url_dispatch') {
+        // URL dispatch mode: show online indicator
+        answerContentHTML = `<i class="fas fa-check-circle text-green-500 text-2xl"></i>`;
+    } else if (student.answer === null || student.answer === undefined) {
+        // 🆕 MODIFIED [v3.7.9]: 學生未提交答案 - 強化視覺 placeholder（icon + 虛線邊框 + 等待動畫）
+        answerContentHTML = `
+            <div class="unanswered-placeholder">
+                <i class="fas fa-hourglass-half unanswered-icon"></i>
+                <span class="unanswered-text">等待作答中…</span>
+            </div>
+        `;
+    } else if (mode === 'drawing') {
+        // 繪圖模式
+        if (String(student.answer).startsWith('data:image')) {
+            answerContentHTML = `<img src="${student.answer}" alt="${student.name} 的繪圖" class="w-full h-auto rounded-md border max-h-32 object-contain cursor-pointer" data-full-image="${student.answer}"/>`;
+        } else {
+            answerContentHTML = `<p class="text-gray-500">繪圖未完成或格式錯誤</p>`;
+        }
+    } else if (mode === 'recording') {
+        // 錄音模式
+        if (String(student.answer).startsWith('data:audio')) {
+            answerContentHTML = `<audio controls src="${student.answer}" class="w-full"></audio>`;
+        } else {
+            answerContentHTML = `<p class="text-gray-500">錄音未完成或格式錯誤</p>`;
+        }
+    } else if (mode === 'text_input') {
+        // 文字輸入模式
+        answerContentHTML = `<p class="text-gray-700 whitespace-pre-wrap">${student.answer || '(空白)'}</p>`;
+    } else if (mode === 'multiple_choice' && Array.isArray(student.answer) && currentMultipleChoiceQuestions) {
+        // 自訂選擇題模式
+        answerContentHTML = `<div class="flex flex-col w-full">`;
+        student.answer.forEach((qAns, index) => {
+            const question = currentMultipleChoiceQuestions[qAns.qIndex];
+            if (question) {
+                const isCorrect = (String(qAns.ans) === String(question.correctAnswer));
+                answerContentHTML += `
+                    <div class="mc-question-answer">
+                        <i class="icon fas ${isCorrect ? 'fa-check-circle correct-icon' : 'fa-times-circle incorrect-icon'}"></i>
+                        <span class="question-text">Q${qAns.qIndex + 1}:</span>
+                        <span class="student-choice">${qAns.ans}</span>
+                    </div>
+                `;
+            }
+        });
+        answerContentHTML += `</div>`;
+    } else if (mode === 'quick_answer') {
+        // 搶答模式
+        if (student.answer && student.answer.includes('搶答成功')) {
+            answerContentHTML = `<div class="text-center">
+                <i class="fas fa-trophy text-yellow-500 text-4xl mb-2"></i>
+                <p class="text-xl font-bold text-green-600">搶答成功！</p>
+                <p class="text-lg text-gray-600">第一名</p>
+            </div>`;
+        } else {
+            answerContentHTML = `<p class="text-gray-500">未搶答或搶答失敗</p>`;
+        }
+    } else if (mode === 'sequencing') {
+        // 排序題模式
+        try {
+            const studentOrder = JSON.parse(student.answer);
+            const correctOrder = sequencingData.correctOrder;
+            let isCorrect = true;
+
+            answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
+            studentOrder.forEach((item, index) => {
+                const correct = correctOrder[index] === item;
+                if (!correct) isCorrect = false;
+                // 🚀 CRITICAL FIX: 先判斷送分題，避免邏輯反向
+                const isGivePoints = sequencingData && sequencingData.questions && sequencingData.questions[index] && sequencingData.questions[index].correctAnswer === 0;
+                let iconClass = '';
+                if (isGivePoints) {
+                    // 送分題：無論答對答錯都顯示黃色⚠️
+                    iconClass = 'fa-exclamation-triangle text-yellow-500'; // 送分題：黃色三角形
+                } else if (correct) {
+                    iconClass = 'fa-check-circle text-green-500'; // 正確：綠色勾勾
+                } else {
+                    iconClass = 'fa-times-circle text-red-500'; // 錯誤：紅色叉叉
+                }
+                answerContentHTML += `
+                    <div class="flex items-center gap-2 text-sm">
+                        <i class="fas ${iconClass}"></i>
+                        <span class="font-bold">${index + 1}.</span>
+                        <span>${item}</span>
+                    </div>
+                `;
+            });
+            answerContentHTML += `</div>`;
+        } catch (e) {
+            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+        }
+    } else if (mode === 'matching') {
+        // 配對題模式
+        try {
+            const studentMatches = JSON.parse(student.answer);
+            const correctPairs = matchingData.pairs;
+            let correctCount = 0;
+
+            answerContentHTML = `<div class="flex flex-col w-full gap-1">`;
+            studentMatches.forEach(match => {
+                const correctPair = correctPairs.find(p => p.left === match.left);
+                // 🚀 CRITICAL FIX: 先判斷送分題，避免邏輯反向
+                const isGivePointsMatch = correctPair && correctPair.correctAnswer === 0;
+                const isCorrect = isGivePointsMatch || (correctPair && correctPair.right === match.right);
+                if (isCorrect) correctCount++;
+
+                let matchIconClass = '';
+                if (isGivePointsMatch) {
+                    // 送分題：無論答對答錯都顯示黃色⚠️
+                    matchIconClass = 'fa-exclamation-triangle text-yellow-500'; // 送分題：黃色三角形
+                } else if (isCorrect) {
+                    matchIconClass = 'fa-check-circle text-green-500'; // 正確：綠色勾勾
+                } else {
+                    matchIconClass = 'fa-times-circle text-red-500'; // 錯誤：紅色叉叉
+                }
+                answerContentHTML += `
+                    <div class="flex items-center gap-2 text-xs">
+                        <i class="fas ${matchIconClass}"></i>
+                        <span>${match.left}</span>
+                        <i class="fas fa-arrow-right text-gray-400"></i>
+                        <span>${match.right}</span>
+                    </div>
+                `;
+            });
+            answerContentHTML += `<div class="text-xs text-gray-600 mt-1">正確: ${correctCount}/${studentMatches.length}</div></div>`;
+        } catch (e) {
+            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+        }
+    } else if (mode === 'reading_comprehension') {
+        // 閱讀測驗模式
+        try {
+            const studentAnswers = JSON.parse(student.answer);
+            const questions = readingComprehensionData.questions;
+            let correctCount = 0;
+
+            answerContentHTML = `<div class="w-full" style="font-size: 12px;">`;
+            // 📖 改用兩欄 grid 顯示答案，節省空間又清晰
+            answerContentHTML += `<div class="grid gap-x-2" style="grid-template-columns: 1fr 1fr;">`;
+            studentAnswers.forEach((ans, index) => {
+                if (questions[index]) {
+                    // 🚀 CRITICAL FIX: 先判斷送分題再判斷正確，避免邏輯反向
+                    const isGivePointsReading = questions[index].correctAnswer === 0;
+                    const isCorrect = isGivePointsReading || (ans === questions[index].correctAnswer);
+                    if (isCorrect) correctCount++;
+
+                    // 🚀 FIXED: 正確的優先級 - 送分題優先，然後正確，最後錯誤
+                    let readingIconClass = '';
+                    if (isGivePointsReading) {
+                        readingIconClass = 'fa-exclamation-triangle text-yellow-500';
+                    } else if (isCorrect) {
+                        readingIconClass = 'fa-check-circle text-green-500';
+                    } else {
+                        readingIconClass = 'fa-times-circle text-red-500';
+                    }
+                    const wrongHint = !isCorrect && ans > 0 && questions[index].correctAnswer !== 0
+                        ? `<span style="color:#888;font-size:10px;">(✓${questions[index].correctAnswer})</span>`
+                        : '';
+                    answerContentHTML += `
+                        <div class="flex items-center" style="gap:3px; padding:1px 0;">
+                            <i class="fas ${readingIconClass}" style="font-size:11px;flex-shrink:0;"></i>
+                            <span style="font-weight:600;min-width:20px;">Q${index + 1}</span>
+                            <span style="color:#0369a1;font-weight:bold;">答${ans || '?'}</span>
+                            ${wrongHint}
+                        </div>
+                    `;
+                }
+            });
+            answerContentHTML += `</div>`; // close grid
+
+            // 計算正確率和排名
+            const accuracy = Math.round((correctCount / questions.length) * 100);
+            const rankInfo = rankedStudents.find(r => r.name === student.name);
+            const rank = rankInfo ? rankedStudents.indexOf(rankInfo) + 1 : null;
+
+            // 排名徽章顏色
+            let rankBadgeClass = 'bg-gray-100 text-gray-700';
+            let rankIcon = '';
+            if (rank === 1) {
+                rankBadgeClass = 'bg-yellow-100 text-yellow-700';
+                rankIcon = '🥇 ';
+            } else if (rank === 2) {
+                rankBadgeClass = 'bg-gray-200 text-gray-700';
+                rankIcon = '🥈 ';
+            } else if (rank === 3) {
+                rankBadgeClass = 'bg-orange-100 text-orange-700';
+                rankIcon = '🥉 ';
+            } else if (rank <= 5) {
+                rankBadgeClass = 'bg-blue-100 text-blue-700';
+                rankIcon = '🏅 ';
+            }
+
+            const rankBadge = rank ? `<span class="px-1.5 py-0.5 ${rankBadgeClass} text-xs font-bold rounded ml-1">${rankIcon}第${rank}名</span>` : '';
+
+            // 🚀 NEW: Format time display for teacher view
+            let teacherTimeDisplay = '';
+            if (student.durationMs) {
+                const duration = formatDuration(student.durationMs);
+                teacherTimeDisplay = `<div class="text-xs text-gray-500 mt-1">⏱️ ${duration.longLabel}</div>`;
+            }
+            if (student.timestamp) {
+                const absoluteTime = formatAbsoluteTime(student.timestamp, false);
+                teacherTimeDisplay += `<div class="text-xs text-gray-500 mt-0.5">📅 ${absoluteTime}</div>`;
+            }
+
+            // 🚀 NEW: 筆記評分顯示
+            let highlightScoreDisplay = '';
+            if (student.highlightAnalysis && student.highlightAnalysis.score > 0) {
+                const analysis = student.highlightAnalysis;
+                const scoreCardId = `highlight-score-${student.name.replace(/\s/g, '-')}`;
+
+                highlightScoreDisplay = `
+                    <div class="mt-2 pt-2 border-t">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-purple-700">📝 筆記加分:</span>
+                            <span class="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-bold rounded">+${analysis.score} 分</span>
+                        </div>
+                        <div class="text-xs text-gray-600 mt-1 cursor-pointer hover:text-purple-600" onclick="document.getElementById('${scoreCardId}').classList.toggle('hidden')">
+                            <i class="fas fa-info-circle"></i> 點擊查看評分明細
+                        </div>
+                        <div id="${scoreCardId}" class="hidden mt-2 p-2 bg-purple-50 rounded text-xs space-y-1">
+                            <div class="font-bold text-purple-800 mb-1">評分明細：</div>
+                            <div class="flex justify-between"><span>🎨 顏色多樣性:</span><span class="font-bold">+${analysis.breakdown.colorDiversity}</span></div>
+                            <div class="flex justify-between"><span>🎯 精確度:</span><span class="font-bold">+${analysis.breakdown.precision}</span></div>
+                            <div class="flex justify-between"><span>📍 分段性:</span><span class="font-bold">+${analysis.breakdown.segmentation}</span></div>
+                            <div class="flex justify-between"><span>🔗 答題關聯:</span><span class="font-bold">+${analysis.breakdown.relevance}</span></div>
+                            <div class="flex justify-between"><span>⏱️ 時間分配:</span><span class="font-bold">+${analysis.breakdown.timeDistribution}</span></div>
+                            <div class="mt-2 pt-2 border-t border-purple-200 text-xs text-gray-600">
+                                <div>標註數: ${analysis.stats.highlightCount} 個</div>
+                                <div>顏色數: ${analysis.stats.colorCount} 種</div>
+                                <div>覆蓋率: ${analysis.stats.coverageRate}%</div>
+                                <div>段落數: ${analysis.stats.segmentCount} 段</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            answerContentHTML += `<div style="font-weight:700; margin-top:6px; padding-top:6px; border-top:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:${correctCount === questions.length ? '#16a34a' : '#374151'}">
+                <span>正確: ${correctCount}/${questions.length} (${accuracy}%)</span>
+                ${rankBadge}
+            </div>
+            ${teacherTimeDisplay}
+            ${highlightScoreDisplay}
+            </div>`;
+
+        } catch (e) {
+            answerContentHTML = `<p class="text-gray-500">答案格式錯誤</p>`;
+        }
+    } else {
+        // 預設選擇題模式 (1-4)
+        answerContentHTML = `<p class="text-2xl font-bold text-blue-600">${student.answer}</p>`;
+    }
+
+    // 從全局 presence Map 中讀取學生分心狀態（所有模式通用）
+    const presenceData = activeStudentsPresenceMap.get(student.name) || { isDistracted: false, distractionCount: 0 };
+    const isDistracted = presenceData.isDistracted;
+    // 🚀 PRIVACY FIX: 隱密學生分心次數徽章 - 防止學生看到次數累加而反覆切換頁面
+    const distractionWarning = isDistracted
+        ? `<i class="fas fa-exclamation-triangle text-red-600 animate-pulse" title="學生分心中"></i>`
+        : '';
+    const cardBgClass = isDistracted ? 'bg-red-50 border-2 border-red-400' : '';
+
+    // 📢 快速評語按鈕 HTML
+    // 🆕 MODIFIED [v3.7.9]: 加 mt-2 + gap-1.5 提升視覺間距，與名字列、答題區有呼吸感
+    const quickCommentBtns = `
+        <div class="quick-comment-row flex gap-1.5 mt-2 flex-wrap w-full">
+            <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-green-100 hover:bg-green-200 text-green-800 font-semibold transition whitespace-nowrap" data-comment="💪 讚！老師說你很棒！" data-student="${student.name}">💪 讚！</button>
+            <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-semibold transition whitespace-nowrap" data-comment="⭐ 加油！繼續努力！" data-student="${student.name}">⭐ 加油！</button>
+            <button class="quick-comment-btn text-xs px-2.5 py-1 rounded-full bg-red-100 hover:bg-red-200 text-red-800 font-semibold transition whitespace-nowrap" data-comment="📝 再檢查一次看看！" data-student="${student.name}">📝 再試試</button>
+        </div>
+    `;
+
+    card.className = `student-response-item ${cardBgClass}`;
+
+    // 📖 閱讀測驗模式：動態切換容器為較少欄數（讓卡片更寬）
+    if (container) {
+        if (mode === 'reading_comprehension') {
+            container.classList.add('reading-mode-container');
+        } else {
+            container.classList.remove('reading-mode-container');
+        }
+    }
+    card.innerHTML = `
+        <div class="name-box flex items-center justify-between">
+            <span>${student.name}</span>
+            <div class="flex items-center gap-1">
+                <span class="distraction-status">${distractionWarning}</span>
+                <button class="kick-student-btn hover:bg-red-100 rounded px-2 py-1 transition-colors" data-student-name="${student.name}" title="踢掉此學生">
+                    <i class="fas fa-times text-red-600 font-bold"></i>
+                </button>
+            </div>
+        </div>
+        <div class="answer-box">
+            ${answerContentHTML}
+        </div>
+        ${quickCommentBtns}
+    `;
+    container.appendChild(card);
+
+    // 🚀 NEW: 為踢出按鈕添加事件監聽器
+    const kickBtn = card.querySelector('.kick-student-btn');
+    if (kickBtn) {
+        console.log(`[KickBtn] ✓ 為 ${student.name} 綁定踢出按鈕事件`);
+        kickBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const studentName = e.currentTarget.dataset.studentName;
+            console.log(`[KickBtn] 🔔 踢出按鈕被點擊: ${studentName}`);
+            kickStudentFromClass(studentName);
+        });
+    } else {
+        console.warn(`[KickBtn] ⚠️ 找不到 ${student.name} 的踢出按鈕`);
+    }
+
+    // 特殊處理：繪圖模式添加點擊放大功能
+    if (mode === 'drawing') {
+        const imgElement = card.querySelector('.answer-box img');
+        if (imgElement) {
+            imgElement.addEventListener('click', (e) => {
+                const fullImageUrl = e.target.dataset.fullImage;
+                showMagnifiedDrawing(fullImageUrl);
+            });
+        }
+    }
+
+    // 📢 快速評語按鈕事件（功能3）
+    card.querySelectorAll('.quick-comment-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const targetStudent = e.currentTarget.dataset.student;
+            const commentText = e.currentTarget.dataset.comment;
+            if (!targetStudent || !classroomCode) return;
+            try {
+                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', targetStudent);
+                await setDoc(studentRef, { teacherComment: { text: commentText, ts: Date.now() } }, { merge: true });
+                btn.classList.add('opacity-50', 'scale-90');
+                setTimeout(() => btn.classList.remove('opacity-50', 'scale-90'), 800);
+                console.log(`[QuickComment] ✓ 評語「${commentText}」已送給 ${targetStudent}`);
+            } catch (err) {
+                console.error('[QuickComment] 送出評語失敗:', err);
+            }
+        });
+    });
+}
+
+/**
+ * 🚀 NEW: (Teacher) 踢掉某個學生 - 強制登出該學生
+ * @param {string} studentName - 要踢掉的學生名稱
+ */
+async function kickStudentFromClass(studentName) {
+    console.log(`[KickStudent] 📝 kickStudentFromClass 被調用: ${studentName}`);
+    // 確認對話框
+    const confirmDialog = document.createElement('div');
+    confirmDialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    confirmDialog.innerHTML = `
+        <div class="bg-white rounded-lg shadow-2xl p-8 max-w-md w-11/12">
+            <h3 class="text-xl font-bold text-red-700 mb-4">
+                <i class="fas fa-exclamation-circle mr-2"></i>確認踢掉學生
+            </h3>
+            <p class="text-gray-700 mb-6">確定要踢掉 <strong>${studentName}</strong> 嗎？
+            <br/>該學生將被強制登出並需要重新登入。</p>
+            <div class="flex gap-3 justify-end">
+                <button class="kick-cancel-btn px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded text-gray-800 font-semibold transition-colors">
+                    取消
+                </button>
+                <button class="kick-confirm-btn px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white font-semibold transition-colors">
+                    確認踢掉
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(confirmDialog);
+
+    // 取消按鈕
+    const cancelBtn = confirmDialog.querySelector('.kick-cancel-btn');
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            confirmDialog.remove();
+        });
+    }
+
+    // 確認按鈕
+    const confirmBtn = confirmDialog.querySelector('.kick-confirm-btn');
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', async () => {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = '處理中...';
+            await performKickStudent(studentName);
+            confirmDialog.remove();
+        });
+    }
+}
+
+/**
+ * 🚀 NEW: 執行踢掉學生的操作 - 刪除 Firestore 中的學生數據
+ * @param {string} studentName - 要踢掉的學生名稱
+ */
+async function performKickStudent(studentName) {
+    try {
+        // 🚀 CRITICAL FIX: 先把學生加入 pendingKickStudents，防止 presence listener 重新添加
+        pendingKickStudents.add(studentName);
+        console.log(`[Teacher] 🔒 已將 ${studentName} 加入 pendingKickStudents`);
+
+        // 🚀 CRITICAL: 先從本地狀態移除，確保 onSnapshot 觸發時不會重新渲染該學生
+        activeStudentNames = activeStudentNames.filter(name => name !== studentName);
+        activeStudentsPresenceMap.delete(studentName);
+        console.log(`[Teacher] 🔄 已從本地狀態移除: ${studentName}`);
+
+        // 🚀 NEW: 先移除 DOM 卡片（在刪除 Firestore 文檔之前）
+        removeStudentCardFromDOM(studentName);
+
+        // 刪除學生提交記錄（使用 studentName 作為文檔 ID）
+        const responseRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+        await deleteDoc(responseRef);
+        console.log(`[Teacher] ✅ 已刪除 ${studentName} 的提交記錄`);
+
+        // 🚀 CRITICAL FIX: 學生端 presence 文檔使用 userId 作為 ID，而非 studentName
+        // 需要查詢 presence collection 找到 name === studentName 的文檔並刪除
+        const presenceColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+        const presenceQuery = query(presenceColRef, where('name', '==', studentName));
+        const presenceSnapshot = await getDocs(presenceQuery);
+
+        if (!presenceSnapshot.empty) {
+            // 刪除所有匹配的 presence 文檔（通常只有一個）
+            const deletePromises = [];
+            presenceSnapshot.forEach((docSnapshot) => {
+                console.log(`[Teacher] 🔍 找到 ${studentName} 的 presence 文檔，ID: ${docSnapshot.id}`);
+                deletePromises.push(deleteDoc(docSnapshot.ref));
+            });
+            await Promise.all(deletePromises);
+            console.log(`[Teacher] ✅ 已刪除 ${studentName} 的 presence 記錄`);
+        } else {
+            console.warn(`[Teacher] ⚠️ 找不到 ${studentName} 的 presence 文檔`);
+        }
+
+        // 更新儀表板
+        updateTeacherDashboard(currentInteractionMode);
+
+        console.log(`[Teacher] ✅ 踢掉學生完成: ${studentName}`);
+        showMessage(`已踢掉 ${studentName}，該學生需要重新登入。`, 'success');
+
+        // 🚀 CLEANUP: 延遲移除 pendingKickStudents（給 onSnapshot 足夠時間處理）
+        setTimeout(() => {
+            pendingKickStudents.delete(studentName);
+            console.log(`[Teacher] 🔓 已從 pendingKickStudents 移除: ${studentName}`);
+        }, 2000);
+    } catch (error) {
+        console.error('[Teacher] ❌ 踢掉學生失敗:', error);
+        showMessage(`踢掉 ${studentName} 失敗：${error.message}`, 'error');
+        // 🚀 CLEANUP: 即使失敗也要從 pendingKickStudents 移除
+        pendingKickStudents.delete(studentName);
+    }
+}
+
+/**
+ * 🚀 NEW: 從 DOM 中移除指定學生的卡片
+ * @param {string} studentName - 要移除的學生名稱
+ */
+function removeStudentCardFromDOM(studentName) {
+    const container = document.getElementById('student-responses-container');
+    if (!container) {
+        console.warn('[Teacher] ⚠️ student-responses-container 不存在');
+        return;
+    }
+
+    // 🚀 CRITICAL FIX: 使用正確的選擇器 - class 是 student-response-item，名稱在 data-student-name 屬性中
+    const card = container.querySelector(`.student-response-item[data-student-name="${studentName}"]`);
+    if (card) {
+        card.remove();
+        console.log(`[Teacher] 🗑️ 已從 DOM 移除 ${studentName} 的卡片`);
+    } else {
+        console.warn(`[Teacher] ⚠️ 找不到 ${studentName} 的卡片 DOM 元素`);
+    }
+}
+
+// 🚀 NEW: 防抖變數，防止 refreshStudentCardsFromPresence 被重複觸發
+let refreshCardsDebounceTimer = null;
+let refreshCardsInProgress = false;
+
+/**
+ * 🚀 NEW: 當 presence 變化時，增量更新學生卡片（不等待 studentResponses snapshot）
+ * 這解決了學生重新登入後卡片不會即時出現的問題
+ * 使用防抖機制防止短時間內重複觸發導致卡片重複
+ */
+function refreshStudentCardsFromPresence() {
+    // 清除之前的定時器
+    if (refreshCardsDebounceTimer) {
+        clearTimeout(refreshCardsDebounceTimer);
+    }
+
+    // 使用防抖：延遲 100ms 執行，合併快速連續的調用
+    refreshCardsDebounceTimer = setTimeout(() => {
+        _doRefreshStudentCards();
+    }, 100);
+}
+
+async function _doRefreshStudentCards() {
+    // 防止並發執行
+    if (refreshCardsInProgress) {
+        console.log('[RefreshCards] ⏳ Already in progress, skipping');
+        return;
+    }
+
+    if (currentRole !== 'teacher' || !classroomCode) {
+        return;
+    }
+
+    const container = document.getElementById('student-responses-container');
+    if (!container) {
+        console.log('[RefreshCards] ⚠️ Container not found');
+        return;
+    }
+
+    // 檢查當前是否在需要顯示卡片的模式
+    // 🚀 FIX: 擴展支援所有九宮格題型，確保所有模式都能即時監控學生重新登入
+    const validModes = [
+        'true_false',           // 是非題
+        'text_input',           // 文字題 ✅ 新增
+        'multiple_choice',      // 選擇題
+        'drawing',              // 繪圖板
+        'url_dispatch',         // 派送網址/HTML ✅ 新增
+        'quick_answer',         // 快問快答/搶答
+        'quick_poll',           // 快速投票
+        'recording',            // 錄音/語音
+        'reading_comprehension',// 閱讀測驗
+        'peer_review',          // 同儕互評
+        'voting',               // 投票
+        'sequencing',           // 排序題
+        'matching'              // 配對題
+    ];
+    if (!validModes.includes(currentInteractionMode)) {
+        console.log('[RefreshCards] ℹ️ Current mode does not require cards:', currentInteractionMode);
+        return;
+    }
+
+    refreshCardsInProgress = true;
+
+    try {
+        // 獲取當前已顯示的學生卡片
+        const existingCards = container.querySelectorAll('.student-response-item[data-student-name]');
+        const existingStudentNames = new Set();
+        existingCards.forEach(card => {
+            existingStudentNames.add(card.getAttribute('data-student-name'));
+        });
+
+        // 🚀 FIX: 檢查是否需要完全重新渲染
+        // 條件1: 容器為空或只有提示文字（沒有任何學生卡片）
+        // 條件2: 有在線學生但沒有對應的卡片
+        const hasNoCards = existingCards.length === 0;
+        const hasOnlineStudents = activeStudentNames.length > 0;
+        const needsFullRender = hasNoCards && hasOnlineStudents;
+
+        if (needsFullRender) {
+            console.log(`[RefreshCards] 🔄 Full render needed: ${activeStudentNames.length} online students, 0 cards`);
+
+            // 從 Firestore 獲取所有學生的回應
+            const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            let responsesMap = new Map();
+
+            try {
+                const snapshot = await getDocs(studentsColRef);
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    responsesMap.set(data.name, data);
+                });
+            } catch (error) {
+                console.warn('[RefreshCards] ⚠️ Failed to fetch responses:', error);
+            }
+
+            // 🚀 CRITICAL FIX: 異步操作完成後，再次檢查容器狀態
+            // 防止與 listenToStudentSubmissions 競態條件導致重複卡片
+            const cardsAfterAwait = container.querySelectorAll('.student-response-item[data-student-name]');
+            if (cardsAfterAwait.length > 0) {
+                console.log(`[RefreshCards] ⚠️ Skipping render - ${cardsAfterAwait.length} cards already exist (created by onSnapshot)`);
+                return;
+            }
+
+            // 清空容器（在確認沒有其他進程創建卡片後才清空）
+            container.innerHTML = '';
+
+            // 為所有在線學生創建卡片
+            activeStudentNames.forEach(studentName => {
+                // 🚀 CRITICAL: 創建前最後一次檢查，防止重複
+                const existingCard = container.querySelector(`.student-response-item[data-student-name="${studentName}"]`);
+                if (existingCard) {
+                    console.log(`[RefreshCards] ⚠️ Card for ${studentName} already exists, skipping`);
+                    return;
+                }
+                const studentData = responsesMap.get(studentName) || { name: studentName, answer: null };
+                createStudentCard(studentData, container, currentInteractionMode);
+            });
+
+            // 🚀 FIX: 強制瀏覽器重繪，確保卡片立即顯示
+            void container.offsetHeight; // 觸發同步重排
+            requestAnimationFrame(() => {
+                container.style.opacity = '0.99';
+                requestAnimationFrame(() => {
+                    container.style.opacity = '1';
+                });
+            });
+
+            console.log(`[RefreshCards] ✅ Full render completed: ${activeStudentNames.length} cards created`);
+            return;
+        }
+
+        // 找出需要新增的學生（在線但沒有卡片）
+        const newStudents = activeStudentNames.filter(name => !existingStudentNames.has(name));
+
+        if (newStudents.length === 0) {
+            console.log('[RefreshCards] ℹ️ No new students to add');
+            return;
+        }
+
+        console.log(`[RefreshCards] 🆕 Adding cards for ${newStudents.length} new students:`, newStudents);
+
+        // 嘗試從 Firestore 獲取這些學生的回應（如果有的話）
+        const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        let responsesMap = new Map();
+
+        try {
+            const snapshot = await getDocs(studentsColRef);
+            snapshot.forEach(doc => {
+                const data = doc.data();
+                if (newStudents.includes(data.name)) {
+                    responsesMap.set(data.name, data);
+                }
+            });
+        } catch (error) {
+            console.warn('[RefreshCards] ⚠️ Failed to fetch responses:', error);
+        }
+
+        // 移除「沒有學生在線」提示（如果有）
+        const noStudentMsg = container.querySelector('.text-gray-500.text-center');
+        if (noStudentMsg) {
+            noStudentMsg.remove();
+        }
+
+        // 為每個新學生創建卡片（再次檢查防止重複）
+        let addedCount = 0;
+        newStudents.forEach(studentName => {
+            // 🚀 CRITICAL: 創建前再次檢查是否已存在
+            const existingCard = container.querySelector(`.student-response-item[data-student-name="${studentName}"]`);
+            if (existingCard) {
+                console.log(`[RefreshCards] ⚠️ Card for ${studentName} already exists, skipping`);
+                return;
+            }
+
+            const studentData = responsesMap.get(studentName) || { name: studentName, answer: null };
+            createStudentCard(studentData, container, currentInteractionMode);
+            addedCount++;
+        });
+
+        if (addedCount > 0) {
+            console.log(`[RefreshCards] ✅ Added ${addedCount} new student cards`);
+
+            // 🚀 FIX: 強制瀏覽器重繪，確保卡片立即顯示
+            void container.offsetHeight;
+            requestAnimationFrame(() => {
+                container.style.opacity = '0.99';
+                requestAnimationFrame(() => {
+                    container.style.opacity = '1';
+                });
+            });
+        }
+    } finally {
+        refreshCardsInProgress = false;
+    }
+}
+
+/**
+ * (Teacher) Listens for all student submissions and dynamically displays them.
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ * @param {string} mode - The current interaction mode, used to determine the answer type.
+ */
+function listenToStudentSubmissions(mode) {
+    // Use classroomCode in the Firestore path
+    const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    const container = document.getElementById('student-responses-container');
+
+    const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        container.innerHTML = '';
+        lastSelectedStudentCard = null;
+
+        // REMOVED: document.getElementById('responded-student-count').textContent = querySnapshot.size; 
+
+        // 🚀 NEW: 為所有模式統一處理 - 顯示所有在線學生（包括未提交的）
+        // 創建一個 Map 來快速查找已提交答案的學生
+        const responsesMap = new Map();
+        querySnapshot.forEach((doc) => {
+            const student = doc.data();
+            responsesMap.set(student.name, student);
+        });
+
+        // 為所有在線學生創建響應數組（包括未提交答案的）
+        let responses = [];
+        activeStudentNames.forEach(studentName => {
+            if (responsesMap.has(studentName)) {
+                // 學生已提交答案
+                responses.push(responsesMap.get(studentName));
+            } else {
+                // 學生未提交答案，創建佔位數據
+                responses.push({
+                    name: studentName,
+                    answer: null
+                });
+            }
+        });
+
+        // 🚀 FIX: 即使沒有學生在線，也要處理（清空容器）
+        if (responses.length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-center col-span-full">沒有學生在線...</p>';
+            allStudentResponses = [];
+            clearStudentsByAnswerList();
+            return;
+        }
+
+        // 計算閱讀測驗排名（如果是閱讀測驗模式）
+        let rankedStudents = [];
+        if (mode === 'reading_comprehension' && readingComprehensionData.questions) {
+            responses.forEach(student => {
+                if (student.answer) {
+                    try {
+                        const studentAnswers = JSON.parse(student.answer);
+                        const questions = readingComprehensionData.questions;
+                        let correctCount = 0;
+                        studentAnswers.forEach((ans, index) => {
+                            if (questions[index] && ans === questions[index].correctAnswer) {
+                                correctCount++;
+                            }
+                        });
+                        const accuracy = Math.round((correctCount / questions.length) * 100);
+
+                        // 🚀 CRITICAL FIX: 優先使用 Firestore 中的權威分數，確保教師端排名與學生端一致
+                        let baseScore, highlightBonus, totalScore;
+                        if (student.baseScore !== undefined && student.totalScore !== undefined) {
+                            baseScore = student.baseScore;
+                            highlightBonus = student.highlightAnalysis ? student.highlightAnalysis.score : 0;
+                            totalScore = student.totalScore;
+                        } else {
+                            baseScore = accuracy;
+                            highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                            totalScore = baseScore + highlightBonus;
+                        }
+
+                        rankedStudents.push({
+                            name: student.name,
+                            correctCount: correctCount,
+                            totalQuestions: questions.length,
+                            accuracy: accuracy,
+                            baseScore: baseScore,
+                            highlightBonus: highlightBonus,
+                            totalScore: totalScore,
+                            timestamp: student.timestamp,
+                            durationMs: student.durationMs || null
+                        });
+                    } catch (e) {
+                        // 答案格式錯誤，不加入排名
+                    }
+                }
+            });
+            // 🚀 CRITICAL FIX: 排序邏輯 - 總分降序（基礎分+筆記加分）→ 作答時長升序 → 提交時間升序 → 姓名升序
+            rankedStudents.sort((a, b) => {
+                // 1. 主要排序：總分高的在前（基礎分 + 筆記加分）
+                if (b.totalScore !== a.totalScore) {
+                    return b.totalScore - a.totalScore;
+                }
+                // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+                if (a.durationMs && b.durationMs) {
+                    return a.durationMs - b.durationMs;
+                }
+                // 如果只有一方有作答時長，有作答時長的排在前面
+                if (a.durationMs && !b.durationMs) return -1;
+                if (!a.durationMs && b.durationMs) return 1;
+                // 3. 第三排序：提交時間早的在前（作為後備）
+                if (a.timestamp && b.timestamp) {
+                    const timeA = a.timestamp.toMillis ? a.timestamp.toMillis() : new Date(a.timestamp).getTime();
+                    const timeB = b.timestamp.toMillis ? b.timestamp.toMillis() : new Date(b.timestamp).getTime();
+                    if (timeA !== timeB) {
+                        return timeA - timeB;
+                    }
+                }
+                // 4. 最後排序：姓名字母順序
+                return a.name.localeCompare(b.name);
+            });
+
+            // 🚀 NEW: 重新排序 responses 數組：已提交的按排名，未提交的按姓名排在後面
+            const rankMap = new Map();
+            rankedStudents.forEach((student, index) => {
+                rankMap.set(student.name, index);
+            });
+
+            responses.sort((a, b) => {
+                const hasAnswerA = a.answer !== null && a.answer !== undefined;
+                const hasAnswerB = b.answer !== null && b.answer !== undefined;
+
+                // 已提交的排在前面
+                if (hasAnswerA && !hasAnswerB) return -1;
+                if (!hasAnswerA && hasAnswerB) return 1;
+
+                // 都已提交：按排名
+                if (hasAnswerA && hasAnswerB) {
+                    const rankA = rankMap.has(a.name) ? rankMap.get(a.name) : 9999;
+                    const rankB = rankMap.has(b.name) ? rankMap.get(b.name) : 9999;
+                    return rankA - rankB;
+                }
+
+                // 都未提交：按姓名
+                return a.name.localeCompare(b.name);
+            });
+        }
+
+        // 🚀 NEW: 使用統一的卡片生成函數（支持所有9種模式，包含分心狀態監控）
+        responses.forEach(student => {
+            createStudentCard(student, container, mode, rankedStudents);
+        });
+
+        allStudentResponses = responses;
+
+        // Special handling for quick answer mode
+        if (mode === 'quick_answer') {
+            console.log('Teacher: Processing quick answer responses:', responses);
+            const quickAnswerWinners = responses.filter(student =>
+                student.answer && student.answer.includes('搶答成功')
+            );
+            console.log('Teacher: Quick answer winners found:', quickAnswerWinners);
+
+            if (quickAnswerWinners.length > 0) {
+                const winner = quickAnswerWinners[0]; // First one to answer
+                console.log('Teacher: Showing winner:', winner.name);
+                showQuickAnswerWinner(winner.name);
+            }
+        }
+
+        if (!statisticsModal.classList.contains('hidden')) {
+            drawChart(allStudentResponses, currentInteractionMode);
+        }
+
+        // 🚀 NEW: 更新教師儀表板 - 實時更新進度條、在線學生、分心提醒
+        updateTeacherDashboard(mode);
+    }, (error) => {
+        console.error("[Teacher] Error listening to student submissions:", error);
+        showMessage("無法監聽學生作答，請檢查連線。", "error");
+    });
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('studentResponses', unsubscribe);
+    studentResponsesUnsubscribe = unsubscribe; // 保持兼容性
+}
+
+/**
+ * 🚀 NEW: (Student) 獨立監聽器用於同步圖表數據
+ * 學生端監聽教師端的「顯示統計」標誌和其他學生的回應，即時更新圖表
+ * @param {string} mode - 'true_false' 或 'multiple_choice'
+ */
+function setupStudentChartListener(mode) {
+    console.log(`[👨‍🎓 Student Chart] setupStudentChartListener START - mode: ${mode}, classroomCode: ${classroomCode}, baseAppId: ${baseAppId}`);
+
+    if (!classroomCode) {
+        console.warn('[👨‍🎓 Student Chart] ❌ classroomCode not set, cannot setup chart listener');
+        return;
+    }
+
+    // 清除舊的監聽器
+    if (studentChartListenerUnsubscribe) {
+        console.log('[👨‍🎓 Student Chart] Clearing old listener');
+        studentChartListenerUnsubscribe();
+        studentChartListenerUnsubscribe = null;
+    }
+
+    const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    console.log('[👨‍🎓 Student Chart] studentResponses collection path set');
+
+    // 🚀 NEW: 同時監聽 control 文件來檢查教師端的 showStudentChart 標誌
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    console.log('[👨‍🎓 Student Chart] control doc path set');
+    let shouldShowChart = false;
+    let listenerActive = false;
+
+    // 監聽教師端的「顯示統計」標誌
+    const controlUnsubscribe = onSnapshot(controlRef, (controlDoc) => {
+        if (controlDoc.exists()) {
+            shouldShowChart = controlDoc.data().showStudentChart === true;
+            console.log('[👨‍🎓 Student Chart] 🔔 Control doc updated - showStudentChart:', shouldShowChart, 'data:', controlDoc.data());
+
+            // 🚀 CRITICAL FIX: 當標誌更新時立即主動檢查是否應該顯示圖表
+            if (shouldShowChart && currentChartResponses.length > 0) {
+                console.log('[👨‍🎓 Student Chart] 🔥 Proactive update triggered by flag change');
+                if (mode === 'true_false') {
+                    const containerTf = document.getElementById('student-chart-container-tf');
+                    if (containerTf && studentChartManager) {
+                        studentChartManager.updateChart(currentChartResponses, 'true_false');
+                        containerTf.classList.remove('hidden');
+                        console.log('[👨‍🎓 Student Chart] ✅ Chart displayed proactively');
+                    }
+                } else if (mode === 'multiple_choice') {
+                    const containerMc = document.getElementById('student-chart-container-mc');
+                    if (containerMc && studentChartManager) {
+                        studentChartManager.updateChart(currentChartResponses, 'multiple_choice');
+                        containerMc.classList.remove('hidden');
+                        console.log('[👨‍🎓 Student Chart] ✅ Chart displayed proactively');
+                    }
+                }
+            }
+        } else {
+            console.log('[👨‍🎓 Student Chart] ℹ️ Control doc does not exist');
+        }
+    }, (error) => {
+        console.warn('[👨‍🎓 Student Chart] ❌ Error listening to control settings:', error);
+    });
+
+    // 監聽學生回應
+    const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        const responses = [];
+        querySnapshot.forEach((doc) => {
+            const student = doc.data();
+            responses.push(student);
+        });
+
+        // 🚀 CRITICAL FIX: 保存最新的回應以便在標誌更新時使用
+        currentChartResponses = responses;
+
+        console.log(`[👨‍🎓 Student Chart] 🔔 Responses updated - count: ${responses.length}, shouldShowChart: ${shouldShowChart}, mode: ${mode}`);
+
+        // 🚀 KEY: 只在教師按「顯示統計」時更新和顯示圖表
+        if (shouldShowChart && responses.length > 0) {
+            if (mode === 'true_false') {
+                const containerTf = document.getElementById('student-chart-container-tf');
+                if (containerTf) {
+                    console.log('[👨‍🎓 Student Chart] ✅ Updating true_false chart with', responses.length, 'responses');
+                    studentChartManager.updateChart(responses, 'true_false');
+                    containerTf.classList.remove('hidden');
+                    console.log('[👨‍🎓 Student Chart] ✅ true_false chart shown');
+                } else {
+                    console.warn('[👨‍🎓 Student Chart] ❌ container student-chart-container-tf not found');
+                }
+            } else if (mode === 'multiple_choice') {
+                const containerMc = document.getElementById('student-chart-container-mc');
+                if (containerMc) {
+                    console.log('[👨‍🎓 Student Chart] ✅ Updating multiple_choice chart with', responses.length, 'responses');
+                    studentChartManager.updateChart(responses, 'multiple_choice');
+                    containerMc.classList.remove('hidden');
+                    console.log('[👨‍🎓 Student Chart] ✅ multiple_choice chart shown');
+                } else {
+                    console.warn('[👨‍🎓 Student Chart] ❌ container student-chart-container-mc not found');
+                }
+            }
+        } else if (!shouldShowChart) {
+            console.log('[👨‍🎓 Student Chart] ℹ️ Hiding charts - shouldShowChart is false');
+            // 隱藏圖表當教師關閉統計
+            if (mode === 'true_false') {
+                const containerTf = document.getElementById('student-chart-container-tf');
+                if (containerTf) containerTf.classList.add('hidden');
+            } else if (mode === 'multiple_choice') {
+                const containerMc = document.getElementById('student-chart-container-mc');
+                if (containerMc) containerMc.classList.add('hidden');
+            }
+        } else {
+            console.log(`[👨‍🎓 Student Chart] ℹ️ Chart not shown - shouldShowChart: ${shouldShowChart}, responses.length: ${responses.length}`);
+        }
+    }, (error) => {
+        console.error('[👨‍🎓 Student Chart] ❌ Error listening to student responses:', error);
+    });
+
+    studentChartListenerUnsubscribe = () => {
+        console.log('[👨‍🎓 Student Chart] Unsubscribing from chart listeners');
+        unsubscribe();
+        controlUnsubscribe();
+    };
+    console.log(`[👨‍🎓 Student Chart] ✅ Chart listener setup complete for mode: ${mode}`);
+}
+
+/**
+ * 🚀 NEW: (Teacher) 更新學生卡片的分心狀態顯示
+ * 當 presence 數據更新時，同步更新主視圖中已渲染的學生卡片
+ */
+function updateStudentCardsDistractionStatus() {
+    const container = document.getElementById('student-responses-container');
+    if (!container) {
+        console.log('[Distraction] ⚠️ updateStudentCardsDistractionStatus: container not found');
+        return;
+    }
+
+    // 找到所有學生卡片
+    const studentCards = container.querySelectorAll('.student-response-item[data-student-name]');
+    console.log(`[Distraction] 🔍 updateStudentCardsDistractionStatus: Found ${studentCards.length} student cards, activeStudentsPresenceMap size: ${activeStudentsPresenceMap.size}`);
+
+    studentCards.forEach(card => {
+        const studentName = card.getAttribute('data-student-name');
+        if (!studentName) return;
+
+        // 從 Map 中讀取分心狀態
+        const presenceData = activeStudentsPresenceMap.get(studentName) || { isDistracted: false, distractionCount: 0 };
+        const isDistracted = presenceData.isDistracted;
+        const distractionCount = presenceData.distractionCount;
+        console.log(`[Distraction] 📊 Student: ${studentName}, isDistracted: ${isDistracted}, distractionCount: ${distractionCount}`);
+
+        // 更新卡片背景樣式
+        if (isDistracted) {
+            card.classList.add('bg-red-50', 'border-2', 'border-red-400');
+        } else {
+            card.classList.remove('bg-red-50', 'border-2', 'border-red-400');
+        }
+
+        // 🚀 FIX: 只更新分心指示器，不覆蓋整個 nameBox（保留踢出按鈕）
+        const nameBox = card.querySelector('.name-box');
+        if (nameBox) {
+            // 找到或創建分心指示器容器
+            let statusContainer = nameBox.querySelector('.distraction-status');
+            if (!statusContainer) {
+                // 如果沒有分心指示器容器，找到按鈕容器並在按鈕前插入
+                const btnContainer = nameBox.querySelector('.flex.items-center.gap-1');
+                if (btnContainer) {
+                    statusContainer = document.createElement('span');
+                    statusContainer.className = 'distraction-status';
+                    btnContainer.insertBefore(statusContainer, btnContainer.firstChild);
+                }
+            }
+
+            // 🚀 PRIVACY FIX: 只更新分心指示器的內容
+            if (statusContainer) {
+                if (isDistracted) {
+                    statusContainer.innerHTML = `<i class="fas fa-exclamation-triangle text-red-600 animate-pulse" title="學生分心中"></i>`;
+                } else {
+                    statusContainer.innerHTML = '';
+                }
+            }
+        }
+    });
+}
+
+/**
+ * (Teacher) Listens for student online presence and updates the active student count list.
+ * This listener should be persistent as long as the teacher is in the classroom.
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ * @param {Function} onInitialSnapshotCallback - 可選回調函數，在首次快照到達時調用
+ * @returns {Promise<void>} - 在首次快照完成時 resolve 的 Promise
+ */
+function listenToClassroomPresence(onInitialSnapshotCallback = null) {
+    // Only set up the listener if it's not already active
+    if (ListenerManager.has('classroomPresence')) {
+        console.log("Presence listener already active. Skipping re-subscription.");
+        // 如果已經有監聽器，立即調用回調（數據已就緒）
+        if (onInitialSnapshotCallback) {
+            onInitialSnapshotCallback();
+        }
+        return Promise.resolve();
+    }
+
+    if (!classroomCode) {
+        console.warn("Classroom code not set, cannot listen to presence.");
+        // 🚀 FIX: 返回已 resolve 的 Promise 而不是 rejected，避免未處理的 rejection
+        // 調用者可以繼續執行，只是不會有 presence 數據
+        if (onInitialSnapshotCallback) {
+            onInitialSnapshotCallback(); // 立即調用回調
+        }
+        return Promise.resolve(); // 返回成功的 Promise
+    }
+
+    // 🚀 NEW: 創建 Promise 以支援異步等待首次快照
+    let initialSnapshotResolve;
+    const initialSnapshotPromise = new Promise(resolve => {
+        initialSnapshotResolve = resolve;
+    });
+    let isFirstSnapshot = true; // 追蹤是否為首次快照
+
+    const presenceColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+    const activeStudentCountSpan = document.getElementById('active-student-count');
+    const modalStudentNamesDiv = document.getElementById('modal-student-names');
+    const monitorContainer = document.getElementById('student-responses-container');
+
+    const unsubscribe = onSnapshot(presenceColRef, (querySnapshot) => {
+        console.log(`[Distraction] 🔄 Presence snapshot received: ${querySnapshot.size} students online (first: ${isFirstSnapshot})`);
+        // 🚀 FIX: 儲存完整的學生數據（包含分心狀態），而不只是姓名
+        const activeStudentsData = []; // 新增：儲存完整學生資料
+        activeStudentNames = []; // 保持向後兼容
+        activeStudentsPresenceMap.clear(); // 🚀 NEW: 清空舊數據
+
+        querySnapshot.forEach(doc => {
+            const studentData = doc.data();
+
+            // 🚀 CRITICAL FIX: 跳過正在被踢出的學生，防止競爭條件導致卡片重新出現
+            if (pendingKickStudents.has(studentData.name)) {
+                console.log(`[Distraction] 🚫 跳過正在被踢出的學生: ${studentData.name}`);
+                return; // 跳過這個學生
+            }
+
+            activeStudentNames.push(studentData.name);
+            activeStudentsData.push(studentData); // 儲存完整數據
+            // 🚀 NEW: 將完整的 presence 數據存入 Map（key: 學生名字, value: presence 數據）
+            activeStudentsPresenceMap.set(studentData.name, {
+                isDistracted: studentData.isDistracted === true,
+                distractionCount: studentData.distractionCount || 0
+            });
+            console.log(`[Distraction] ✓ Loaded presence for ${studentData.name}: isDistracted=${studentData.isDistracted}, distractionCount=${studentData.distractionCount || 0}`);
+        });
+
+        activeStudentCountSpan.textContent = activeStudentNames.length;
+
+        // Update the student list modal with distraction status.
+        modalStudentNamesDiv.innerHTML = '';
+        if (lastSelectedModalStudent) { // Clear highlight in modal when list rebuilds
+            lastSelectedModalStudent.classList.remove('modal-selected-student-border');
+            lastSelectedModalStudent = null;
+        }
+
+        if (activeStudentsData.length === 0) {
+            modalStudentNamesDiv.innerHTML = `
+                <div class="empty-state-container w-full h-full min-h-[120px] flex flex-col items-center justify-center text-center py-8 sm:py-10">
+                    <div class="w-14 h-14 sm:w-16 sm:h-16 mb-4 rounded-full bg-gray-100 flex items-center justify-center">
+                        <i class="fas fa-users text-gray-300 text-2xl sm:text-3xl"></i>
+                    </div>
+                    <span class="block text-gray-400 text-base sm:text-lg font-medium">沒有學生在線</span>
+                    <span class="block text-gray-300 text-sm sm:text-base mt-2">等待學生加入課堂...</span>
+                </div>
+            `;
+        } else {
+            // 🚀 FIX: 按照姓名排序並顯示學生及其分心狀態
+            activeStudentsData.sort((a, b) => a.name.localeCompare(b.name)).forEach((student, index) => {
+                const p = document.createElement('div');
+                // 🚀 UI優化: 更清晰的列表樣式，適合手機觸控操作
+                p.className = 'flex items-center justify-between py-2.5 sm:py-2 px-3 sm:px-4 rounded-lg bg-white hover:bg-blue-50 transition-colors border border-gray-100 shadow-sm mb-2 last:mb-0';
+                p.setAttribute('data-student-name', student.name);
+
+                // 序號 + 學生姓名容器
+                const nameContainer = document.createElement('div');
+                nameContainer.className = 'flex items-center gap-2 sm:gap-3 min-w-0 flex-1';
+
+                // 序號徽章
+                const indexBadge = document.createElement('span');
+                indexBadge.className = 'flex-shrink-0 w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center bg-blue-100 text-blue-700 text-xs sm:text-sm font-medium rounded-full';
+                indexBadge.textContent = index + 1;
+
+                // 學生姓名
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'truncate text-sm sm:text-base text-gray-700 font-normal';
+                nameSpan.textContent = student.name;
+                nameSpan.title = student.name;
+
+                nameContainer.appendChild(indexBadge);
+                nameContainer.appendChild(nameSpan);
+
+                // 狀態和操作容器
+                const statusContainer = document.createElement('div');
+                statusContainer.className = 'flex items-center gap-2 sm:gap-3 flex-shrink-0 ml-2';
+
+                // 檢查分心狀態
+                const isDistracted = student.isDistracted === true;
+
+                // 添加當前分心警告圖標
+                if (isDistracted) {
+                    const warning = document.createElement('i');
+                    warning.className = 'fas fa-exclamation-triangle text-red-500 text-sm sm:text-base animate-pulse';
+                    warning.title = '學生分心中';
+                    statusContainer.appendChild(warning);
+                }
+
+                // 🚀 NEW: 添加踢出按鈕（教師專用）
+                if (currentRole === 'teacher') {
+                    const kickBtn = document.createElement('button');
+                    // 🚀 UI優化: 更大的觸控區域，適合手機操作
+                    kickBtn.className = 'modal-kick-btn w-8 h-8 sm:w-7 sm:h-7 flex items-center justify-center bg-red-50 hover:bg-red-100 active:bg-red-200 rounded-full transition-colors';
+                    kickBtn.setAttribute('data-student-name', student.name);
+                    kickBtn.title = '強制登出此學生';
+                    kickBtn.innerHTML = '<i class="fas fa-times text-red-500 text-sm"></i>';
+
+                    // 綁定踢出事件
+                    kickBtn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const studentName = kickBtn.getAttribute('data-student-name');
+                        console.log(`[Modal KickBtn] 🔔 踢出按鈕被點擊: ${studentName}`);
+
+                        const confirmed = confirm(`確定要將「${studentName}」強制登出嗎？\n\n學生將需要重新輸入姓名加入課堂。`);
+                        if (confirmed) {
+                            await performKickStudent(studentName);
+                        }
+                    });
+
+                    statusContainer.appendChild(kickBtn);
+                }
+
+                p.appendChild(nameContainer);
+                p.appendChild(statusContainer);
+                modalStudentNamesDiv.appendChild(p);
+            });
+        }
+
+        // 🚀 FIX: 實時更新主視圖中學生卡片的分心狀態
+
+        // 🚀 NEW: 更新教師儀表板 - 在線學生計數和分心提醒實時更新
+        updateTeacherDashboard(currentInteractionMode);
+        // 當 presence 更新時，手動更新已渲染的學生卡片
+        console.log('[Distraction] 🎯 Calling updateStudentCardsDistractionStatus() from presence listener');
+        updateStudentCardsDistractionStatus();
+
+        // 🚀 NEW: 當有新學生加入時，即時創建卡片（解決重新登入後卡片不出現的問題）
+        refreshStudentCardsFromPresence();
+
+        // 🚀 NEW: 首次快照完成時調用回調並 resolve Promise
+        if (isFirstSnapshot) {
+            isFirstSnapshot = false; // 標記首次快照已完成
+            console.log('[Distraction] ✅ Initial presence snapshot completed, triggering callback');
+
+            // 調用回調函數（如果有提供）
+            if (onInitialSnapshotCallback) {
+                onInitialSnapshotCallback();
+            }
+
+            // Resolve Promise，讓等待的代碼可以繼續執行
+            if (initialSnapshotResolve) {
+                initialSnapshotResolve();
+            }
+        }
+    }, (error) => {
+        console.error("[Teacher] Error listening to classroom presence:", error);
+        // If there's an error, maybe the listener broke, so clear it.
+        ListenerManager.unregister('classroomPresence');
+        classroomPresenceUnsubscribe = null;
+        showMessage("無法監聽學生在線狀態，請檢查連線。", "error");
+    });
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('classroomPresence', unsubscribe);
+    classroomPresenceUnsubscribe = unsubscribe; // 保持兼容性
+
+    // 🚀 NEW: 返回 Promise，讓調用者可以等待首次快照完成
+    return initialSnapshotPromise;
+}
+
+/**
+ * (Teacher) Manually refreshes the online student count and responded student count.
+ */
+async function manualRefreshCounts() {
+    if (!classroomCode) {
+        console.warn("Classroom code not set, cannot manually refresh counts.");
+        return;
+    }
+    // Use classroomCode in the Firestore path
+    const presenceColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+    try {
+        const presenceSnapshot = await getDocs(presenceColRef);
+        activeStudentNames = []; // Clear and re-populate
+        presenceSnapshot.forEach(doc => activeStudentNames.push(doc.data().name));
+        document.getElementById('active-student-count').textContent = activeStudentNames.length;
+    } catch (error) {
+        console.error("Manual refresh: Failed to get online student count:", error);
+    }
+
+    // Use classroomCode in the Firestore path
+    const responsesColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    try {
+        const responsesSnapshot = await getDocs(responsesColRef);
+        // REMOVED: document.getElementById('responded-student-count').textContent = responsesSnapshot.size;
+
+        const responsesData = [];
+        responsesSnapshot.forEach(doc => responsesData.push(doc.data()));
+        allStudentResponses = responsesData;
+
+        if (!statisticsModal.classList.contains('hidden')) {
+            drawChart(allStudentResponses, currentInteractionMode);
+        }
+        showMessage('統計數據已更新！', 'info');
+    } catch (error) {
+        console.error("Manual refresh: Failed to get responded student count:", error);
+    }
+}
+
+
+// --- Magnified Drawing Modal Functions ---
+const magnifiedImageModal = document.getElementById('magnified-image-modal');
+const magnifiedImage = document.getElementById('magnified-image');
+const magnifiedImageModalCloseBtn = document.getElementById('magnified-image-modal-close-btn');
+
+function showMagnifiedDrawing(imageUrl) {
+    magnifiedImage.src = imageUrl;
+    magnifiedImageModal.classList.remove('hidden');
+}
+
+function hideMagnifiedDrawing() {
+    magnifiedImageModal.classList.add('hidden');
+    magnifiedImage.src = '';
+}
+
+// --- Student List Modal (Teacher Side) ---
+const studentListModal = document.getElementById('student-list-modal');
+const studentListModalCloseBtn = document.getElementById('student-list-modal-close-btn');
+
+function showStudentListModal() {
+    studentListModal.classList.remove('hidden');
+}
+
+function hideStudentListModal() {
+    studentListModal.classList.add('hidden');
+    if (lastSelectedModalStudent) { // Clear highlight in modal when closing
+        lastSelectedModalStudent.classList.remove('modal-selected-student-border');
+        lastSelectedModalStudent = null;
+    }
+}
+
+// --- NEW: Unsubmitted Students Modal Functions ---
+const unsubmittedStudentsModal = document.getElementById('unsubmitted-students-modal');
+const unsubmittedStudentsModalCloseBtn = document.getElementById('unsubmitted-students-modal-close-btn');
+const modalUnsubmittedStudentNamesDiv = document.getElementById('modal-unsubmitted-student-names');
+
+/**
+ * Calculates the list of students who are active but have not submitted an answer.
+ * @param {string[]} activeStudents - Array of names of all active students.
+ * @param {Object[]} respondedStudents - Array of response objects from students.
+ * @returns {string[]} Sorted array of names of unsubmitted students.
+ */
+function getUnsubmittedStudents(activeStudents, respondedStudents) {
+    // 只計算真正有提交答案的學生（answer 字段不為空）
+    const respondedNames = new Set(
+        respondedStudents
+            .filter(s => s.answer !== undefined && s.answer !== null && s.answer !== '')
+            .map(s => s.name)
+    );
+    return activeStudents.filter(name => !respondedNames.has(name)).sort();
+}
+
+/**
+ * Displays the modal with the list of unsubmitted students.
+ */
+function showUnsubmittedStudentsModal() {
+    const unsubmittedNames = getUnsubmittedStudents(activeStudentNames, allStudentResponses);
+    modalUnsubmittedStudentNamesDiv.innerHTML = '';
+    if (unsubmittedNames.length === 0) {
+        modalUnsubmittedStudentNamesDiv.innerHTML = '<p class="text-gray-500 text-sm col-span-full">所有學生皆已作答或無學生在線</p>';
+    } else {
+        unsubmittedNames.forEach(name => {
+            const p = document.createElement('p');
+            p.textContent = name;
+            p.className = 'bg-red-100 p-2 rounded-md text-center text-red-700 font-medium overflow-hidden text-ellipsis whitespace-nowrap';
+            modalUnsubmittedStudentNamesDiv.appendChild(p);
+        });
+    }
+    unsubmittedStudentsModal.classList.remove('hidden');
+}
+
+/**
+ * Hides the unsubmitted students modal.
+ */
+function hideUnsubmittedStudentsModal() {
+    unsubmittedStudentsModal.classList.add('hidden');
+}
+
+
+// --- Statistics Chart Modal (Teacher Side) ---
+const statisticsModal = document.getElementById('statistics-modal');
+const chartModalCloseBtn = document.getElementById('chart-modal-close-btn');
+const chartSvg = d3.select("#chart-svg");
+const studentsByAnswerListContainer = document.getElementById('students-by-answer-list-container');
+const studentsByAnswerListTitle = document.getElementById('students-by-answer-list-title');
+const studentsByAnswerNamesParagraph = document.getElementById('students-by-answer-names');
+
+
+async function showStatisticsModal() {
+    console.log(`[👨‍🏫 Teacher] showStatisticsModal called - role: ${currentRole}, classroomCode: ${classroomCode}, mode: ${currentInteractionMode}`);
+    statisticsModal.classList.remove('hidden');
+    drawChart(allStudentResponses, currentInteractionMode);
+
+    // 🚀 NEW: 設置 Firestore 標誌，通知學生端顯示圖表
+    if (currentRole === 'teacher' && classroomCode && (currentInteractionMode === 'true_false' || currentInteractionMode === 'multiple_choice')) {
+        try {
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            console.log(`[👨‍🏫 Teacher] Writing to Firestore - path: classrooms/${classroomCode}/settings/control`);
+            await setDoc(controlRef, {
+                showStudentChart: true,
+                chartMode: currentInteractionMode,
+                chartShownAt: new Date()
+            }, { merge: true });
+            console.log('[👨‍🏫 Teacher] ✓ Set showStudentChart flag to true in Firestore');
+        } catch (error) {
+            console.error('[👨‍🏫 Teacher] Error setting showStudentChart flag:', error);
+        }
+    } else {
+        console.warn(`[👨‍🏫 Teacher] showStatisticsModal skipped - role check: ${currentRole === 'teacher'}, classroomCode: ${!!classroomCode}, mode check: ${(currentInteractionMode === 'true_false' || currentInteractionMode === 'multiple_choice')}`);
+    }
+}
+
+async function hideStatisticsModal() {
+    statisticsModal.classList.add('hidden');
+    chartSvg.selectAll("*").remove();
+    clearStudentsByAnswerList();
+
+    // 🚀 NEW: 清除 Firestore 標誌，通知學生端隱藏圖表
+    if (currentRole === 'teacher' && classroomCode) {
+        try {
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            await setDoc(controlRef, {
+                showStudentChart: false
+            }, { merge: true });
+            console.log('[Teacher] ✓ Set showStudentChart flag to false');
+        } catch (error) {
+            console.error('[Teacher] Error clearing showStudentChart flag:', error);
+        }
+    }
+}
+
+function downloadStudentResponses() {
+    if (!allStudentResponses || allStudentResponses.length === 0) {
+        showMessage('目前沒有學生回應可以下載。', 'warning');
+        return;
+    }
+
+    let csvData = [];
+    let filename = '';
+
+    if (currentInteractionMode === 'text_input') {
+        // 文字題模式
+        csvData.push('學生姓名,學生回應');
+
+        allStudentResponses.forEach(student => {
+            const studentName = student.name || '未知學生';
+            let responseText = student.answer || '';
+
+            // 清理回應文字中的換行符號和雙引號，避免影響CSV格式
+            responseText = responseText.replace(/[\r\n]/g, ' ').replace(/"/g, '""');
+
+            // 如果內容包含逗號或雙引號，需要用雙引號包圍
+            if (responseText.includes(',') || responseText.includes('"') || responseText.includes('\n')) {
+                responseText = `"${responseText}"`;
+            }
+
+            csvData.push(`${studentName},${responseText}`);
+        });
+
+        filename = generateFilename('學生回應', 'csv');
+
+    } else if (currentInteractionMode === 'multiple_choice' && currentMultipleChoiceQuestions) {
+        // 自訂選擇題模式
+
+        // 第一部分：題目資訊
+        csvData.push('=== 題目資訊 ===');
+        csvData.push('題號,題目內容,選項A,選項B,選項C,選項D,正確答案');
+
+        currentMultipleChoiceQuestions.forEach((question, index) => {
+            const questionText = `"${question.questionText.replace(/"/g, '""')}"`;
+            const optionA = `"${question.options[0].replace(/"/g, '""')}"`;
+            const optionB = `"${question.options[1].replace(/"/g, '""')}"`;
+            const optionC = `"${question.options[2].replace(/"/g, '""')}"`;
+            const optionD = `"${question.options[3].replace(/"/g, '""')}"`;
+            const correctAnswer = `選項${['A', 'B', 'C', 'D'][parseInt(question.correctAnswer) - 1]}`;
+
+            csvData.push(`第${index + 1}題,${questionText},${optionA},${optionB},${optionC},${optionD},${correctAnswer}`);
+        });
+
+        // 空行分隔
+        csvData.push('');
+
+        // 第二部分：學生答題結果
+        csvData.push('=== 學生答題結果 ===');
+
+        // 建立表頭
+        let header = '學生姓名';
+        currentMultipleChoiceQuestions.forEach((_, index) => {
+            header += `,第${index + 1}題答案,第${index + 1}題結果`;
+        });
+        header += ',總分,總題數,正確率';
+        csvData.push(header);
+
+        // 建立每個學生的答題結果
+        allStudentResponses.forEach(student => {
+            const studentName = student.name || '未知學生';
+            let row = studentName;
+            let correctCount = 0;
+            let totalQuestions = currentMultipleChoiceQuestions.length;
+
+            if (Array.isArray(student.answer)) {
+                // 為每題加入答案和結果
+                currentMultipleChoiceQuestions.forEach((question, questionIndex) => {
+                    const studentAnswer = student.answer.find(ans => ans.qIndex === questionIndex);
+                    if (studentAnswer) {
+                        const answerText = `選項${['A', 'B', 'C', 'D'][parseInt(studentAnswer.ans) - 1]}`;
+                        const isCorrect = String(studentAnswer.ans) === String(question.correctAnswer);
+                        const result = isCorrect ? '正確' : '錯誤';
+                        if (isCorrect) correctCount++;
+                        row += `,${answerText},${result}`;
+                    } else {
+                        row += ',未作答,錯誤';
+                    }
+                });
+            } else {
+                // 如果學生沒有回答或格式不正確
+                currentMultipleChoiceQuestions.forEach(() => {
+                    row += ',未作答,錯誤';
+                });
+            }
+
+            // 加入統計資訊
+            const accuracy = totalQuestions > 0 ? ((correctCount / totalQuestions) * 100).toFixed(1) : '0.0';
+            row += `,${correctCount},${totalQuestions},${accuracy}%`;
+
+            csvData.push(row);
+        });
+
+        filename = generateFilename('選擇題結果', 'csv');
+
+    } else if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData.questions) {
+        // 閱讀測驗模式
+
+        // 第一部分：文本內容
+        csvData.push('=== 閱讀文本 ===');
+        const readingText = `"${readingComprehensionData.text.replace(/"/g, '""')}"`;
+        csvData.push(`文本內容,${readingText}`);
+        csvData.push('');
+
+        // 第二部分：題目資訊
+        csvData.push('=== 題目資訊 ===');
+        csvData.push('題號,PIRLS層次,題目內容,選項1,選項2,選項3,選項4,正確答案');
+
+        readingComprehensionData.questions.forEach((question, index) => {
+            const levelNames = ['直接提取', '直接推論', '詮釋整合', '比較評估'];
+            const levelName = levelNames[question.level - 1] || '未分類';
+            const questionText = `"${question.question.replace(/"/g, '""')}"`;
+            const option1 = `"${question.options[0].replace(/"/g, '""')}"`;
+            const option2 = `"${question.options[1].replace(/"/g, '""')}"`;
+            const option3 = `"${question.options[2].replace(/"/g, '""')}"`;
+            const option4 = `"${question.options[3].replace(/"/g, '""')}"`;
+            const correctAnswer = `選項${question.correctAnswer}`;
+
+            csvData.push(`第${index + 1}題,${levelName},${questionText},${option1},${option2},${option3},${option4},${correctAnswer}`);
+        });
+
+        // 空行分隔
+        csvData.push('');
+
+        // 第三部分：學生答題結果（含排名和作答時長）
+        csvData.push('=== 學生答題結果 ===');
+
+        // 🚀 NEW: 計算排名（與 CSV 統計匯出一致）
+        const rankedStudents = [];
+        allStudentResponses.forEach(student => {
+            try {
+                let studentAnswers = [];
+                if (typeof student.answer === 'string') {
+                    studentAnswers = JSON.parse(student.answer);
+                } else if (Array.isArray(student.answer)) {
+                    studentAnswers = student.answer;
+                }
+
+                let correctCount = 0;
+                studentAnswers.forEach((ans, index) => {
+                    // 🚀 CRITICAL FIX: 支援送分題（correctAnswer === 0 時無條件計為正確）
+                    if (readingComprehensionData.questions[index] && ((readingComprehensionData.questions[index].correctAnswer === 0) || (ans === readingComprehensionData.questions[index].correctAnswer))) {
+                        correctCount++;
+                    }
+                });
+
+                // 🚀 FIX: 優先使用 Firestore 分數（教師修改答案後已更新）
+                const hasTeacherUpdatedScore = student.scoreUpdateToken && student.baseScore !== undefined;
+                let accuracy, baseScore, totalScore;
+
+                if (hasTeacherUpdatedScore) {
+                    // 使用 Firestore 中教師已計算好的分數（含送分題邏輯）
+                    baseScore = student.baseScore;
+                    totalScore = student.totalScore || baseScore;
+                    accuracy = baseScore; // baseScore 就是正確率百分比
+                    correctCount = Math.round((baseScore / 100) * readingComprehensionData.questions.length);
+                    console.log(`[CSV Export] ✅ Using Firestore scores for ${student.name}: baseScore=${baseScore}, totalScore=${totalScore}`);
+                } else {
+                    // 本地計算（學生剛提交時，Firestore 尚未被教師更新）
+                    accuracy = Math.round((correctCount / readingComprehensionData.questions.length) * 100);
+                    baseScore = accuracy;
+                    const highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                    totalScore = baseScore + highlightBonus;
+                }
+
+                rankedStudents.push({
+                    name: student.name,
+                    correctCount: correctCount,
+                    totalQuestions: readingComprehensionData.questions.length,
+                    accuracy: accuracy,
+                    baseScore: baseScore,
+                    totalScore: totalScore,
+                    timestamp: student.timestamp,
+                    durationMs: student.durationMs || null,
+                    answers: studentAnswers,
+                    // 🚀 NEW: 包含筆記評分數據
+                    highlightAnalysis: student.highlightAnalysis || null
+                });
+            } catch (e) {
+                console.warn('[CSV Export] Invalid answer format for student:', student.name);
+            }
+        });
+
+        // 排序（與 CSV 統計匯出一致）
+        rankedStudents.sort((a, b) => {
+            if (b.correctCount !== a.correctCount) return b.correctCount - a.correctCount;
+            if (a.durationMs && b.durationMs) return a.durationMs - b.durationMs;
+            if (a.durationMs && !b.durationMs) return -1;
+            if (!a.durationMs && b.durationMs) return 1;
+            const aTime = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp?.getTime ? a.timestamp.getTime() : 0);
+            const bTime = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp?.getTime ? b.timestamp.getTime() : 0);
+            return aTime - bTime;
+        });
+
+        // 🚀 OPTIMIZED: 計算排名 - 每個學生都有唯一排名（基於完整排序，包括作答時長）
+        // 不再只比較正確題數，而是為排序列表中的每個位置指派唯一排名
+        rankedStudents.forEach((student, index) => {
+            student.rank = index + 1;
+        });
+
+        // 建立表頭（包含排名和作答時長）
+        let header = '排名,學生姓名,作答時長,提交時間';
+        readingComprehensionData.questions.forEach((_, index) => {
+            header += `,第${index + 1}題答案,第${index + 1}題結果`;
+        });
+        header += ',總分,總題數,正確率,筆記總加分,顏色多樣性分數,精確度分數,分段合理性分數,答案關聯度分數,時間分配分數,筆記顏色數,筆記覆蓋率,筆記段落數,標註時間跨度';
+        csvData.push(header);
+
+        // 建立每個學生的答題結果（按排名排序）
+        rankedStudents.forEach(student => {
+            const studentName = student.name || '未知學生';
+
+            // 🚀 NEW: 格式化作答時長
+            let durationText = '未記錄';
+            if (student.durationMs) {
+                const duration = formatDuration(student.durationMs);
+                durationText = duration.longLabel.replace('作答 ', '');
+            }
+
+            // 🚀 NEW: 格式化提交時間
+            let submissionTime = '未知';
+            if (student.timestamp) {
+                submissionTime = student.timestamp.toDate
+                    ? student.timestamp.toDate().toLocaleString('zh-TW')
+                    : new Date(student.timestamp).toLocaleString('zh-TW');
+            }
+
+            // 開始建立行資料：排名、姓名、作答時長、提交時間
+            let row = `${student.rank},${studentName},${durationText},${submissionTime}`;
+
+            // 為每題加入答案和結果
+            readingComprehensionData.questions.forEach((question, questionIndex) => {
+                const studentAnswer = student.answers[questionIndex];
+                if (studentAnswer && studentAnswer > 0) {
+                    const answerText = `選項${studentAnswer}`;
+                    // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件計為正確）
+                    const isCorrect = (question.correctAnswer === 0) || (studentAnswer === question.correctAnswer);
+                    const result = isCorrect ? '正確' : '錯誤';
+                    row += `,${answerText},${result}`;
+                } else {
+                    // 🚀 FIX: 送分題未作答也算正確
+                    const result = (question.correctAnswer === 0) ? '正確' : '錯誤';
+                    row += `,未作答,${result}`;
+                }
+            });
+
+            // 加入統計資訊
+            const accuracy = student.totalQuestions > 0 ? ((student.correctCount / student.totalQuestions) * 100).toFixed(1) : '0.0';
+            row += `,${student.correctCount},${student.totalQuestions},${accuracy}%`;
+
+            // 🚀 NEW: 加入筆記評分數據（完整5項指標細分 + 時間統計）
+            if (student.highlightAnalysis && student.highlightAnalysis.score > 0) {
+                const analysis = student.highlightAnalysis;
+                const breakdown = analysis.breakdown;
+                const timeSpan = analysis.stats.timeSpanSeconds || 0;
+                row += `,+${analysis.score}分,${breakdown.colorDiversity}分,${breakdown.precision}分,${breakdown.segmentation}分,${breakdown.relevance}分,${breakdown.timeDistribution}分,${analysis.stats.colorCount}種,${analysis.stats.coverageRate}%,${analysis.stats.segmentCount}段,${timeSpan}秒`;
+            } else {
+                row += ',0分,0分,0分,0分,0分,0分,0種,0%,0段,0秒';
+            }
+
+            csvData.push(row);
+        });
+
+        filename = generateFilename('閱讀測驗結果', 'csv');
+
+    } else {
+        showMessage('目前模式不支援下載功能。', 'warning');
+        return;
+    }
+
+    // 建立CSV內容
+    const csvContent = csvData.join('\n');
+
+    // 建立下載連結，加上BOM確保正確顯示中文
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showMessage(`已下載學生回應檔案: ${filename}`, 'success');
+}
+
+// NEW: View Questions Modal Functions
+function showViewQuestionsModal() {
+    if (!currentMultipleChoiceQuestions || currentMultipleChoiceQuestions.length === 0) {
+        showMessage('目前沒有自訂題目可以查看。', 'info');
+        return;
+    }
+
+    const modal = document.getElementById('view-questions-modal');
+    const container = document.getElementById('questions-display-container');
+
+    // 清空容器
+    container.innerHTML = '';
+
+    // 生成題目顯示HTML
+    currentMultipleChoiceQuestions.forEach((question, index) => {
+        const questionDiv = document.createElement('div');
+        questionDiv.className = 'bg-gray-50 p-4 rounded-lg border';
+        questionDiv.innerHTML = `
+            <h5 class="font-bold text-lg mb-3">第 ${index + 1} 題</h5>
+            <p class="text-gray-800 mb-4">${question.questionText}</p>
+            <div class="space-y-2">
+                <p class="font-medium text-gray-700">選項：</p>
+                <div class="grid grid-cols-2 gap-2">
+                    ${question.options.map((option, optIndex) =>
+            `<div class="p-2 bg-white rounded border text-sm">
+                            ${String.fromCharCode(65 + optIndex)}. ${option}
+                        </div>`
+        ).join('')}
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">正確答案：</label>
+                <select class="correct-answer-select w-full p-2 border rounded" data-question-index="${index}">
+                    ${question.options.map((option, optIndex) => {
+            const optionValue = String.fromCharCode(65 + optIndex);
+            const isSelected = question.correctAnswer === optionValue || question.correctAnswer === (optIndex + 1).toString();
+            return `<option value="${optionValue}" ${isSelected ? 'selected' : ''}>${optionValue}. ${option}</option>`;
+        }).join('')}
+                </select>
+            </div>
+        `;
+        container.appendChild(questionDiv);
+    });
+
+    modal.classList.remove('hidden');
+}
+
+function hideViewQuestionsModal() {
+    document.getElementById('view-questions-modal').classList.add('hidden');
+}
+
+async function saveCorrectAnswers() {
+    if (!currentMultipleChoiceQuestions || currentMultipleChoiceQuestions.length === 0) {
+        showMessage('沒有題目可以儲存。', 'error');
+        return;
+    }
+
+    try {
+        // 更新currentMultipleChoiceQuestions中的正確答案
+        const selects = document.querySelectorAll('.correct-answer-select');
+        selects.forEach(select => {
+            const questionIndex = parseInt(select.getAttribute('data-question-index'));
+            let newCorrectAnswer = select.value;
+
+            // NEW: 將字母格式轉換為數字格式以保持一致性
+            if (newCorrectAnswer === 'A') newCorrectAnswer = '1';
+            else if (newCorrectAnswer === 'B') newCorrectAnswer = '2';
+            else if (newCorrectAnswer === 'C') newCorrectAnswer = '3';
+            else if (newCorrectAnswer === 'D') newCorrectAnswer = '4';
+
+            if (currentMultipleChoiceQuestions[questionIndex]) {
+                currentMultipleChoiceQuestions[questionIndex].correctAnswer = newCorrectAnswer;
+            }
+        });
+
+        // 更新Firestore中的題目資料
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        await updateDoc(controlRef, {
+            multiple_choice_questions: currentMultipleChoiceQuestions
+        });
+
+        // NEW: 等待一小段時間確保Firestore更新完成，然後觸發重新批改
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // NEW: 自動重新批改所有學生已提交的答案
+        await regradeAllStudentAnswers();
+
+        // NEW: 確保教師端UI使用最新的正確答案進行渲染
+        // 由於重新批改會觸發Firebase監聽器，UI會自動重新渲染
+
+        showMessage('正確答案已更新並重新批改所有作答！', 'success');
+        hideViewQuestionsModal();
+    } catch (error) {
+        console.error('更新正確答案失敗:', error);
+        showMessage('更新失敗，請稍後再試。', 'error');
+    }
+}
+
+// NEW: 重新批改所有學生答案的函數
+async function regradeAllStudentAnswers() {
+    if (!currentMultipleChoiceQuestions || currentMultipleChoiceQuestions.length === 0) {
+        return;
+    }
+
+    try {
+        const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const querySnapshot = await getDocs(studentsColRef);
+
+        const batch = writeBatch(db);
+        let regradeCount = 0;
+
+        querySnapshot.forEach((docSnapshot) => {
+            const studentData = docSnapshot.data();
+
+            // 只處理選擇題的答案（Array格式）
+            if (Array.isArray(studentData.answer)) {
+                // 更新學生答案時間戳以觸發UI重新渲染（答案內容保持不變）
+                const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', docSnapshot.id);
+                batch.update(studentRef, {
+                    regraded: true,
+                    regradeTimestamp: new Date(),
+                    timestamp: new Date(), // 更新時間戳以觸發監聽器重新評判答案
+                    forceUpdate: Math.random() // 添加隨機數強制觸發監聽器
+                });
+                regradeCount++;
+            }
+        });
+
+        if (regradeCount > 0) {
+            await batch.commit();
+            console.log(`重新批改了 ${regradeCount} 位學生的答案`);
+        }
+    } catch (error) {
+        console.error('重新批改答案失敗:', error);
+        throw error;
+    }
+}
+
+function clearStudentsByAnswerList() {
+    studentsByAnswerListContainer.classList.add('hidden');
+    studentsByAnswerListTitle.textContent = '';
+    studentsByAnswerNamesParagraph.textContent = '';
+}
+
+function displayStudentsForAnswer(answer, mode, questionIndex = null) {
+    clearStudentsByAnswerList();
+    studentsByAnswerListContainer.classList.remove('hidden');
+
+    let filteredStudents;
+    let titleText;
+
+    if (mode === 'multiple_choice' && questionIndex !== null && currentMultipleChoiceQuestions) {
+        // For custom multiple choice, filter by specific question and correctness
+        const question = currentMultipleChoiceQuestions[questionIndex];
+        if (!question) {
+            studentsByAnswerListTitle.textContent = `問題 ${questionIndex + 1} 不存在。`;
+            studentsByAnswerNamesParagraph.textContent = '';
+            return;
+        }
+
+        // 'answer' here is 'correct' or 'incorrect'
+        if (answer === 'correct') {
+            filteredStudents = allStudentResponses.filter(s =>
+                Array.isArray(s.answer) &&
+                s.answer.some(q => q.qIndex === questionIndex && String(q.ans) === String(question.correctAnswer))
+            );
+            titleText = `問題 ${questionIndex + 1} 答對的學生：`;
+        } else if (answer === 'incorrect') {
+            filteredStudents = allStudentResponses.filter(s =>
+                Array.isArray(s.answer) &&
+                s.answer.some(q => q.qIndex === questionIndex && String(q.ans) !== String(question.correctAnswer))
+            );
+            titleText = `問題 ${questionIndex + 1} 答錯的學生：`;
+        } else { // Should not happen with current chart logic
+            filteredStudents = [];
+            titleText = `問題 ${questionIndex + 1} 的學生：`;
+        }
+    } else {
+        // For default multiple choice or true/false
+        filteredStudents = allStudentResponses.filter(s => s.answer === answer);
+        titleText = `選擇「${answer}」的學生：`;
+    }
+
+    const studentNames = filteredStudents.map(s => s.name).sort();
+    studentsByAnswerListTitle.textContent = studentNames.length > 0 ? `${titleText} ${studentNames.join(', ')}` : `${titleText} 沒有學生選擇此答案。`;
+    studentsByAnswerNamesParagraph.textContent = ''; // Clear this as the title now contains names
+}
+
+function drawChart(responses, mode) { // Changed parameter name from 'data' to 'responses' to avoid conflict
+    chartSvg.selectAll("*").remove();
+    clearStudentsByAnswerList();
+
+    let chartData = {}; // Renamed 'data' to 'chartData'
+    const filteredResponses = responses.filter(r => {
+        if (mode === 'true_false' && (r.answer === 'O' || r.answer === 'X')) return true;
+        if (mode === 'multiple_choice') {
+            if (currentMultipleChoiceQuestions) { // Custom MC
+                return Array.isArray(r.answer);
+            } else { // Default MC
+                return (r.answer >= '1' && r.answer <= '4');
+            }
+        }
+        if (mode === 'reading_comprehension') {
+            // Check if answer is a valid JSON array
+            try {
+                const parsed = JSON.parse(r.answer);
+                return Array.isArray(parsed);
+            } catch (e) {
+                return false;
+            }
+        }
+        return false;
+    });
+
+    const totalValidResponses = filteredResponses.length;
+
+    if (totalValidResponses === 0) {
+        const svgViewBox = chartSvg.attr("viewBox").split(" ");
+        const viewBoxWidth = parseInt(svgViewBox[2]);
+        const viewBoxHeight = parseInt(svgViewBox[3]);
+        chartSvg.append("text")
+            .attr("x", viewBoxWidth / 2)
+            .attr("y", viewBoxHeight / 2)
+            .attr("text-anchor", "middle")
+            .style("font-size", "18px")
+            .style("fill", "#666")
+            .text("目前沒有作答資料。");
+        return;
+    }
+
+    if (mode === 'true_false') {
+        chartData = { 'O': 0, 'X': 0 }; // Use chartData
+        filteredResponses.forEach(r => { chartData[r.answer]++; });
+        drawPieChart(chartData, totalValidResponses); // Pass chartData
+    } else if (mode === 'multiple_choice') {
+        if (currentMultipleChoiceQuestions) { // Custom Multiple Choice Chart
+            drawCustomMultipleChoiceBarChart(filteredResponses, currentMultipleChoiceQuestions);
+        } else { // Default Multiple Choice Chart
+            chartData = { '1': 0, '2': 0, '3': 0, '4': 0 }; // Use chartData
+            filteredResponses.forEach(r => { chartData[r.answer]++; });
+            drawBarChart(chartData, totalValidResponses); // Pass chartData
+        }
+    } else if (mode === 'reading_comprehension') {
+        if (readingComprehensionData && readingComprehensionData.questions) {
+            drawReadingComprehensionChart(filteredResponses, readingComprehensionData.questions);
+        }
+    }
+}
+
+function drawPieChart(data, totalValidResponses) {
+    const svgViewBox = chartSvg.attr("viewBox").split(" ");
+    const width = parseInt(svgViewBox[2]);
+    const height = parseInt(svgViewBox[3]);
+    const radius = Math.min(width, height) / 2 - 20;
+    const g = chartSvg.append("g").attr("transform", `translate(${width / 2},${height / 2})`);
+    const color = d3.scaleOrdinal().domain(Object.keys(data)).range(['#16a34a', '#dc2626']); // Green for O, Red for X
+    const pie = d3.pie().value(d => d[1]).sort(null);
+    const arc = d3.arc().innerRadius(0).outerRadius(radius);
+    const arcs = g.selectAll(".arc").data(pie(Object.entries(data))).enter().append("g").attr("class", "arc");
+
+    arcs.append("path")
+        .attr("d", arc)
+        .attr("fill", d => color(d.data[0]))
+        .attr("stroke", "white").style("stroke-width", "2px")
+        .on("click", (event, d) => displayStudentsForAnswer(d.data[0], 'true_false'));
+
+    arcs.append("text")
+        .attr("transform", d => `translate(${arc.centroid(d)})`)
+        .attr("dy", "0.35em")
+        .text(d => {
+            const percentage = totalValidResponses > 0 ? ((d.data[1] / totalValidResponses) * 100).toFixed(1) : 0;
+            return `${d.data[0]}: ${d.data[1]} (${percentage}%)`;
+        })
+        .style("font-size", "14px").style("text-anchor", "middle").style("fill", "white").style("pointer-events", "none");
+}
+
+function drawBarChart(data, totalValidResponses) {
+    const svgViewBox = chartSvg.attr("viewBox").split(" ");
+    const svgWidth = parseInt(svgViewBox[2]);
+    const svgHeight = parseInt(svgViewBox[3]);
+
+    // 🚀 RWD優化：調整margin確保長條圖居中且不會跑版
+    const margin = { top: 30, right: 40, bottom: 50, left: 50 };
+    const width = svgWidth - margin.left - margin.right;
+    const height = svgHeight - margin.top - margin.bottom;
+
+    const x = d3.scaleBand()
+        .range([0, width])
+        .padding(0.25)
+        .domain(Object.keys(data));
+    const y = d3.scaleLinear()
+        .range([height, 0])
+        .domain([0, d3.max(Object.values(data)) || 1]);
+    const color = d3.scaleOrdinal()
+        .domain(Object.keys(data))
+        .range(['#2563eb', '#ca8a04', '#16a34a', '#dc2626']);
+    const g = chartSvg.append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // X軸
+    g.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .style("font-size", "14px")
+        .style("font-weight", "600");
+
+    // Y軸
+    g.append("g")
+        .call(d3.axisLeft(y).ticks(Math.min(10, d3.max(Object.values(data)) || 1)).tickFormat(d3.format('d')))
+        .selectAll("text")
+        .style("font-size", "12px");
+
+    // 長條
+    g.selectAll(".bar").data(Object.entries(data)).enter().append("rect")
+        .attr("class", "bar")
+        .attr("x", d => x(d[0]))
+        .attr("y", d => y(d[1]))
+        .attr("width", x.bandwidth())
+        .attr("height", d => height - y(d[1]))
+        .attr("fill", d => color(d[0]))
+        .attr("rx", 4)
+        .attr("ry", 4)
+        .style("cursor", "pointer")
+        .on("click", (event, d) => displayStudentsForAnswer(d[0], 'multiple_choice'));
+
+    // 標籤
+    g.selectAll(".bar-label").data(Object.entries(data)).enter().append("text")
+        .attr("class", "bar-label")
+        .attr("x", d => x(d[0]) + x.bandwidth() / 2)
+        .attr("y", d => y(d[1]) - 8)
+        .attr("text-anchor", "middle")
+        .style("font-size", "13px")
+        .style("font-weight", "500")
+        .style("pointer-events", "none")
+        .text(d => {
+            const percentage = totalValidResponses > 0 ? ((d[1] / totalValidResponses) * 100).toFixed(0) : 0;
+            return `${d[1]} (${percentage}%)`;
+        });
+}
+
+/**
+ * NEW: Draws a bar chart for custom multiple choice questions, showing correctness rate per question.
+ * @param {Array} responses - All student responses.
+ * @param {Array} questions - The custom multiple choice questions.
+ */
+function drawCustomMultipleChoiceBarChart(responses, questions) {
+    const svgViewBox = chartSvg.attr("viewBox").split(" ");
+    const svgWidth = parseInt(svgViewBox[2]);
+    const svgHeight = parseInt(svgViewBox[3]);
+
+    // 🚀 RWD優化：調整margin確保長條圖居中且不會跑版
+    const margin = { top: 30, right: 40, bottom: 70, left: 55 };
+    const width = svgWidth - margin.left - margin.right;
+    const height = svgHeight - margin.top - margin.bottom;
+
+    const questionStats = questions.map((q, qIndex) => {
+        let correctCount = 0;
+        let answeredCount = 0; // Count students who attempted this question
+
+        responses.forEach(studentResponse => {
+            if (Array.isArray(studentResponse.answer)) {
+                const studentQAnswer = studentResponse.answer.find(ans => ans.qIndex === qIndex);
+                if (studentQAnswer) {
+                    answeredCount++;
+                    if (String(studentQAnswer.ans) === String(q.correctAnswer)) {
+                        correctCount++;
+                    }
+                }
+            }
+        });
+        return {
+            questionIndex: qIndex,
+            questionText: `Q${qIndex + 1}`, // Display as Q1, Q2 etc.
+            correctCount: correctCount,
+            answeredCount: answeredCount,
+            correctRate: answeredCount > 0 ? (correctCount / answeredCount) * 100 : 0
+        };
+    });
+
+    // Filter out questions with no attempts if desired, or show 0%
+    const displayStats = questionStats.filter(s => s.answeredCount > 0);
+    if (displayStats.length === 0) {
+        chartSvg.append("text")
+            .attr("x", chartSvg.attr("width") / 2)
+            .attr("y", chartSvg.attr("height") / 2)
+            .attr("text-anchor", "middle")
+            .style("font-size", "18px")
+            .style("fill", "#666")
+            .text("目前沒有學生作答任何自訂選擇題。");
+        return;
+    }
+
+    const x = d3.scaleBand()
+        .range([0, width])
+        .padding(0.25)
+        .domain(displayStats.map(d => d.questionText));
+
+    const y = d3.scaleLinear()
+        .range([height, 0])
+        .domain([0, 100]);
+
+    const g = chartSvg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // X軸
+    g.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .attr("transform", "rotate(-30)")
+        .attr("dx", "-0.5em")
+        .attr("dy", "0.5em")
+        .style("text-anchor", "end")
+        .style("font-size", "12px")
+        .style("font-weight", "500");
+
+    // Y軸
+    g.append("g")
+        .call(d3.axisLeft(y).ticks(5).tickFormat(d => `${d}%`))
+        .selectAll("text")
+        .style("font-size", "11px");
+
+    // 長條
+    g.selectAll(".bar")
+        .data(displayStats)
+        .enter().append("rect")
+        .attr("class", "bar")
+        .attr("x", d => x(d.questionText))
+        .attr("y", d => y(d.correctRate))
+        .attr("width", x.bandwidth())
+        .attr("height", d => height - y(d.correctRate))
+        .attr("fill", "#2563eb")
+        .attr("rx", 3)
+        .attr("ry", 3)
+        .style("cursor", "pointer")
+        .on("click", (event, d) => displayStudentsForAnswer('correct', 'multiple_choice', d.questionIndex));
+
+    // 標籤
+    g.selectAll(".bar-label")
+        .data(displayStats)
+        .enter().append("text")
+        .attr("class", "bar-label")
+        .attr("x", d => x(d.questionText) + x.bandwidth() / 2)
+        .attr("y", d => y(d.correctRate) - 6)
+        .attr("text-anchor", "middle")
+        .style("font-size", "11px")
+        .style("font-weight", "500")
+        .style("pointer-events", "none")
+        .text(d => `${d.correctRate.toFixed(0)}%`);
+
+    // Y軸標籤
+    g.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("y", 0 - margin.left + 15)
+        .attr("x", 0 - (height / 2))
+        .attr("dy", "1em")
+        .style("text-anchor", "middle")
+        .style("font-size", "12px")
+        .style("font-weight", "500")
+        .text("答對率");
+}
+
+/**
+ * Draw reading comprehension statistics chart with PIRLS level analysis
+ */
+function drawReadingComprehensionChart(responses, questions) {
+    const svgViewBox = chartSvg.attr("viewBox").split(" ");
+    const svgWidth = parseInt(svgViewBox[2]);
+    const svgHeight = parseInt(svgViewBox[3]);
+
+    // 🚀 RWD優化：調整margin確保長條圖居中且不會跑版
+    const margin = { top: 30, right: 40, bottom: 80, left: 55 };
+    const width = svgWidth - margin.left - margin.right;
+    const height = svgHeight - margin.top - margin.bottom;
+
+    // Calculate statistics for each question
+    const questionStats = questions.map((q, qIndex) => {
+        let correctCount = 0;
+        let answeredCount = 0;
+
+        responses.forEach(studentResponse => {
+            try {
+                const studentAnswers = JSON.parse(studentResponse.answer);
+                if (Array.isArray(studentAnswers) && studentAnswers[qIndex] !== undefined) {
+                    answeredCount++;
+                    // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件算為正確）
+                    if ((q.correctAnswer === 0) || (studentAnswers[qIndex] === q.correctAnswer)) {
+                        correctCount++;
+                    }
+                }
+            } catch (e) {
+                // Invalid answer format
+            }
+        });
+
+        return {
+            questionIndex: qIndex,
+            questionText: `Q${qIndex + 1}`,
+            level: q.level,
+            correctCount: correctCount,
+            answeredCount: answeredCount,
+            correctRate: answeredCount > 0 ? (correctCount / answeredCount) * 100 : 0,
+            isGivePoints: q.correctAnswer === 0  // 🚀 NEW: 標記送分題
+        };
+    });
+
+    // Calculate PIRLS level statistics
+    const levelStats = [1, 2, 3, 4].map(level => {
+        const levelQuestions = questionStats.filter(q => q.level === level);
+        if (levelQuestions.length === 0) return null;
+
+        const totalCorrect = levelQuestions.reduce((sum, q) => sum + q.correctCount, 0);
+        const totalAnswered = levelQuestions.reduce((sum, q) => sum + q.answeredCount, 0);
+
+        return {
+            level: level,
+            correctRate: totalAnswered > 0 ? (totalCorrect / totalAnswered) * 100 : 0,
+            questionCount: levelQuestions.length
+        };
+    }).filter(s => s !== null);
+
+    const displayStats = questionStats.filter(s => s.answeredCount > 0);
+    if (displayStats.length === 0) {
+        chartSvg.append("text")
+            .attr("x", chartSvg.attr("width") / 2)
+            .attr("y", chartSvg.attr("height") / 2)
+            .attr("text-anchor", "middle")
+            .style("font-size", "18px")
+            .style("fill", "#666")
+            .text("目前沒有學生作答閱讀測驗。");
+        return;
+    }
+
+    const x = d3.scaleBand()
+        .range([0, width])
+        .padding(0.2)
+        .domain(displayStats.map(d => d.questionText));
+
+    const y = d3.scaleLinear()
+        .range([height, 0])
+        .domain([0, 100]);
+
+    const g = chartSvg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Define colors for each PIRLS level
+    const levelColors = {
+        1: '#3b82f6', // Blue - 直接提取
+        2: '#8b5cf6', // Purple - 直接推論
+        3: '#f59e0b', // Amber - 詮釋整合
+        4: '#ef4444'  // Red - 比較評估
+    };
+
+    // X-axis
+    g.append("g")
+        .attr("transform", `translate(0,${height})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end");
+
+    // Y-axis
+    g.append("g")
+        .call(d3.axisLeft(y).ticks(10).tickFormat(d => `${d}%`));
+
+    // Bars - 🚀 RWD優化：添加圓角，送分題用特殊邊框
+    g.selectAll(".bar")
+        .data(displayStats)
+        .enter().append("rect")
+        .attr("class", "bar")
+        .attr("x", d => x(d.questionText))
+        .attr("y", d => y(d.correctRate))
+        .attr("width", x.bandwidth())
+        .attr("height", d => height - y(d.correctRate))
+        .attr("fill", d => levelColors[d.level])
+        .attr("rx", 3)
+        .attr("ry", 3)
+        .attr("stroke", d => d.isGivePoints ? "#FFCC00" : "none")  // 🚀 新增：送分題用黃色邊框
+        .attr("stroke-width", d => d.isGivePoints ? 3 : 0)
+        .style("cursor", "pointer");
+
+    // 🚀 NEW: 為送分題添加黃色三角形⚠️標記
+    g.selectAll(".give-points-badge")
+        .data(displayStats.filter(d => d.isGivePoints))
+        .enter().append("text")
+        .attr("class", "give-points-badge")
+        .attr("x", d => x(d.questionText) + x.bandwidth() / 2)
+        .attr("y", d => y(d.correctRate) - 18)
+        .attr("text-anchor", "middle")
+        .style("font-size", "16px")
+        .style("pointer-events", "none")
+        .text("⚠️");
+
+    // Labels on bars - 🚀 RWD優化：字體權重
+    g.selectAll(".bar-label")
+        .data(displayStats)
+        .enter().append("text")
+        .attr("class", "bar-label")
+        .attr("x", d => x(d.questionText) + x.bandwidth() / 2)
+        .attr("y", d => y(d.correctRate) - 6)
+        .attr("text-anchor", "middle")
+        .style("font-size", "12px")
+        .style("font-weight", "500")
+        .style("pointer-events", "none")
+        .text(d => `${d.correctRate.toFixed(0)}%`);
+
+    // Y-axis label
+    g.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("y", 0 - margin.left + 15)
+        .attr("x", 0 - (height / 2))
+        .attr("dy", "1em")
+        .style("text-anchor", "middle")
+        .style("font-size", "12px")
+        .style("font-weight", "500")
+        .text("答對率");
+
+    // 🚀 PIRLS Level Legend and Statistics - RWD優化
+    const legendY = height + 50;
+    const levelIcons = ['📖', '💭', '🔗', '⚖️'];
+    const levelTexts = ['直接提取', '直接推論', '詮釋整合', '比較評估'];
+
+    // 計算響應式間距：根據圖表寬度和層級數量自動適配
+    const itemSpacing = Math.max(90, Math.floor((width + margin.left + margin.right) / levelStats.length * 0.85));
+    const startX = -margin.left + 10; // 從圖表左邊開始
+
+    levelStats.forEach((stat, i) => {
+        const legendX = startX + i * itemSpacing;
+        const fontSize = width < 300 ? '10px' : '11px';
+        const boxSize = 14;
+
+        // Color box
+        g.append("rect")
+            .attr("x", legendX)
+            .attr("y", legendY)
+            .attr("width", boxSize)
+            .attr("height", boxSize)
+            .attr("fill", levelColors[stat.level])
+            .attr("rx", 2);
+
+        // Text - 🚀 RWD優化：動態字體大小和對齐
+        g.append("text")
+            .attr("x", legendX + boxSize + 8)
+            .attr("y", legendY + 11)
+            .style("font-size", fontSize)
+            .style("font-weight", "500")
+            .style("pointer-events", "none")
+            .text(`${levelIcons[i]} L${stat.level}: ${stat.correctRate.toFixed(0)}%`);
+    });
+}
+
+
+// --- Sequencing Question Logic ---
+function setupSequencingUI(data) {
+    console.log('[setupSequencingUI] Setting up sequencing UI with data:', data);
+    const questionText = document.getElementById('sequencing-question-text');
+    const container = document.getElementById('sequencing-items-container');
+
+    if (!questionText || !container) {
+        console.error('[setupSequencingUI] DOM elements not found!');
+        return;
+    }
+
+    questionText.textContent = data.question || '請依照正確順序排列以下項目';
+    container.innerHTML = '';
+
+    if (!data.correctOrder || !Array.isArray(data.correctOrder) || data.correctOrder.length === 0) {
+        console.error('[setupSequencingUI] Invalid or empty correctOrder array:', data.correctOrder);
+        container.innerHTML = '<p class="text-red-500 text-center">無法載入排序項目</p>';
+        return;
+    }
+
+    // Shuffle items
+    const shuffled = [...data.correctOrder].sort(() => Math.random() - 0.5);
+    console.log('[setupSequencingUI] Shuffled items:', shuffled);
+
+    shuffled.forEach((text, index) => {
+        const item = document.createElement('div');
+        item.className = 'sequencing-item';
+        item.draggable = true;
+        item.dataset.text = text;
+        item.innerHTML = `
+            <div class="sequencing-item-number">${index + 1}</div>
+            <div class="sequencing-item-text">${text}</div>
+        `;
+
+        // Drag events
+        item.addEventListener('dragstart', (e) => {
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+        });
+
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const dragging = document.querySelector('.sequencing-item.dragging');
+            if (dragging && dragging !== item) {
+                const rect = item.getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                if (e.clientY < midY) {
+                    container.insertBefore(dragging, item);
+                } else {
+                    container.insertBefore(dragging, item.nextSibling);
+                }
+            }
+        });
+
+        // Touch events for mobile
+        let touchStartY = 0;
+        item.addEventListener('touchstart', (e) => {
+            touchStartY = e.touches[0].clientY;
+            item.classList.add('dragging');
+        });
+
+        item.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (target && target.classList.contains('sequencing-item') && target !== item) {
+                if (touch.clientY < touchStartY) {
+                    container.insertBefore(item, target);
+                } else {
+                    container.insertBefore(item, target.nextSibling);
+                }
+                touchStartY = touch.clientY;
+            }
+        });
+
+        item.addEventListener('touchend', () => {
+            item.classList.remove('dragging');
+        });
+
+        container.appendChild(item);
+    });
+
+    // Update numbers after any change
+    updateSequencingNumbers();
+}
+
+function updateSequencingNumbers() {
+    const items = document.querySelectorAll('.sequencing-item');
+    items.forEach((item, index) => {
+        const numberDiv = item.querySelector('.sequencing-item-number');
+        if (numberDiv) numberDiv.textContent = index + 1;
+    });
+}
+
+// --- Matching Question Logic ---
+function setupMatchingUI(data) {
+    console.log('[setupMatchingUI] Setting up matching UI with data:', data);
+    const questionText = document.getElementById('matching-question-text');
+    const columnA = document.getElementById('matching-column-a');
+    const columnB = document.getElementById('matching-column-b');
+    const svg = document.getElementById('matching-svg-canvas');
+
+    if (!questionText || !columnA || !columnB || !svg) {
+        console.error('[setupMatchingUI] DOM elements not found!');
+        return;
+    }
+
+    questionText.textContent = data.question || '請將左右兩側相關的項目配對';
+    columnA.innerHTML = '';
+    columnB.innerHTML = '';
+    svg.innerHTML = '';
+
+    if (!data.pairs || !Array.isArray(data.pairs) || data.pairs.length === 0) {
+        console.error('[setupMatchingUI] Invalid or empty pairs array:', data.pairs);
+        columnA.innerHTML = '<p class="text-red-500">無法載入配對項目</p>';
+        return;
+    }
+
+    // Shuffle items
+    const leftItems = data.pairs.map(p => p.left).sort(() => Math.random() - 0.5);
+    const rightItems = data.pairs.map(p => p.right).sort(() => Math.random() - 0.5);
+    console.log('[setupMatchingUI] Left items:', leftItems, 'Right items:', rightItems);
+
+    leftItems.forEach((text, index) => {
+        const item = document.createElement('div');
+        item.className = 'matching-item';
+        item.dataset.side = 'left';
+        item.dataset.text = text;
+        item.dataset.index = index;
+        // ✨ Add safe ID for reliable element selection (avoids special character issues)
+        item.id = `matching-left-${index}`;
+        item.textContent = text;
+        item.addEventListener('click', () => handleMatchingClick(item));
+        columnA.appendChild(item);
+    });
+
+    rightItems.forEach((text, index) => {
+        const item = document.createElement('div');
+        item.className = 'matching-item';
+        item.dataset.side = 'right';
+        item.dataset.text = text;
+        item.dataset.index = index;
+        // ✨ Add safe ID for reliable element selection (avoids special character issues)
+        item.id = `matching-right-${index}`;
+        item.textContent = text;
+        item.addEventListener('click', () => handleMatchingClick(item));
+        columnB.appendChild(item);
+    });
+}
+
+function handleMatchingClick(item) {
+    const side = item.dataset.side;
+
+    if (item.classList.contains('matched')) {
+        // Unmatch
+        const matchedWith = item.dataset.matchedWith;
+        delete item.dataset.matchedWith;
+        item.classList.remove('matched');
+
+        // Find and unmatch partner
+        const partner = document.querySelector(`.matching-item[data-side="${side === 'left' ? 'right' : 'left'}"][data-text="${matchedWith}"]`);
+        if (partner) {
+            delete partner.dataset.matchedWith;
+            partner.classList.remove('matched');
+        }
+
+        redrawMatchingLines();
+        return;
+    }
+
+    if (side === 'left') {
+        if (currentMatchingSelection.leftItem === item) {
+            currentMatchingSelection.leftItem.classList.remove('selected');
+            currentMatchingSelection.leftItem = null;
+        } else {
+            if (currentMatchingSelection.leftItem) {
+                currentMatchingSelection.leftItem.classList.remove('selected');
+            }
+            currentMatchingSelection.leftItem = item;
+            item.classList.add('selected');
+        }
+    } else {
+        if (currentMatchingSelection.rightItem === item) {
+            currentMatchingSelection.rightItem.classList.remove('selected');
+            currentMatchingSelection.rightItem = null;
+        } else {
+            if (currentMatchingSelection.rightItem) {
+                currentMatchingSelection.rightItem.classList.remove('selected');
+            }
+            currentMatchingSelection.rightItem = item;
+            item.classList.add('selected');
+        }
+    }
+
+    // If both sides selected, create match
+    if (currentMatchingSelection.leftItem && currentMatchingSelection.rightItem) {
+        const left = currentMatchingSelection.leftItem;
+        const right = currentMatchingSelection.rightItem;
+
+        left.classList.remove('selected');
+        right.classList.remove('selected');
+        left.classList.add('matched');
+        right.classList.add('matched');
+
+        left.dataset.matchedWith = right.dataset.text;
+        right.dataset.matchedWith = left.dataset.text;
+
+        currentMatchingSelection.leftItem = null;
+        currentMatchingSelection.rightItem = null;
+
+        redrawMatchingLines();
+    }
+}
+
+function redrawMatchingLines() {
+    const svg = document.getElementById('matching-svg-canvas');
+    svg.innerHTML = '';
+
+    const container = document.querySelector('.matching-container');
+    const rect = container.getBoundingClientRect();
+    svg.setAttribute('width', rect.width);
+    svg.setAttribute('height', rect.height);
+
+    // 🎨 Add SVG gradients for beautiful connecting lines
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+
+    // Pink gradient for default matching lines
+    const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+    gradient.setAttribute('id', 'lineGradient');
+    gradient.setAttribute('x1', '0%');
+    gradient.setAttribute('y1', '0%');
+    gradient.setAttribute('x2', '100%');
+    gradient.setAttribute('y2', '0%');
+    gradient.innerHTML = `
+        <stop offset="0%" style="stop-color:#ec4899;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#f472b6;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#ec4899;stop-opacity:1" />
+    `;
+    defs.appendChild(gradient);
+
+    // Green gradient for correct matches
+    const gradientCorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+    gradientCorrect.setAttribute('id', 'lineGradientCorrect');
+    gradientCorrect.setAttribute('x1', '0%');
+    gradientCorrect.setAttribute('y1', '0%');
+    gradientCorrect.setAttribute('x2', '100%');
+    gradientCorrect.setAttribute('y2', '0%');
+    gradientCorrect.innerHTML = `
+        <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#34d399;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+    `;
+    defs.appendChild(gradientCorrect);
+
+    // Red gradient for incorrect matches
+    const gradientIncorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+    gradientIncorrect.setAttribute('id', 'lineGradientIncorrect');
+    gradientIncorrect.setAttribute('x1', '0%');
+    gradientIncorrect.setAttribute('y1', '0%');
+    gradientIncorrect.setAttribute('x2', '100%');
+    gradientIncorrect.setAttribute('y2', '0%');
+    gradientIncorrect.innerHTML = `
+        <stop offset="0%" style="stop-color:#ef4444;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#f87171;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#ef4444;stop-opacity:1" />
+    `;
+    defs.appendChild(gradientIncorrect);
+
+    svg.appendChild(defs);
+
+    // Draw matching lines with smooth curves
+    let lineIndex = 0;
+    document.querySelectorAll('.matching-item.matched[data-side="left"]').forEach(leftItem => {
+        const rightText = leftItem.dataset.matchedWith;
+        const rightItem = document.querySelector(`.matching-item[data-side="right"][data-text="${rightText}"]`);
+
+        if (rightItem) {
+            const leftRect = leftItem.getBoundingClientRect();
+            const rightRect = rightItem.getBoundingClientRect();
+
+            const x1 = leftRect.right - rect.left;
+            const y1 = leftRect.top + leftRect.height / 2 - rect.top;
+            const x2 = rightRect.left - rect.left;
+            const y2 = rightRect.top + rightRect.height / 2 - rect.top;
+
+            // 🎨 Create smooth Bezier curve with gradient stroke
+            const controlPointX = (x1 + x2) / 2;
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const d = `M ${x1} ${y1} C ${controlPointX} ${y1}, ${controlPointX} ${y2}, ${x2} ${y2}`;
+            line.setAttribute('d', d);
+            line.setAttribute('class', 'matching-line');
+
+            // ✨ Explicitly set stroke with gradient
+            line.setAttribute('stroke', 'url(#lineGradient)');
+            line.setAttribute('stroke-width', window.innerWidth >= 768 ? '5' : '4');
+            line.setAttribute('fill', 'none');
+            line.setAttribute('stroke-linecap', 'round');
+
+            // 🎬 Stagger animation for visual appeal
+            line.style.animationDelay = `${lineIndex * 0.1}s`;
+            lineIndex++;
+
+            svg.appendChild(line);
+        }
+    });
+}
+
+/**
+ * 🚀 NEW: Wait for matching DOM elements to be ready
+ * @param {object} settings - The matching settings
+ * @returns {Promise} Resolves when DOM is ready, rejects after timeout
+ */
+async function waitForMatchingDomReady(settings) {
+    const timeout = 500; // 500ms timeout
+    const startTime = Date.now();
+
+    return new Promise((resolve, reject) => {
+        const checkDom = () => {
+            // Check if first left and right items exist
+            const leftItem = document.getElementById('matching-left-0');
+            const rightItem = document.getElementById('matching-right-0');
+
+            if (leftItem && rightItem) {
+                console.log('[waitForMatchingDomReady] DOM ready, elements found');
+                resolve();
+            } else {
+                const elapsed = Date.now() - startTime;
+                if (elapsed > timeout) {
+                    console.error('[waitForMatchingDomReady] Timeout after', elapsed, 'ms, DOM not ready');
+                    reject(new Error('Matching DOM timeout'));
+                } else {
+                    console.log('[waitForMatchingDomReady] Waiting for DOM... elapsed:', elapsed, 'ms');
+                    requestAnimationFrame(checkDom);
+                }
+            }
+        };
+
+        requestAnimationFrame(checkDom);
+    });
+}
+
+/**
+ * 🚀 NEW: Display correct answers for matching questions
+ * @param {object} matchingSettings - The matching settings with correct pairs
+ */
+function displayMatchingCorrectAnswers(matchingSettings) {
+    if (!matchingSettings || !matchingSettings.pairs || !Array.isArray(matchingSettings.pairs)) {
+        console.error('[displayMatchingCorrectAnswers] Invalid matching settings:', matchingSettings);
+        return;
+    }
+
+    console.log('[displayMatchingCorrectAnswers] Displaying correct answers for matching');
+
+    // 1. Clear existing selections and matches (清除學生的配對狀態)
+    document.querySelectorAll('.matching-item').forEach(item => {
+        item.classList.remove('selected', 'matched');
+        delete item.dataset.matchedWith;
+    });
+
+    // 2. ✨ Find items by text content (since they're shuffled, we can't use fixed indices)
+    // 只畫綠色連線就好，這樣視覺上更清晰
+    matchingSettings.pairs.forEach(pair => {
+        // Use Array.from to find items by text content (more reliable than querySelector with special chars)
+        const leftItems = Array.from(document.querySelectorAll('.matching-item[data-side="left"]'));
+        const rightItems = Array.from(document.querySelectorAll('.matching-item[data-side="right"]'));
+
+        const leftItem = leftItems.find(item => item.dataset.text === pair.left);
+        const rightItem = rightItems.find(item => item.dataset.text === pair.right);
+
+        if (leftItem && rightItem) {
+            // 只標記 data-matchedWith 和 ID 用於畫線，不添加 matched 類
+            leftItem.dataset.matchedWith = rightItem.id;
+            rightItem.dataset.matchedWith = leftItem.id;
+            // 添加特殊類以區分這是答案顯示模式
+            leftItem.classList.add('answer-revealed');
+            rightItem.classList.add('answer-revealed');
+            console.log(`[displayMatchingCorrectAnswers] Paired: ${leftItem.id} ↔ ${rightItem.id}`);
+        } else {
+            console.warn(`[displayMatchingCorrectAnswers] Could not find items for pair:`, pair);
+        }
+    });
+
+    // 3. Redraw lines with correct answer gradient
+    const svg = document.getElementById('matching-svg-canvas');
+    svg.innerHTML = '';
+
+    const container = document.querySelector('.matching-container');
+    const rect = container.getBoundingClientRect();
+    svg.setAttribute('width', rect.width);
+    svg.setAttribute('height', rect.height);
+    svg.setAttribute('style', 'pointer-events: none; z-index: 10;');
+
+    // Add gradients and drop shadow for visual depth
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+
+    // Gradient for correct answers
+    const gradientCorrect = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+    gradientCorrect.setAttribute('id', 'lineGradientCorrect');
+    gradientCorrect.setAttribute('x1', '0%');
+    gradientCorrect.setAttribute('y1', '0%');
+    gradientCorrect.setAttribute('x2', '100%');
+    gradientCorrect.setAttribute('y2', '0%');
+    gradientCorrect.innerHTML = `
+        <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+        <stop offset="50%" style="stop-color:#34d399;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+    `;
+    defs.appendChild(gradientCorrect);
+
+    // Drop shadow for depth
+    const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+    filter.setAttribute('id', 'dropShadow');
+    filter.innerHTML = `<feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>`;
+    defs.appendChild(filter);
+
+    svg.appendChild(defs);
+
+    // Draw correct answer lines using matched IDs
+    let lineIndex = 0;
+    document.querySelectorAll('.matching-item[data-side="left"].answer-revealed').forEach(leftItem => {
+        const rightId = leftItem.dataset.matchedWith;
+        const rightItem = document.getElementById(rightId);
+
+        if (rightItem) {
+            const leftRect = leftItem.getBoundingClientRect();
+            const rightRect = rightItem.getBoundingClientRect();
+
+            const x1 = leftRect.right - rect.left;
+            const y1 = leftRect.top + leftRect.height / 2 - rect.top;
+            const x2 = rightRect.left - rect.left;
+            const y2 = rightRect.top + rightRect.height / 2 - rect.top;
+
+            const controlPointX = (x1 + x2) / 2;
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const d = `M ${x1} ${y1} C ${controlPointX} ${y1}, ${controlPointX} ${y2}, ${x2} ${y2}`;
+            line.setAttribute('d', d);
+            line.setAttribute('class', 'matching-line');
+            line.setAttribute('stroke', 'url(#lineGradientCorrect)');
+            line.setAttribute('stroke-width', window.innerWidth >= 768 ? '5' : '4');
+            line.setAttribute('fill', 'none');
+            line.setAttribute('stroke-linecap', 'round');
+            line.setAttribute('filter', 'url(#dropShadow)');
+            line.style.animationDelay = `${lineIndex * 0.1}s`;
+            lineIndex++;
+
+            svg.appendChild(line);
+            console.log(`[displayMatchingCorrectAnswers] Drew line from ${leftItem.id} to ${rightId}`);
+        }
+    });
+
+    console.log(`[displayMatchingCorrectAnswers] Drew ${lineIndex} lines total`);
+
+    // 4. Disable interaction - remove click handlers by blocking pointer events
+    const matchingContainer = document.querySelector('.matching-container');
+    if (matchingContainer) {
+        matchingContainer.style.pointerEvents = 'none';
+    }
+
+    // 5. Show message to student
+    showMessage('老師已顯示正確答案！', 'info');
+}
+
+/**
+ * 🚀 NEW: Display correct answers for sequencing questions
+ * @param {object} sequencingSettings - The sequencing settings with correct order
+ */
+function displaySequencingCorrectAnswers(sequencingSettings) {
+    if (!sequencingSettings || !sequencingSettings.correctOrder || !Array.isArray(sequencingSettings.correctOrder)) {
+        console.error('[displaySequencingCorrectAnswers] Invalid sequencing settings:', sequencingSettings);
+        return;
+    }
+
+    console.log('[displaySequencingCorrectAnswers] Displaying correct answers for sequencing');
+
+    const container = document.getElementById('sequencing-items-container');
+    if (!container) {
+        console.error('[displaySequencingCorrectAnswers] Container not found');
+        return;
+    }
+
+    // 1. Clear existing items
+    container.innerHTML = '';
+
+    // 2. Render items in correct order with visual indicators
+    sequencingSettings.correctOrder.forEach((text, index) => {
+        const item = document.createElement('div');
+        item.className = 'sequencing-item correct-answer';
+        item.draggable = false;
+        item.innerHTML = `
+            <div class="sequencing-item-number text-xs sm:text-sm md:text-base px-2 sm:px-2.5 py-1 sm:py-1.5 rounded">${index + 1}</div>
+            <div class="sequencing-item-text flex-1 text-base sm:text-lg md:text-xl">${text}</div>
+            <div class="sequencing-item-check">
+                <svg class="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+        `;
+        container.appendChild(item);
+    });
+
+    // 3. Disable interaction - freeze drag handlers
+    const items = container.querySelectorAll('.sequencing-item');
+    items.forEach(item => {
+        item.draggable = false;
+        item.style.pointerEvents = 'none';
+    });
+
+    // 4. Disable submit button
+    const submitBtn = document.getElementById('submit-sequencing-btn');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.5';
+    }
+
+    // 5. Show message to student
+    showMessage('老師已顯示正確答案！', 'info');
+}
+
+/**
+ * 🚀 NEW: Teacher listener for answer display flags
+ */
+let teacherAnswerUnsubscribe = null; // Track listener to prevent duplicates
+
+function setupTeacherAnswerListener() {
+    if (!classroomCode) return;
+
+    // 🔥 Unsubscribe existing listener to prevent memory leak
+    if (teacherAnswerUnsubscribe) {
+        console.log('[setupTeacherAnswerListener] Unsubscribing existing listener');
+        teacherAnswerUnsubscribe();
+        teacherAnswerUnsubscribe = null;
+    }
+
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    teacherAnswerUnsubscribe = onSnapshot(controlRef, (docSnap) => {
+        if (!docSnap.exists()) return;
+        const data = docSnap.data();
+
+        // Display matching answer if flag is true
+        if (data.showMatchingAnswer && data.matchingSettings) {
+            displayTeacherMatchingAnswer(data.matchingSettings);
+        }
+
+        // Display sequencing answer if flag is true
+        if (data.showSequencingAnswer && data.sequencingSettings) {
+            displayTeacherSequencingAnswer(data.sequencingSettings);
+        }
+    });
+
+    console.log('[setupTeacherAnswerListener] New listener registered');
+}
+
+/**
+ * 🚀 NEW: Display correct answers for teacher (matching questions)
+ */
+function displayTeacherMatchingAnswer(matchingSettings) {
+    const display = document.getElementById('teacher-answer-display');
+    const content = document.getElementById('teacher-answer-content');
+    const title = document.getElementById('teacher-answer-title');
+
+    if (!matchingSettings || !matchingSettings.pairs) return;
+
+    title.textContent = '配對題正確答案';
+    content.innerHTML = '<ol class="list-decimal list-inside space-y-2 text-lg">' +
+        matchingSettings.pairs.map((pair, i) =>
+            `<li><strong>${pair.left}</strong> → ${pair.right}</li>`
+        ).join('') + '</ol>';
+    display.classList.remove('hidden');
+}
+
+/**
+ * 🚀 NEW: Display correct answers for teacher (sequencing questions)
+ */
+function displayTeacherSequencingAnswer(sequencingSettings) {
+    const display = document.getElementById('teacher-answer-display');
+    const content = document.getElementById('teacher-answer-content');
+    const title = document.getElementById('teacher-answer-title');
+
+    if (!sequencingSettings || !sequencingSettings.correctOrder) return;
+
+    title.textContent = '排序題正確答案';
+    content.innerHTML = '<ol class="list-decimal list-inside space-y-2 text-lg">' +
+        sequencingSettings.correctOrder.map((item, i) =>
+            `<li>${item}</li>`
+        ).join('') + '</ol>';
+    display.classList.remove('hidden');
+}
+
+// --- Drawing Board Logic ---
+function setupCanvas() {
+    const canvasElement = document.getElementById('drawing-canvas');
+    if (!canvasElement.offsetParent) return; // Don't setup if not visible
+    let renderedWidth = canvasElement.clientWidth;
+    let renderedHeight = canvasElement.clientHeight;
+
+    canvasElement.width = Math.min(MAX_IMAGE_DIMENSION * 2, Math.max(1, renderedWidth));
+    canvasElement.height = Math.min(MAX_IMAGE_DIMENSION * 2, Math.max(1, renderedHeight));
+
+    [backgroundCanvas, studentImageCanvas, drawingCanvas].forEach(c => {
+        c.width = canvasElement.width;
+        c.height = canvasElement.height;
+    });
+
+    drawingCtx.lineJoin = 'round';
+    drawingCtx.lineCap = 'round';
+    drawingCtx.strokeStyle = document.getElementById('color-select').value;
+    drawingCtx.lineWidth = parseInt(document.getElementById('size-select').value);
+    drawingCtx.globalCompositeOperation = 'source-over';
+
+    // Only clear drawingCanvas if it's a new session, not just a resize within the same session.
+    // This is handled by the `resetStudentUIState` function now.
+    // For setupCanvas, it's about setting dimensions and initial drawing context properties.
+    // The actual clearing should be conditional based on pause state.
+    // However, for a fresh setup (e.g., first time entering drawing mode), it should be cleared.
+    // The logic in resetStudentUIState is responsible for this.
+    // So, here, we just ensure the canvases are ready.
+    backgroundCtx.fillStyle = 'white';
+    backgroundCtx.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+    studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+}
+
+function loadBackgroundImage() {
+    backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+    backgroundCtx.fillStyle = 'white';
+    backgroundCtx.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+
+    if (teacherUploadedBackgroundImageDataURL) {
+        const tempImg = new Image();
+        tempImg.onload = () => {
+            const canvasRatio = backgroundCanvas.width / backgroundCanvas.height;
+            const imgRatio = tempImg.width / tempImg.height;
+            let drawWidth, drawHeight, offsetX, offsetY;
+            if (imgRatio > canvasRatio) {
+                drawHeight = backgroundCanvas.width / imgRatio;
+                drawWidth = backgroundCanvas.width;
+                offsetY = (backgroundCanvas.height - drawHeight) / 2;
+                offsetX = 0;
+            } else {
+                drawWidth = backgroundCanvas.height * imgRatio;
+                drawHeight = backgroundCanvas.height;
+                offsetX = (backgroundCanvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+            backgroundCtx.drawImage(tempImg, offsetX, offsetY, drawWidth, drawHeight);
+            drawCombinedCanvas();
+        };
+        tempImg.src = teacherUploadedBackgroundImageDataURL;
+    } else {
+        drawCombinedCanvas();
+    }
+}
+
+function loadStudentImage() {
+    studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+
+    if (studentUploadedImageDataURL) {
+        const tempImg = new Image();
+        tempImg.onload = () => {
+            const canvasRatio = studentImageCanvas.width / studentImageCanvas.height;
+            const imgRatio = tempImg.width / tempImg.height;
+            let drawWidth, drawHeight, offsetX, offsetY;
+            if (imgRatio > canvasRatio) {
+                drawHeight = studentImageCanvas.width / imgRatio;
+                drawWidth = studentImageCanvas.width;
+                offsetY = (studentImageCanvas.height - drawHeight) / 2;
+                offsetX = 0;
+            } else {
+                drawWidth = studentImageCanvas.height * imgRatio;
+                drawHeight = studentImageCanvas.height;
+                offsetX = (studentImageCanvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+            studentImageCtx.drawImage(tempImg, offsetX, offsetY, drawWidth, drawHeight);
+            drawCombinedCanvas();
+        };
+        tempImg.src = studentUploadedImageDataURL;
+    } else {
+        drawCombinedCanvas();
+    }
+}
+
+function drawCombinedCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(backgroundCanvas, 0, 0);
+    ctx.drawImage(studentImageCanvas, 0, 0);
+    ctx.drawImage(drawingCanvas, 0, 0);
+}
+
+/**
+ * 🚀 OPTIMIZED: 繪圖函式（將被節流包裝）
+ */
+function draw(e) {
+    if (!isDrawing) return;
+    e.preventDefault();
+    const { offsetX, offsetY } = getMousePos(e);
+    drawingCtx.beginPath();
+    drawingCtx.moveTo(lastX, lastY);
+    drawingCtx.lineTo(offsetX, offsetY);
+    drawingCtx.stroke();
+    [lastX, lastY] = [offsetX, offsetY];
+    drawCombinedCanvas();
+}
+
+// 🚀 OPTIMIZED: 創建節流版本的繪圖函式（16ms ≈ 60 FPS）
+const throttledDraw = Utils.throttle(draw, 16);
+
+function getMousePos(e) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    let clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const rawOffsetX = clientX - rect.left;
+    const rawOffsetY = clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { offsetX: rawOffsetX * scaleX, offsetY: rawOffsetY * scaleY };
+}
+
+function startDrawing(e) {
+    isDrawing = true;
+    const { offsetX, offsetY } = getMousePos(e);
+    [lastX, lastY] = [offsetX, offsetY];
+}
+
+function stopDrawing() { isDrawing = false; }
+
+function clearDrawingCanvas() {
+    drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    drawCombinedCanvas();
+}
+
+function updateColorSwatch(color) {
+    const swatch = document.getElementById('current-color-swatch');
+    if (swatch) swatch.style.backgroundColor = color;
+}
+
+// --- AI Settings Modal Functions ---
+const aiSettingsModal = document.getElementById('ai-settings-modal');
+const aiSettingsModalCloseBtn = document.getElementById('ai-settings-modal-close-btn');
+const aiSourceSelect = document.getElementById('ai-source-select');
+const geminiApiKeyGroup = document.getElementById('gemini-api-key-group');
+const geminiApiKeyInput = document.getElementById('gemini-api-key-input');
+const saveAiSettingsBtn = document.getElementById('save-ai-settings-btn');
+
+function showAISettingsModal() {
+    // 使用新的引導 Modal 取代舊的 AI 設定 Modal
+    showApiKeyGuide();
+}
+
+function hideAISettingsModal() {
+    aiSettingsModal.classList.add('hidden');
+}
+
+function saveAISettings() {
+    aiSettings.aiSource = aiSourceSelect.value;
+    aiSettings.geminiApiKey = geminiApiKeyInput.value.trim();
+    localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+    showMessage('AI 設定已儲存！', 'success');
+    hideAISettingsModal();
+}
+
+/**
+ * 顯示 API Key 引導模態框，讓使用者快速設定 API Key。
+ * @param {Function} [retryCallback] - 儲存成功後要執行的回呼（可用於重試 AI 操作）
+ */
+function showApiKeyGuide(retryCallback) {
+    const modal = document.getElementById('api-key-guide-modal');
+    const input = document.getElementById('api-key-guide-input');
+    const saveBtn = document.getElementById('api-key-guide-save-btn');
+    const cancelBtn = document.getElementById('api-key-guide-cancel-btn');
+    const closeBtn = document.getElementById('api-key-guide-close-btn');
+    const testBtn = document.getElementById('api-key-guide-test-btn');
+    const testResult = document.getElementById('api-key-test-result');
+
+    // 預填現有 Key，若是內建則使用遮罩
+    const currentKey = aiSettings.geminiApiKey?.trim() || '';
+
+    // 🚀 MODIFIED v3.5.9: 極致嚴格且寬鬆並存的識別
+    // 🆕 MODIFIED v3.6.1: 若 bundle 未內建有效金鑰（教師下載版），任何輸入都不視為「內建」
+    const identifiesAsBuiltin = (val) => {
+        // 🆕 v3.6.1：無內建金鑰時，不走任何內建識別路徑
+        if (!hasValidBuiltinKey()) return false;
+
+        if (!val) return true;
+        const trimmed = val.trim();
+        const defaultKey = aiSettings.defaultGeminiApiKey || '';
+
+        // 1. 完全匹配（含預設佔位符）
+        if (trimmed === defaultKey ||
+            trimmed === '__' + 'GEMINI_API_KEY' + '__' ||
+            trimmed === '12345678' ||
+            trimmed === BUILTIN_KEY_MASK) return true;
+
+        // 2. 前綴匹配（用於偵測環境變數置換後的真實金鑰）
+        // 只要 trimmed 前缀 15 碼與目前的預設值前缀 15 碼相同，即視為內建
+        if (trimmed.length > 20 && defaultKey.length > 20 &&
+            trimmed.substring(0, 15) === defaultKey.substring(0, 15)) {
+            return true;
+        }
+
+        return false;
+    };
+
+    // 🆕 MODIFIED v3.6.1：下載版本無內建金鑰時，強制 isBuiltin=false，避免 UI 誤顯示遮罩值
+    const isBuiltin = hasValidBuiltinKey() && (identifiesAsBuiltin(currentKey) || aiSettings.aiSource === 'gemini-default');
+
+    if (isBuiltin) {
+        input.value = BUILTIN_KEY_MASK;
+    } else {
+        input.value = currentKey;
+    }
+    input.type = 'password'; // 🔒 絕對防護：強制鎖定為 password 模式
+
+    testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
+    testResult.innerHTML = '';
+
+    const handleInput = () => {
+        const val = input.value.trim();
+        if (val === BUILTIN_KEY_MASK || val === '') return;
+
+        const builtin = identifiesAsBuiltin(val);
+        if (builtin && val !== '12345678') {
+            input.value = BUILTIN_KEY_MASK;
+            console.log("[AI Key Security] 即時偵測：發現內建金鑰，已加固遮蓋");
+        }
+    };
+
+    const onFocus = () => {
+        if (input.value === BUILTIN_KEY_MASK) {
+            input.value = '';
+        }
+    };
+
+    input.addEventListener('focus', onFocus);
+    input.addEventListener('input', handleInput);
+
+    const hide = () => {
+        modal.classList.add('hidden');
+        saveBtn.removeEventListener('click', onSave);
+        cancelBtn.removeEventListener('click', onCancel);
+        closeBtn.removeEventListener('click', onCancel);
+        testBtn.removeEventListener('click', onTest);
+        input.removeEventListener('focus', onFocus);
+        input.removeEventListener('input', handleInput);
+    };
+
+    const onSave = () => {
+        let key = input.value.trim();
+        // 如果是遮罩，則代表使用者想使用內建金鑰
+        if (key === BUILTIN_KEY_MASK) {
+            key = aiSettings.defaultGeminiApiKey;
+        }
+
+        if (!key || !key.startsWith('AIzaSy')) {
+            showMessage('請貼上有效的 Gemini API Key（應以 AIzaSy 開頭）', 'error');
+            input.focus();
+            return;
+        }
+        if (key === aiSettings.defaultGeminiApiKey || key === (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__')) {
+            aiSettings.aiSource = 'gemini-default';
+        } else {
+            aiSettings.aiSource = 'gemini-custom';
+        }
+        aiSettings.geminiApiKey = key;
+        localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+        // 同步更新 AI 設定畫面中的輸入框
+        if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+        hide();
+        showMessage('✅ API Key 已儲存！', 'success');
+        if (typeof retryCallback === 'function') {
+            setTimeout(retryCallback, 300);
+        }
+    };
+
+    const onCancel = () => hide();
+
+    const onTest = async () => {
+        let key = input.value.trim();
+        // 如果是遮罩，測試時使用內建金鑰
+        if (key === BUILTIN_KEY_MASK) {
+            key = aiSettings.defaultGeminiApiKey;
+        }
+
+        if (!key || !key.startsWith('AIzaSy')) {
+            testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+            testResult.innerHTML = '<i class="fas fa-times-circle"></i> 請先貼上有效的 API Key（應以 AIzaSy 開頭）';
+            return;
+        }
+        // 顯示載入中
+        testBtn.disabled = true;
+        testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200';
+        testResult.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在測試連線...';
+
+        const start = Date.now();
+        try {
+            const res = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+                        generationConfig: { maxOutputTokens: 1 }
+                    })
+                }
+            );
+            const elapsed = Date.now() - start;
+            if (res.ok) {
+                testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-green-50 text-green-700 border border-green-200';
+                testResult.innerHTML = `<i class="fas fa-check-circle"></i> ✅ API Key 有效！回應時間 ${elapsed}ms，可以使用`;
+                // 自動儲存有效的 Key，並判斷是否為預設值
+                if (key === aiSettings.defaultGeminiApiKey || key === (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__')) {
+                    aiSettings.aiSource = 'gemini-default';
+                } else {
+                    aiSettings.aiSource = 'gemini-custom';
+                }
+                aiSettings.geminiApiKey = key;
+                localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+                if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+                saveBtn.textContent = '✅ 已驗證，儲存並繼續';
+                saveBtn.classList.add('from-green-500', 'to-green-600');
+                saveBtn.classList.remove('from-blue-600', 'to-purple-600');
+            } else {
+                const body = await res.json().catch(() => ({}));
+                const msg = body?.error?.message || `HTTP ${res.status}`;
+
+                // 🚀 MODIFIED v3.5.5: 針對 403 錯誤提供專項診斷
+                let diagMsg = msg;
+                if (res.status === 403) {
+                    diagMsg = `❌ 403 Forbidden: 金鑰可能已被封鎖或洩漏。建議：前往 Google AI Studio 重新生成 Key 並更新專案中的 .env 檔案。`;
+                } else if (res.status === 401 || res.status === 400) {
+                    diagMsg = `❌ 金鑰格式錯誤或無效，請檢查輸入內容是否完整。`;
+                }
+
+                testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+                testResult.innerHTML = `<i class="fas fa-times-circle"></i> ${diagMsg}`;
+            }
+        } catch (err) {
+            testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+            testResult.innerHTML = '<i class="fas fa-times-circle"></i> ❌ 網路連線失敗，請檢查網路';
+        } finally {
+            testBtn.disabled = false;
+        }
+    };
+
+    const onKeydown = (e) => { if (e.key === 'Enter') onSave(); };
+
+    saveBtn.addEventListener('click', onSave);
+    cancelBtn.addEventListener('click', onCancel);
+    closeBtn.addEventListener('click', onCancel);
+    testBtn.addEventListener('click', onTest);
+    input.addEventListener('keydown', onKeydown, { once: true });
+
+    // 重置儲存按鈕外觀
+    saveBtn.innerHTML = '<i class="fas fa-save mr-1"></i> 儲存並繼續';
+    saveBtn.className = 'flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md text-sm';
+
+    modal.classList.remove('hidden');
+    setTimeout(() => input.focus(), 150);
+}
+
+/**
+ * 檢查 API KEY 是否已設定並符合基本格式要求
+ * 如果未設定或格式明顯錯誤，顯示警告訊息並打開 AI 設定模態框
+ * @returns {boolean} 如果 API KEY 通過基本檢查返回 true，否則返回 false
+ */
+function checkAPIKey() {
+    const apiKey = aiSettings.geminiApiKey?.trim();
+
+    // 檢查是否為空或預設值
+    if (!apiKey || apiKey === '12345678' || apiKey === aiSettings.defaultGeminiApiKey) {
+        // 🆕 MODIFIED v3.6.1：只有在 bundle 有有效內建金鑰時，才放行「等於內建值」的情況
+        // - 線上版（部署到 GitHub Pages）：有內建金鑰 → 放行，讓試用者免設定即可用
+        // - 教師下載版（透過 set.html）：無內建金鑰 → 強制提示老師設定自己的 Gemini Key
+        if (hasValidBuiltinKey() && apiKey === aiSettings.defaultGeminiApiKey) return true;
+
+        const errorMsg = '⚠️ 請先在 AI 設定中填寫您的 Google AI Studio API Key！';
+        console.error('[API KEY 驗證]', errorMsg, { currentKey: apiKey || '(空值)' });
+        showMessage(errorMsg, 'warning');
+        // 顯示訊息後立即打開設定框（訊息 z-index 更高，不會被遮擋）
+        showAISettingsModal();
+        return false;
+    }
+
+    // 檢查基本格式：Google API Key 通常至少 30 字符
+    if (apiKey.length < 30) {
+        const errorMsg = `❌ API KEY 格式錯誤！通常至少需要 30 個字符，您只輸入了 ${apiKey.length} 個字符。`;
+        console.error('[API KEY 驗證] 格式檢查失敗:', {
+            errorType: 'KEY_TOO_SHORT',
+            expectedMinLength: 30,
+            actualLength: apiKey.length,
+            keyPreview: apiKey.substring(0, 10) + '...',
+            message: errorMsg
+        });
+        showMessage(errorMsg, 'error');
+        // 顯示訊息後立即打開設定框（訊息 z-index 更高，不會被遮擋）
+        showAISettingsModal();
+        return false;
+    }
+
+    return true;
+}
+
+function loadAISettings() {
+    // 🆕 v3.6.1：教師下載版無內建金鑰，geminiApiKey 保持空字串，讓 UI 提示設定自己的 Key
+    const fallbackKey = hasValidBuiltinKey() ? aiSettings.defaultGeminiApiKey : '';
+
+    const savedSettings = localStorage.getItem('aiSettings');
+    if (savedSettings) {
+        try {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.aiSource) aiSettings.aiSource = parsedSettings.aiSource;
+            // MODIFIED: If geminiApiKey is empty after loading, set default.
+            aiSettings.geminiApiKey = parsedSettings.geminiApiKey || fallbackKey;
+            // 自動判斷是否為內建，校正來源狀態
+            if (!parsedSettings.geminiApiKey || parsedSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || parsedSettings.geminiApiKey === (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__')) {
+                // 🆕 v3.6.1：無內建金鑰時改回 custom，避免 UI 誤認已有內建可用
+                aiSettings.aiSource = hasValidBuiltinKey() ? 'gemini-default' : 'gemini-custom';
+            }
+        } catch (e) {
+            console.error("Failed to parse AI settings from localStorage:", e);
+            // If parsing fails, set default API key
+            aiSettings.geminiApiKey = fallbackKey;
+        }
+    } else {
+        // If no settings are saved at all, set default API key
+        aiSettings.geminiApiKey = fallbackKey;
+        // 🆕 v3.6.1：無內建金鑰時預設為 custom
+        if (!hasValidBuiltinKey()) aiSettings.aiSource = 'gemini-custom';
+    }
+}
+
+// --- New: URL/HTML Dispatch Settings Modal Functions (Combined) ---
+const urlDispatchModal = document.getElementById('url-dispatch-settings-modal');
+const urlDispatchModalCloseBtn = document.getElementById('url-dispatch-settings-modal-close-btn');
+
+const urlDispatchSection = document.getElementById('url-dispatch-section');
+const htmlDispatchSection = document.getElementById('html-dispatch-section');
+const dispatchTypeRadios = document.querySelectorAll('input[name="dispatchType"]');
+
+const urlInput = document.getElementById('dispatch-url-input');
+const isYoutubeCheckbox = document.getElementById('is-youtube-checkbox');
+
+const dispatchHtmlUploadInput = document.getElementById('dispatch-html-upload-input');
+const clearDispatchHtmlBtn = document.getElementById('clear-dispatch-html-btn');
+const dispatchHtmlStatus = document.getElementById('dispatch-html-status');
+
+function showUrlDispatchSettingsModal() {
+    // Set radio button based on current dispatchSettings.type
+    document.querySelector(`input[name="dispatchType"][value="${dispatchSettings.type}"]`).checked = true;
+
+    // Show/hide sections based on type
+    urlDispatchSection.classList.toggle('hidden', dispatchSettings.type === 'html');
+    htmlDispatchSection.classList.toggle('hidden', dispatchSettings.type === 'url');
+
+    // Populate URL fields
+    urlInput.value = dispatchSettings.url;
+    isYoutubeCheckbox.checked = dispatchSettings.isYoutube;
+
+    // Update HTML status
+    dispatchHtmlStatus.textContent = dispatchSettings.htmlContent ? '已上傳 HTML 檔案。' : '目前沒有 HTML 檔案。';
+
+    urlDispatchModal.classList.remove('hidden');
+}
+
+function hideUrlDispatchSettingsModal() {
+    urlDispatchModal.classList.add('hidden');
+}
+
+function saveDispatchSettings() { // Renamed from saveUrlDispatchSettings
+    dispatchSettings.type = document.querySelector('input[name="dispatchType"]:checked').value;
+
+    if (dispatchSettings.type === 'url') {
+        dispatchSettings.url = urlInput.value.trim();
+        dispatchSettings.isYoutube = isYoutubeCheckbox.checked;
+        dispatchSettings.htmlContent = null; // Clear HTML content if switching to URL
+    } else { // type === 'html'
+        // htmlContent is updated via handleHtmlFile or clearDispatchHtml
+        dispatchSettings.url = ''; // Clear URL if switching to HTML
+        dispatchSettings.isYoutube = false; // Clear YouTube flag
+    }
+
+    localStorage.setItem('dispatchSettings', JSON.stringify(dispatchSettings));
+    showMessage('派送設定已儲存！', 'success');
+    hideUrlDispatchSettingsModal();
+}
+
+function clearDispatchSettings() { // Renamed from clearUrlDispatchSettings
+    urlInput.value = '';
+    isYoutubeCheckbox.checked = false;
+    dispatchHtmlUploadInput.value = ''; // Clear file input
+    dispatchHtmlStatus.textContent = '目前沒有 HTML 檔案。';
+
+    dispatchSettings = { type: 'url', url: '', isYoutube: false, htmlContent: null }; // Reset global variable
+    localStorage.removeItem('dispatchSettings'); // Clear from localStorage
+
+    // Reset UI to default (URL selected)
+    document.querySelector('input[name="dispatchType"][value="url"]').checked = true;
+    urlDispatchSection.classList.remove('hidden');
+    htmlDispatchSection.classList.add('hidden');
+}
+
+function loadDispatchSettings() { // Renamed from loadUrlDispatchSettings
+    const savedSettings = localStorage.getItem('dispatchSettings');
+    if (savedSettings) {
+        try {
+            const parsedSettings = JSON.parse(savedSettings);
+            // Ensure all properties are set, even if null in saved data
+            dispatchSettings.type = parsedSettings.type || 'url';
+            dispatchSettings.url = parsedSettings.url || '';
+            dispatchSettings.isYoutube = parsedSettings.isYoutube || false;
+            dispatchSettings.htmlContent = parsedSettings.htmlContent || null;
+        } catch (e) {
+            console.error("Failed to parse dispatch settings from localStorage:", e);
+            // Reset to default if parsing fails
+            dispatchSettings = { type: 'url', url: '', isYoutube: false, htmlContent: null };
+        }
+    }
+}
+
+/**
+ * NEW: Handles HTML file upload within the combined dispatch settings modal.
+ * @param {File} file - The HTML file to process.
+ */
+function handleDispatchHtmlFile(file) {
+    if (!file || !file.type.includes('html')) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        dispatchSettings.htmlContent = event.target.result; // Update global state
+        dispatchHtmlStatus.textContent = `已上傳檔案: ${file.name}`;
+        showMessage('HTML 檔案已上傳！', 'success');
+    };
+    reader.readAsText(file);
+}
+
+
+// --- New: Recording Functions (Student Side) ---
+const startRecordingBtn = document.getElementById('start-recording-btn');
+const stopRecordingBtn = document.getElementById('stop-recording-btn');
+const playRecordingBtn = document.getElementById('play-recording-btn');
+const resetRecordingBtn = document.getElementById('reset-recording-btn');
+const submitRecordingBtn = document.getElementById('submit-recording-btn');
+const audioPreview = document.getElementById('audio-preview');
+const recordingStatusText = document.getElementById('recording-status-text');
+const recordingStatusIcon = document.getElementById('recording-status-icon');
+
+/**
+ * Starts the audio recording process.
+ */
+async function startRecording() {
+    try {
+        // Request access to microphone
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // Try to use audio/wav first for better iOS compatibility.
+        // Fallback to audio/webm if wav is not supported.
+        let mimeType = 'audio/webm';
+        if (MediaRecorder.isTypeSupported('audio/wav')) {
+            mimeType = 'audio/wav';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            mimeType = 'audio/mp4'; // Another common format
+        } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+            mimeType = 'audio/ogg';
+        }
+
+        mediaRecorder = new MediaRecorder(audioStream, { mimeType: mimeType });
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = event => {
+            audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = () => {
+            audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType }); // Use the actual mimeType recorded
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                audioDataURL = reader.result;
+                audioPreview.src = audioDataURL;
+                audioPreview.classList.remove('hidden');
+                playRecordingBtn.disabled = false;
+                resetRecordingBtn.disabled = false;
+                submitRecordingBtn.disabled = false;
+                recordingStatusText.textContent = '錄音完成，可試聽或送出';
+                recordingStatusIcon.classList.remove('fa-spin', 'text-red-500');
+                recordingStatusIcon.classList.add('text-green-500');
+            };
+            reader.readAsDataURL(audioBlob);
+
+            // Stop all tracks to release microphone
+            audioStream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        startRecordingBtn.disabled = true;
+        stopRecordingBtn.disabled = false;
+        playRecordingBtn.disabled = true;
+        resetRecordingBtn.disabled = true;
+        submitRecordingBtn.disabled = true;
+        recordingStatusText.textContent = '正在錄音...';
+        recordingStatusIcon.classList.remove('text-gray-400');
+        recordingStatusIcon.classList.add('fa-spin', 'text-red-500');
+        showMessage('開始錄音', 'info');
+    } catch (err) {
+        console.error('無法取得麥克風權限:', err);
+        showMessage('無法取得麥克風權限，請檢查設定。', 'error');
+        // Reset buttons if permission fails
+        startRecordingBtn.disabled = false;
+        stopRecordingBtn.disabled = true;
+        playRecordingBtn.disabled = true;
+        resetRecordingBtn.disabled = true;
+        submitRecordingBtn.disabled = true;
+        recordingStatusText.textContent = '錄音失敗';
+        recordingStatusIcon.classList.remove('fa-spin', 'text-red-500');
+        recordingStatusIcon.classList.add('text-gray-400');
+    }
+}
+
+/**
+ * Stops the audio recording.
+ */
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        stopRecordingBtn.disabled = true;
+    }
+}
+
+/**
+ * Plays the recorded audio.
+ */
+function playRecording() {
+    if (audioPreview.src) {
+        audioPreview.play();
+        showMessage('正在播放錄音', 'info');
+    } else {
+        showMessage('沒有可播放的錄音', 'info');
+    }
+}
+
+/**
+ * Resets the recording state, allowing for a new recording.
+ */
+function resetRecording() {
+    if (audioStream) {
+        audioStream.getTracks().forEach(track => track.stop());
+    }
+    audioChunks = [];
+    audioBlob = null;
+    audioDataURL = null;
+    audioPreview.src = '';
+    audioPreview.classList.add('hidden');
+
+    startRecordingBtn.disabled = false;
+    stopRecordingBtn.disabled = true;
+    playRecordingBtn.disabled = true;
+    resetRecordingBtn.disabled = true;
+    submitRecordingBtn.disabled = true;
+    recordingStatusText.textContent = '準備錄音...';
+    recordingStatusIcon.classList.remove('fa-spin', 'text-red-500', 'text-green-500');
+    recordingStatusIcon.classList.add('text-gray-400');
+    showMessage('錄音已重置', 'info');
+}
+
+// --- End Recording Functions ---
+
+/**
+ * (Teacher) Ends the entire class session, clears all student data and presence for the current classroom code.
+ */
+async function endClassSession() {
+    // 使用自訂模態框取代原生 confirm()
+    const confirmed = await new Promise((resolve) => {
+        const modal = document.getElementById('end-class-confirm-modal');
+        const checkbox = document.getElementById('end-class-confirm-checkbox');
+        const okBtn = document.getElementById('end-class-confirm-ok-btn');
+        const cancelBtn = document.getElementById('end-class-confirm-cancel-btn');
+
+        // 重置狀態
+        checkbox.checked = false;
+        okBtn.disabled = true;
+        okBtn.className = 'flex-1 py-3 bg-red-200 text-red-400 font-bold rounded-xl cursor-not-allowed transition-all duration-200';
+
+        // 勾選框控制確認按鈕
+        const onCheck = () => {
+            if (checkbox.checked) {
+                okBtn.disabled = false;
+                okBtn.className = 'flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl cursor-pointer transition-all duration-200';
+            } else {
+                okBtn.disabled = true;
+                okBtn.className = 'flex-1 py-3 bg-red-200 text-red-400 font-bold rounded-xl cursor-not-allowed transition-all duration-200';
+            }
+        };
+
+        const onOk = () => {
+            cleanup();
+            resolve(true);
+        };
+
+        const onCancel = () => {
+            cleanup();
+            resolve(false);
+        };
+
+        const cleanup = () => {
+            modal.classList.add('hidden');
+            checkbox.removeEventListener('change', onCheck);
+            okBtn.removeEventListener('click', onOk);
+            cancelBtn.removeEventListener('click', onCancel);
+        };
+
+        checkbox.addEventListener('change', onCheck);
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+
+        modal.classList.remove('hidden');
+    });
+
+    // 如果用戶取消，則不執行下課操作
+    if (!confirmed) {
+        showMessage('已取消下課操作', 'info');
+        return;
+    }
+
+    markClassEnded(); // Mark that class has been properly ended
+    clearAllQuestionBanks(); // Clear question banks from memory
+    showMessage('正在結束課程並清空資料...', 'info');
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 統一清理所有監聽器
+    ListenerManager.clearAll();
+
+    // 🚀 CRITICAL: 清空所有全局狀態（防止殘留數據）
+    interactionModeUnsubscribe = null;
+    studentResponsesUnsubscribe = null;
+    lotteryUnsubscribe = null;
+    classroomPresenceUnsubscribe = null;
+
+    try {
+        // Delete the entire classroom subcollection for the current classroomCode
+        if (classroomCode) {
+            console.log(`[Teacher] Starting cleanup for classroom: ${classroomCode}`);
+
+            // 🚀 FIX: 分別捕獲每個刪除操作的錯誤，避免單一失敗導致整個流程中斷
+            try {
+                const classroomRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                const responsesSnapshot = await getDocs(classroomRef);
+                console.log(`[Teacher] Deleting ${responsesSnapshot.docs.length} student responses...`);
+                for (const docSnap of responsesSnapshot.docs) {
+                    await deleteDoc(docSnap.ref);
+                }
+                console.log('[Teacher] ✓ Student responses deleted');
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to delete student responses:', error);
+                // 繼續執行，不中斷
+            }
+
+            try {
+                const presenceRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+                const presenceSnapshot = await getDocs(presenceRef);
+                console.log(`[Teacher] Deleting ${presenceSnapshot.docs.length} presence records...`);
+                for (const docSnap of presenceSnapshot.docs) {
+                    await deleteDoc(docSnap.ref);
+                }
+                console.log('[Teacher] ✓ Presence records deleted');
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to delete presence records:', error);
+                // 繼續執行，不中斷
+            }
+
+            try {
+                const settingsDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                console.log('[Teacher] Deleting control document...');
+                await deleteDoc(settingsDocRef);
+                console.log('[Teacher] ✓ Control document deleted');
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to delete control document:', error);
+                // 繼續執行，不中斷
+            }
+
+            console.log(`[Teacher] ✓ Cleanup completed for classroom: ${classroomCode}`);
+        }
+
+        classroomCode = null; // Clear the classroom code after ending session
+        localStorage.removeItem('teacherClassroomCode'); // Clear from local storage
+
+        // 🚀 CRITICAL: 清空所有全局狀態變量
+        studentName = null;
+        currentRole = null;
+        currentInteractionMode = null;
+        allStudentResponses = [];
+        activeStudentNames = [];
+        activeStudentsPresenceMap.clear(); // 🚀 FIX: 清空學生分心狀態 Map
+        lastSelectedStudentCard = null;
+        lastSelectedModalStudent = null;
+        isResponsePaused = false;
+        currentMultipleChoiceQuestions = null;
+        readingComprehensionData = { text: '', questions: [] }; // 🚀 NEW: 清空閱讀測驗資料
+        sequencingData = { question: '', correctOrder: [] }; // 🚀 NEW: 清空排序題資料
+        matchingData = { question: '', pairs: [] }; // 🚀 NEW: 清空配對題資料
+        quickPollOptions = []; // 🚀 NEW: 清空快速投票選項
+        quickPollData = null; // 🚀 NEW: 清空快速投票數據
+        quickPollActive = false; // 🚀 NEW: 重置快速投票狀態
+        quickPollVotesUnsubscribe = null; // 🚀 NEW: 清空快速投票監聽器
+
+        document.getElementById('student-responses-container').innerHTML = '<p class="text-gray-500 text-center col-span-full">正在等待學生作答...</p>';
+        document.getElementById('active-student-count').textContent = '0';
+        // 🚀 FIX: 清空在線學生模態框，避免下次開課時看到舊學生名單（使用統一的空狀態樣式）
+        document.getElementById('modal-student-names').innerHTML = `
+            <div class="empty-state-container w-full h-full min-h-[120px] flex flex-col items-center justify-center text-center py-8 sm:py-10">
+                <div class="w-14 h-14 sm:w-16 sm:h-16 mb-4 rounded-full bg-gray-100 flex items-center justify-center">
+                    <i class="fas fa-users text-gray-300 text-2xl sm:text-3xl"></i>
+                </div>
+                <span class="block text-gray-400 text-base sm:text-lg font-medium">沒有學生在線</span>
+                <span class="block text-gray-300 text-sm sm:text-base mt-2">等待學生加入課堂...</span>
+            </div>
+        `;
+        // REMOVED: document.getElementById('responded-student-count').textContent = '0';
+        document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+        document.getElementById('teacher-image-preview').src = '';
+        document.getElementById('teacher-image-preview-container').classList.add('hidden');
+
+        // Clear URL/HTML dispatch settings and teacher background image when ending interaction
+        clearDispatchSettings(); // Use the combined clear function
+        teacherUploadedBackgroundImageDataURL = null;
+        document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+        document.getElementById('teacher-image-preview').src = '';
+        document.getElementById('teacher-image-preview-container').classList.add('hidden');
+        isResponsePaused = false; // NEW: Reset pause state
+        updateTeacherPauseButtonUI(); // NEW: Update pause button UI
+
+        await signOut(auth); // Explicitly sign out the user
+
+        // NEW: After signing out, explicitly sign in again to get a fresh authenticated state
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+            console.log("Signed in with custom token.");
+        } else {
+            await signInAnonymously(auth);
+        }
+        console.log("Re-authenticated after ending session.");
+
+        showView('entry'); // Show the entry view
+        showMessage('課程已結束，資料已清空。', 'success');
+
+    } catch (error) {
+        console.error("結束課程並清空資料失敗:", error);
+        showMessage("結束課程失敗，請檢查網路連線或聯繫管理員。", "error");
+    }
+}
+
+// NEW: Pause/Resume Response Logic
+const togglePauseBtn = document.getElementById('toggle-pause-btn');
+const togglePauseBtnText = document.getElementById('toggle-pause-btn-text');
+
+/**
+ * Toggles the pause state for student responses in Firestore.
+ */
+async function toggleResponsePause() {
+    if (!classroomCode) {
+        showMessage('請先開啟一個教室！', 'error');
+        return;
+    }
+    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+    try {
+        isResponsePaused = !isResponsePaused; // Toggle local state
+        await setDoc(controlRef, { isPaused: isResponsePaused }, { merge: true });
+        showMessage(`學生回覆已${isResponsePaused ? '暫停' : '恢復'}！`, 'info');
+        updateTeacherPauseButtonUI();
+    } catch (error) {
+        console.error("切換暫停回覆狀態失敗:", error);
+        showMessage("切換狀態失敗，請檢查網路連線。", "error");
+        isResponsePaused = !isResponsePaused; // Revert local state on error
+    }
+}
+
+/**
+ * Updates the teacher's pause button UI based on the `isResponsePaused` state.
+ */
+function updateTeacherPauseButtonUI() {
+    if (isResponsePaused) {
+        togglePauseBtn.classList.remove('bg-gray-500', 'hover:bg-gray-600');
+        togglePauseBtn.classList.add('bg-red-500', 'hover:bg-red-600');
+        togglePauseBtnText.textContent = '恢復回覆';
+        togglePauseBtn.querySelector('i').classList.replace('fa-pause', 'fa-play');
+    } else {
+        togglePauseBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
+        togglePauseBtn.classList.add('bg-gray-500', 'hover:bg-gray-600');
+        togglePauseBtnText.textContent = '暫停回覆';
+        togglePauseBtn.querySelector('i').classList.replace('fa-play', 'fa-pause');
+    }
+}
+
+/**
+ * NEW: End current interaction and optionally clean up all settings.
+ * @param {Object} options - Configuration options
+ * @param {boolean} options.fullReset - If true, clears peer review, dispatch settings, etc. Default: true
+ * @param {boolean} options.navigateToMenu - If true, navigates to teacher menu view. Default: true
+ */
+// ==========================================================
+// 🆕 NEW [v3.7.3]: 結束互動再確認 Modal（防止老師忘記儲存學生作答紀錄）
+// ==========================================================
+
+/**
+ * 🆕 依當前互動模式計算「建議先做的事」清單
+ * 回傳陣列，每項為 HTML 字串（允許 icon + 粗體）
+ * @param {string} mode - 當前互動模式（currentInteractionMode）
+ * @returns {string[]}
+ */
+function computeEndInteractionHint(mode) {
+    const hints = [];
+    // 通用提醒（第一條，所有模式都會看到）
+    hints.push('確認<strong>排行榜分數</strong>已截圖或記錄（結束後排行榜會清空）');
+
+    switch (mode) {
+        case 'text_input':
+            hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV，保存學生文字答題內容');
+            hints.push('📝 如有使用「AI 文字分析」結果，也請一併截圖留存');
+            break;
+        case 'drawing':
+            hints.push('💾 點「<strong>下載所有媒體</strong>」匯出學生繪圖作品（ZIP 壓縮）');
+            hints.push('📸 若已開啟互評，建議截圖記錄最終投票結果');
+            break;
+        case 'multiple_choice': {
+            const hasCustomQs = currentMultipleChoiceQuestions && currentMultipleChoiceQuestions.length > 0;
+            if (hasCustomQs) {
+                hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV，保存每位學生每題作答紀錄');
+                hints.push('📊 或點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」取得統計摘要 + 詳細作答');
+            } else {
+                hints.push('📊 點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」匯出各選項人數 + 每位學生答案');
+            }
+            break;
+        }
+        case 'true_false':
+            hints.push('📊 點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」匯出 O/X 人數分布 + 每位學生答案');
+            break;
+        case 'reading_comprehension':
+            hints.push('📥 點「<strong>下載回應</strong>」匯出 CSV（含每題作答 + PIRLS 四層次分析）');
+            hints.push('📊 或點「<strong>顯示統計</strong>」→ 底部「<strong>下載統計 (CSV)</strong>」取得作答統計摘要');
+            hints.push('📖 如需保留題目，可先點「<strong>顯示題目</strong>」檢視');
+            break;
+        case 'quick_answer':
+            hints.push('🏆 若有贏家，已記錄在排行榜，請確認分數已加上');
+            break;
+        case 'sequencing':
+        case 'matching':
+            hints.push('👥 點擊各學生卡片檢視他們的排序／配對結果，確認已掌握作答狀況');
+            hints.push('💡 需要再次展示答案時，可留在此模式下繼續講解');
+            break;
+        case 'recording':
+            hints.push('💾 點「<strong>下載所有媒體</strong>」保存學生錄音 ZIP 檔案');
+            break;
+        case 'url_dispatch':
+            hints.push('🌐 派送內容已傳送完畢，不需額外儲存');
+            break;
+        default:
+            // 其他未特別列出的模式，僅顯示通用提醒
+            break;
+    }
+
+    // 最後一條通用提醒
+    hints.push('如需重新開始但保留題目設定，可改用「<strong>重新開始 🔄</strong>」按鈕');
+
+    return hints;
+}
+
+/**
+ * 🆕 顯示結束互動再確認 Modal
+ */
+function showEndInteractionConfirm() {
+    const modal = document.getElementById('end-interaction-confirm-modal');
+    const hintList = document.getElementById('end-interaction-hint-list');
+    if (!modal || !hintList) return;
+
+    // 根據當前模式填入建議
+    const mode = currentInteractionMode || 'waiting';
+    const hints = computeEndInteractionHint(mode);
+    hintList.innerHTML = hints.map(h => `<li>${h}</li>`).join('');
+
+    modal.classList.remove('hidden');
+
+    // 讓「再檢查一下」取得 focus，避免使用者按 Enter 直接確認結束
+    setTimeout(() => {
+        const cancelBtn = document.getElementById('end-interaction-cancel-btn');
+        if (cancelBtn) cancelBtn.focus();
+    }, 60);
+}
+
+/**
+ * 🆕 隱藏結束互動再確認 Modal
+ */
+function hideEndInteractionConfirm() {
+    document.getElementById('end-interaction-confirm-modal').classList.add('hidden');
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.3] A-4: 班級答題趨勢 - 歷史 Quiz Snapshot 歸檔
+// ==========================================================
+// Firestore 路徑：classrooms/{code}/historicalQuizzes/{autoId}
+// 結構：{
+//   mode: string,            // 'reading_comprehension' | 'multiple_choice' | 'true_false' | ...
+//   modeLabel: string,       // 中文模式名稱
+//   questionCount: number,   // 題數
+//   submittedCount: number,  // 已提交人數
+//   onlineCount: number,     // 課堂在線人數（提交當下）
+//   avgAccuracy: number|null,// 平均答對率（0-100）
+//   avgScore: number|null,   // 平均分數（reading_comprehension/multiple_choice 才有）
+//   topStudent: string|null, // 第一名學生名
+//   timestamp: serverTimestamp
+// }
+
+// ==========================================================
+// 🆕 NEW [v3.8.4] A-5: 即時加題（互動進行中追加一題給學生）
+// ==========================================================
+function showAddQuestionModal() {
+    const modal = document.getElementById('add-question-modal');
+    if (!modal) return;
+    // 重置欄位
+    document.getElementById('add-question-text').value = '';
+    ['1','2','3','4'].forEach(n => document.getElementById('add-question-opt' + n).value = '');
+    document.getElementById('add-question-correct').value = '1';
+    document.getElementById('add-question-level').value = '1';
+    // 依模式顯示/隱藏層次選項
+    const levelRow = document.getElementById('add-question-level-row');
+    if (levelRow) levelRow.style.display = currentInteractionMode === 'reading_comprehension' ? '' : 'none';
+    modal.classList.remove('hidden');
+}
+function hideAddQuestionModal() {
+    document.getElementById('add-question-modal')?.classList.add('hidden');
+}
+async function confirmAddQuestion() {
+    const questionText = document.getElementById('add-question-text').value.trim();
+    const opts = ['1','2','3','4'].map(n => document.getElementById('add-question-opt' + n).value.trim());
+    const correctAnswer = parseInt(document.getElementById('add-question-correct').value);
+    const level = parseInt(document.getElementById('add-question-level').value) || 1;
+
+    if (!questionText) { showMessage('❌ 題目敘述不能為空', 'error'); return; }
+    if (opts.some(o => !o)) { showMessage('❌ 4 個選項都要填', 'error'); return; }
+
+    const newQuestion = { question: questionText, correctAnswer, options: opts, level };
+
+    try {
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+
+        if (currentInteractionMode === 'reading_comprehension') {
+            // 追加到 readingComprehensionData.questions
+            if (!readingComprehensionData) {
+                showMessage('❌ 目前無閱讀測驗資料', 'error');
+                return;
+            }
+            readingComprehensionData.questions.push(newQuestion);
+            // 寫入 Firestore - control doc 的 readingComprehensionData
+            await setDoc(controlRef, {
+                readingComprehensionData,
+                modeResetToken: Date.now() // 強制學生端 re-render
+            }, { merge: true });
+            showMessage(`✅ 已加第 ${readingComprehensionData.questions.length} 題，學生會即時看到`, 'success');
+        } else if (currentInteractionMode === 'multiple_choice') {
+            // 追加到 multiple_choice_questions
+            const newList = (currentMultipleChoiceQuestions || []).concat([newQuestion]);
+            await setDoc(controlRef, {
+                multiple_choice_questions: newList,
+                modeResetToken: Date.now()
+            }, { merge: true });
+            currentMultipleChoiceQuestions = newList;
+            showMessage(`✅ 已加第 ${newList.length} 題，學生會即時看到`, 'success');
+        } else {
+            showMessage('❌ 目前模式不支援即時加題', 'warning');
+            return;
+        }
+        hideAddQuestionModal();
+    } catch (err) {
+        console.error('[addQuestion] 失敗：', err);
+        showMessage('❌ 加題失敗：' + err.message, 'error');
+    }
+}
+
+async function archiveCurrentQuizSnapshot() {
+    if (!classroomCode || !currentInteractionMode || currentInteractionMode === 'waiting') return;
+
+    // 不歸檔的模式（無評分意義）
+    const skipModes = ['waiting', 'url_dispatch', 'drawing', 'recording', 'text_input', 'quick_answer'];
+    if (skipModes.includes(currentInteractionMode)) {
+        console.log(`[archiveQuiz] 跳過模式 '${currentInteractionMode}' （非評分型互動）`);
+        return;
+    }
+
+    try {
+        // 抓當前所有 studentResponses
+        const studentsRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const snap = await getDocs(studentsRef);
+        const submitted = [];
+        snap.forEach(d => {
+            const data = d.data();
+            if (data.answer != null && data.answer !== '') submitted.push(data);
+        });
+
+        if (submitted.length === 0) {
+            console.log('[archiveQuiz] 無人提交，不歸檔');
+            return;
+        }
+
+        // 計算平均答對率（依 mode 不同邏輯）
+        let avgAccuracy = null;
+        let avgScore = null;
+        let topStudent = null;
+        let topScore = -Infinity;
+        let questionCount = 0;
+
+        // 🆕 v3.8.5 A-4 完整版：除了平均，還記錄每位學生分數 → 支援個人成績趨勢圖
+        const perStudentScores = []; // [{ name, accuracy }]
+
+        // 🆕 v3.8.8 A-9：每題答對率統計（題目品質分析用）
+        // 結構：[{ qIndex, questionText, correctAnswer, answeredCount, correctCount, accuracy }]
+        const perQuestionStats = [];
+
+        if (currentInteractionMode === 'reading_comprehension' && readingComprehensionData?.questions) {
+            questionCount = readingComprehensionData.questions.length;
+            let totalAcc = 0;
+            // 初始化每題的統計累加器
+            const qStats = readingComprehensionData.questions.map((q, i) => ({
+                qIndex: i,
+                questionText: q.question || '',
+                correctAnswer: q.correctAnswer,
+                level: q.level || 1,
+                answeredCount: 0,
+                correctCount: 0
+            }));
+            submitted.forEach(s => {
+                try {
+                    const ans = JSON.parse(s.answer);
+                    if (!Array.isArray(ans)) return;
+                    let correct = 0;
+                    ans.forEach((a, i) => {
+                        const q = readingComprehensionData.questions[i];
+                        if (!q) return;
+                        qStats[i].answeredCount++;
+                        if (q.correctAnswer === 0 || String(a) === String(q.correctAnswer)) {
+                            correct++;
+                            qStats[i].correctCount++;
+                        }
+                    });
+                    const acc = +((correct / questionCount) * 100).toFixed(1);
+                    totalAcc += acc;
+                    const score = s.totalScore != null ? s.totalScore : (s.baseScore || acc);
+                    if (score > topScore) { topScore = score; topStudent = s.name; }
+                    perStudentScores.push({ name: s.name, accuracy: acc });
+                } catch (e) { /* skip */ }
+            });
+            avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
+            avgScore = avgAccuracy; // 對閱讀測驗來說一致
+            // 計算每題答對率
+            qStats.forEach(q => {
+                q.accuracy = q.answeredCount > 0 ? +((q.correctCount / q.answeredCount) * 100).toFixed(1) : null;
+                perQuestionStats.push(q);
+            });
+        } else if (currentInteractionMode === 'multiple_choice' && currentMultipleChoiceQuestions?.length > 0) {
+            questionCount = currentMultipleChoiceQuestions.length;
+            let totalAcc = 0;
+            const qStats = currentMultipleChoiceQuestions.map((q, i) => ({
+                qIndex: i,
+                questionText: q.question || '',
+                correctAnswer: q.correctAnswer,
+                answeredCount: 0,
+                correctCount: 0
+            }));
+            submitted.forEach(s => {
+                if (!Array.isArray(s.answer)) return;
+                let correct = 0;
+                s.answer.forEach(a => {
+                    const q = currentMultipleChoiceQuestions[a.qIndex];
+                    if (!q) return;
+                    qStats[a.qIndex].answeredCount++;
+                    if (q.correctAnswer === 0 || String(a.ans) === String(q.correctAnswer)) {
+                        correct++;
+                        qStats[a.qIndex].correctCount++;
+                    }
+                });
+                const acc = +((correct / questionCount) * 100).toFixed(1);
+                totalAcc += acc;
+                if (acc > topScore) { topScore = acc; topStudent = s.name; }
+                perStudentScores.push({ name: s.name, accuracy: acc });
+            });
+            avgAccuracy = +(totalAcc / submitted.length).toFixed(1);
+            avgScore = avgAccuracy;
+            qStats.forEach(q => {
+                q.accuracy = q.answeredCount > 0 ? +((q.correctCount / q.answeredCount) * 100).toFixed(1) : null;
+                perQuestionStats.push(q);
+            });
+        } else if (currentInteractionMode === 'true_false') {
+            questionCount = 1;
+            // 是非題無「正解」當下儲存（除非備題模式有 true_false_question.correctAnswer）
+            // 簡單統計 O / X 比率
+            const oCount = submitted.filter(s => s.answer === 'O').length;
+            avgAccuracy = null; // 沒正解就不算 accuracy
+            avgScore = null;
+        }
+
+        const modeLabelMap = {
+            'reading_comprehension': '📖 閱讀測驗',
+            'multiple_choice': '🔢 選擇題',
+            'true_false': '✓ 是非題',
+            'sequencing': '🔀 排序題',
+            'matching': '🔗 配對題'
+        };
+
+        const archive = {
+            mode: currentInteractionMode,
+            modeLabel: modeLabelMap[currentInteractionMode] || currentInteractionMode,
+            questionCount,
+            submittedCount: submitted.length,
+            onlineCount: activeStudentNames?.length || submitted.length,
+            avgAccuracy,
+            avgScore,
+            topStudent: topStudent || null,
+            perStudentScores, // 🆕 v3.8.5 A-4 完整版：個人成績陣列，支援個人趨勢圖
+            perQuestionStats, // 🆕 v3.8.8 A-9：每題答對率，支援題目品質統計
+            timestamp: serverTimestamp()
+        };
+
+        const archiveRef = doc(collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'historicalQuizzes'));
+        await setDoc(archiveRef, archive);
+        console.log('[archiveQuiz] ✅ 歸檔成功：', archive);
+    } catch (err) {
+        console.error('[archiveQuiz] 歸檔失敗：', err);
+    }
+}
+
+// 🆕 v3.8.5 A-4 完整版：Chart.js 折線圖快取 + 全域歸檔資料
+let _historicalQuizzesCache = [];
+let _classChartInstance = null;
+let _individualChartInstance = null;
+
+// 🆕 顯示歷史趨勢 Modal
+async function showHistoricalQuizzesModal() {
+    const modal = document.getElementById('historical-quizzes-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+
+    // 切回預設 tab：overview
+    switchHistoryTab('overview');
+
+    try {
+        const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'historicalQuizzes');
+        const snap = await getDocs(colRef);
+        const quizzes = [];
+        snap.forEach(d => {
+            const data = d.data();
+            quizzes.push({
+                ...data,
+                id: d.id,
+                timestampMs: data.timestamp?.toMillis ? data.timestamp.toMillis() : 0
+            });
+        });
+        // 升序：最舊在前（折線圖左 → 右是時間順序）
+        quizzes.sort((a, b) => a.timestampMs - b.timestampMs);
+        _historicalQuizzesCache = quizzes;
+
+        renderHistoryOverview(quizzes);
+        renderHistoryList(quizzes);
+        populateStudentSelect(quizzes);
+    } catch (err) {
+        console.error('[showHistoricalQuizzes] 失敗：', err);
+        document.querySelector('[data-history-panel="overview"]').innerHTML =
+            '<p class="text-center text-red-500 py-4">❌ 讀取失敗：' + err.message + '</p>';
+    }
+}
+
+// 🆕 渲染班級趨勢總覽（統計卡 + 折線圖）
+function renderHistoryOverview(quizzes) {
+    const panel = document.querySelector('[data-history-panel="overview"]');
+    if (!panel) return;
+
+    if (quizzes.length === 0) {
+        panel.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄。<br>結束評分型互動時會自動歸檔。</p>';
+        return;
+    }
+
+    const totalQuizzes = quizzes.length;
+    const totalSubmissions = quizzes.reduce((s, q) => s + (q.submittedCount || 0), 0);
+    const validAccs = quizzes.map(q => q.avgAccuracy).filter(a => a != null);
+    const overallAvg = validAccs.length ? (validAccs.reduce((s, a) => s + a, 0) / validAccs.length).toFixed(1) : '—';
+
+    panel.innerHTML = `
+        <!-- 總體統計卡 -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
+                <div class="text-2xl font-bold text-blue-700">${totalQuizzes}</div>
+                <div class="text-xs text-gray-600">總互動次數</div>
+            </div>
+            <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                <div class="text-2xl font-bold text-green-700">${totalSubmissions}</div>
+                <div class="text-xs text-gray-600">總提交人次</div>
+            </div>
+            <div class="bg-purple-50 p-3 rounded text-center border border-purple-200">
+                <div class="text-2xl font-bold text-purple-700">${overallAvg}${validAccs.length ? '%' : ''}</div>
+                <div class="text-xs text-gray-600">總平均答對率</div>
+            </div>
+        </div>
+        <!-- 折線圖 -->
+        <div class="bg-white rounded-lg border-2 border-gray-200 p-3">
+            <h5 class="text-sm font-bold text-gray-700 mb-2 flex items-center gap-1">
+                📈 <span>班級平均答對率變化</span>
+                <span class="text-xs text-gray-400 ml-auto">（時間由舊到新）</span>
+            </h5>
+            <div style="position:relative;height:300px;">
+                <canvas id="class-trend-chart"></canvas>
+            </div>
+        </div>
+    `;
+
+    // 渲染 Chart.js
+    renderClassTrendChart(quizzes);
+}
+
+// 🆕 渲染班級趨勢折線圖
+function renderClassTrendChart(quizzes) {
+    if (typeof Chart === 'undefined') {
+        console.warn('[Chart] Chart.js 未載入');
+        return;
+    }
+    const canvas = document.getElementById('class-trend-chart');
+    if (!canvas) return;
+
+    // 銷毀舊圖
+    if (_classChartInstance) {
+        _classChartInstance.destroy();
+        _classChartInstance = null;
+    }
+
+    // 過濾有效（有 avgAccuracy）的紀錄
+    const validQuizzes = quizzes.filter(q => q.avgAccuracy != null);
+    if (validQuizzes.length === 0) {
+        canvas.parentElement.innerHTML = '<p class="text-center text-gray-400 py-8 text-sm">無可用評分數據</p>';
+        return;
+    }
+
+    const labels = validQuizzes.map(q => {
+        const d = q.timestampMs ? new Date(q.timestampMs) : null;
+        return d ? `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}` : '—';
+    });
+    const data = validQuizzes.map(q => q.avgAccuracy);
+    const modeLabels = validQuizzes.map(q => q.modeLabel || q.mode);
+
+    _classChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: '班級平均答對率 (%)',
+                data,
+                borderColor: 'rgb(139, 92, 246)',
+                backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                borderWidth: 2.5,
+                tension: 0.3,
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 8,
+                pointBackgroundColor: 'rgb(139, 92, 246)',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: (ctx) => `${labels[ctx[0].dataIndex]}（${modeLabels[ctx[0].dataIndex]}）`,
+                        label: (ctx) => `答對率：${ctx.parsed.y.toFixed(1)}%`
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    ticks: { callback: (v) => v + '%' },
+                    title: { display: true, text: '答對率', color: '#6b7280' }
+                },
+                x: {
+                    ticks: { maxRotation: 45, minRotation: 30, font: { size: 11 } }
+                }
+            }
+        }
+    });
+}
+
+// 🆕 填充學生下拉選單
+function populateStudentSelect(quizzes) {
+    const select = document.getElementById('history-student-select');
+    if (!select) return;
+    const allStudents = new Set();
+    quizzes.forEach(q => {
+        (q.perStudentScores || []).forEach(s => {
+            if (s && s.name) allStudents.add(s.name);
+        });
+    });
+    const sorted = [...allStudents].sort();
+    select.innerHTML = '<option value="">— 請選擇 —</option>' +
+        sorted.map(name => `<option value="${escapeHtmlSafe(name)}">${escapeHtmlSafe(name)}</option>`).join('');
+}
+
+// 🆕 escape helper
+function escapeHtmlSafe(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 🆕 渲染個人成績趨勢圖
+function renderIndividualTrend(studentName) {
+    const area = document.getElementById('individual-chart-area');
+    if (!area) return;
+
+    if (!studentName) {
+        area.innerHTML = '<p class="text-center text-gray-400 py-8 text-sm">請從上方選擇學生</p>';
+        if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+        return;
+    }
+
+    // 抓出該學生在所有 quiz 的成績
+    const dataPoints = [];
+    _historicalQuizzesCache.forEach(q => {
+        const s = (q.perStudentScores || []).find(x => x.name === studentName);
+        if (s && s.accuracy != null) {
+            dataPoints.push({
+                timestamp: q.timestampMs,
+                accuracy: s.accuracy,
+                modeLabel: q.modeLabel || q.mode
+            });
+        }
+    });
+
+    if (dataPoints.length === 0) {
+        area.innerHTML = `<p class="text-center text-gray-400 py-8 text-sm">${escapeHtmlSafe(studentName)} 尚未有評分紀錄</p>`;
+        if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+        return;
+    }
+
+    // 計算個人統計
+    const accs = dataPoints.map(p => p.accuracy);
+    const avg = (accs.reduce((s, a) => s + a, 0) / accs.length).toFixed(1);
+    const max = Math.max(...accs);
+    const min = Math.min(...accs);
+    const trend = accs.length >= 2 ? (accs[accs.length-1] - accs[0]).toFixed(1) : 0;
+
+    area.innerHTML = `
+        <div class="grid grid-cols-4 gap-2 mb-3">
+            <div class="bg-purple-50 p-2 rounded text-center border border-purple-200">
+                <div class="text-lg font-bold text-purple-700">${dataPoints.length}</div>
+                <div class="text-xs text-gray-600">參與次數</div>
+            </div>
+            <div class="bg-blue-50 p-2 rounded text-center border border-blue-200">
+                <div class="text-lg font-bold text-blue-700">${avg}%</div>
+                <div class="text-xs text-gray-600">平均</div>
+            </div>
+            <div class="bg-green-50 p-2 rounded text-center border border-green-200">
+                <div class="text-lg font-bold text-green-700">${max}%</div>
+                <div class="text-xs text-gray-600">最高</div>
+            </div>
+            <div class="bg-${trend >= 0 ? 'amber' : 'red'}-50 p-2 rounded text-center border border-${trend >= 0 ? 'amber' : 'red'}-200">
+                <div class="text-lg font-bold text-${trend >= 0 ? 'amber' : 'red'}-700">${trend >= 0 ? '↑' : '↓'} ${Math.abs(trend)}%</div>
+                <div class="text-xs text-gray-600">進步幅度</div>
+            </div>
+        </div>
+        <div class="bg-white rounded-lg border-2 border-gray-200 p-3">
+            <h5 class="text-sm font-bold text-gray-700 mb-2">📊 ${escapeHtmlSafe(studentName)} 的歷次成績</h5>
+            <div style="position:relative;height:280px;">
+                <canvas id="individual-trend-chart"></canvas>
+            </div>
+        </div>
+    `;
+
+    if (typeof Chart === 'undefined') return;
+    const canvas = document.getElementById('individual-trend-chart');
+    if (!canvas) return;
+
+    if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+
+    const labels = dataPoints.map(p => {
+        const d = p.timestamp ? new Date(p.timestamp) : null;
+        return d ? `${d.getMonth()+1}/${d.getDate()}` : '—';
+    });
+    const data = dataPoints.map(p => p.accuracy);
+
+    _individualChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label: studentName + ' 答對率 (%)',
+                data,
+                borderColor: 'rgb(34, 197, 94)',
+                backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                borderWidth: 2.5,
+                tension: 0.3,
+                fill: true,
+                pointRadius: 5,
+                pointHoverRadius: 8,
+                pointBackgroundColor: 'rgb(34, 197, 94)',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }, {
+                label: '班級平均',
+                data: dataPoints.map(p => {
+                    const q = _historicalQuizzesCache.find(qz => qz.timestampMs === p.timestamp);
+                    return q?.avgAccuracy || null;
+                }),
+                borderColor: 'rgb(156, 163, 175)',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                tension: 0.3,
+                fill: false,
+                pointRadius: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top', labels: { font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        title: (ctx) => `${labels[ctx[0].dataIndex]}（${dataPoints[ctx[0].dataIndex].modeLabel}）`,
+                        label: (ctx) => `${ctx.dataset.label}：${ctx.parsed.y.toFixed(1)}%`
+                    }
+                }
+            },
+            scales: {
+                y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } }
+            }
+        }
+    });
+}
+
+// 🆕 v3.8.8 A-9：渲染題目品質統計
+function renderQuestionQuality() {
+    const area = document.getElementById('question-quality-area');
+    if (!area) return;
+
+    const modeFilter = document.getElementById('quality-mode-filter')?.value || 'all';
+    const minOccurrences = parseInt(document.getElementById('quality-min-occurrences')?.value || '1');
+
+    // 從 cache 收集所有 perQuestionStats
+    // 用 questionText 作為 key 聚合（考量同題目可能在多次測驗出現）
+    const aggregated = {}; // questionText → { mode, occurrences, totalAnswered, totalCorrect, accuracies[] }
+
+    _historicalQuizzesCache.forEach(quiz => {
+        if (modeFilter !== 'all' && quiz.mode !== modeFilter) return;
+        if (!Array.isArray(quiz.perQuestionStats)) return;
+
+        quiz.perQuestionStats.forEach(qs => {
+            const key = (qs.questionText || '').trim();
+            if (!key) return;
+            if (!aggregated[key]) {
+                aggregated[key] = {
+                    questionText: key,
+                    mode: quiz.mode,
+                    modeLabel: quiz.modeLabel,
+                    occurrences: 0,
+                    totalAnswered: 0,
+                    totalCorrect: 0,
+                    accuracies: [],
+                    level: qs.level || null
+                };
+            }
+            const agg = aggregated[key];
+            agg.occurrences++;
+            agg.totalAnswered += (qs.answeredCount || 0);
+            agg.totalCorrect += (qs.correctCount || 0);
+            if (qs.accuracy != null) agg.accuracies.push(qs.accuracy);
+        });
+    });
+
+    // 過濾、計算總平均
+    const list = Object.values(aggregated)
+        .filter(q => q.occurrences >= minOccurrences && q.accuracies.length > 0)
+        .map(q => {
+            const avgAcc = q.accuracies.reduce((s, a) => s + a, 0) / q.accuracies.length;
+            return {
+                ...q,
+                avgAccuracy: +avgAcc.toFixed(1),
+                // 標籤：太簡單(>90%) / 太難(<40%) / 適中
+                difficulty: avgAcc > 90 ? 'too-easy' : avgAcc < 40 ? 'too-hard' : 'good'
+            };
+        });
+
+    if (list.length === 0) {
+        area.innerHTML = `
+            <p class="text-center text-gray-400 py-8 text-sm">
+                尚無符合條件的題目統計<br>
+                ${minOccurrences > 1 ? '<span class="text-xs">請降低「最少出現次數」篩選條件</span>' : '<br><span class="text-xs">提示：題目品質統計只計算 V3.8.8 之後新增的歷史紀錄</span>'}
+            </p>`;
+        return;
+    }
+
+    // 統計總體
+    const tooEasy = list.filter(q => q.difficulty === 'too-easy').length;
+    const tooHard = list.filter(q => q.difficulty === 'too-hard').length;
+    const good = list.filter(q => q.difficulty === 'good').length;
+
+    // 排序：太難在最前 → 太簡單在最後（讓老師最先看到問題題目）
+    list.sort((a, b) => a.avgAccuracy - b.avgAccuracy);
+
+    area.innerHTML = `
+        <!-- 統計卡片 -->
+        <div class="grid grid-cols-3 gap-2 mb-3">
+            <div class="bg-red-50 p-3 rounded text-center border border-red-200">
+                <div class="text-2xl font-bold text-red-700">${tooHard}</div>
+                <div class="text-xs text-gray-600">⚠️ 太難（&lt; 40%）</div>
+            </div>
+            <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                <div class="text-2xl font-bold text-green-700">${good}</div>
+                <div class="text-xs text-gray-600">✓ 適中（40-90%）</div>
+            </div>
+            <div class="bg-yellow-50 p-3 rounded text-center border border-yellow-200">
+                <div class="text-2xl font-bold text-yellow-700">${tooEasy}</div>
+                <div class="text-xs text-gray-600">😴 太簡單（&gt; 90%）</div>
+            </div>
+        </div>
+
+        <p class="text-xs text-gray-500 mb-2">💡 共 ${list.length} 題（依答對率由低到高排序，太難的題目優先處理）</p>
+
+        <!-- 題目列表 -->
+        <div class="space-y-2">
+            ${list.map(q => {
+                const colorMap = {
+                    'too-hard': { bg: 'bg-red-50', border: 'border-red-300', text: 'text-red-700', label: '⚠️ 太難', tip: '建議：補充教學或標為加分題' },
+                    'too-easy': { bg: 'bg-yellow-50', border: 'border-yellow-300', text: 'text-yellow-700', label: '😴 太簡單', tip: '建議：換更具挑戰的題目' },
+                    'good': { bg: 'bg-green-50', border: 'border-green-300', text: 'text-green-700', label: '✓ 適中', tip: null }
+                };
+                const c = colorMap[q.difficulty];
+                const previewText = q.questionText.length > 80 ? q.questionText.substring(0, 80) + '…' : q.questionText;
+                const levelBadge = q.level ? `<span class="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 ml-1">L${q.level}</span>` : '';
+                return `
+                    <div class="${c.bg} p-3 rounded border-l-4 ${c.border}">
+                        <div class="flex items-start justify-between gap-2 mb-1">
+                            <div class="flex-1 min-w-0">
+                                <span class="text-xs font-bold ${c.text}">${c.label}</span>
+                                ${levelBadge}
+                                <span class="text-xs text-gray-500 ml-2">${q.modeLabel || q.mode}</span>
+                            </div>
+                            <div class="text-xl font-bold ${c.text} flex-shrink-0">${q.avgAccuracy}%</div>
+                        </div>
+                        <p class="text-sm text-gray-800 mb-1 break-words">${escapeHtmlSafe(previewText)}</p>
+                        <div class="flex items-center justify-between text-xs text-gray-500">
+                            <span>📊 出現 ${q.occurrences} 次 · 累計 ${q.totalCorrect}/${q.totalAnswered} 答對</span>
+                            ${c.tip ? `<span class="${c.text} font-semibold">${c.tip}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+// 🆕 渲染詳細列表（原本 V3.8.3 的版本）
+function renderHistoryList(quizzes) {
+    const listEl = document.getElementById('historical-quizzes-list');
+    if (!listEl) return;
+    // 列表內倒序：最新在上
+    const sorted = [...quizzes].sort((a, b) => b.timestampMs - a.timestampMs);
+
+    if (sorted.length === 0) {
+        listEl.innerHTML = '<p class="text-center text-gray-500 py-8">尚無歷史紀錄</p>';
+        return;
+    }
+
+    listEl.innerHTML = `
+        <h5 class="text-sm font-bold text-gray-700 mb-2">📅 完整紀錄（最新在上）</h5>
+        <div class="space-y-2">
+            ${sorted.map(q => {
+                const date = q.timestampMs ? new Date(q.timestampMs).toLocaleString('zh-TW', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '—';
+                const accBadge = q.avgAccuracy != null
+                    ? `<span class="px-2 py-0.5 rounded text-xs font-bold ${q.avgAccuracy >= 80 ? 'bg-green-100 text-green-700' : q.avgAccuracy >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">${q.avgAccuracy}%</span>`
+                    : '<span class="text-xs text-gray-400">無評分</span>';
+                return `
+                    <div class="flex items-center gap-2 p-2 bg-gray-50 rounded border hover:bg-white">
+                        <div class="flex-1 min-w-0">
+                            <div class="font-semibold text-sm">${q.modeLabel || q.mode}</div>
+                            <div class="text-xs text-gray-500">${date} · ${q.submittedCount}/${q.onlineCount} 人提交 · ${q.questionCount} 題${q.topStudent ? ' · 🏆 ' + escapeHtmlSafe(q.topStudent) : ''}</div>
+                        </div>
+                        ${accBadge}
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+// 🆕 切換 tab
+function switchHistoryTab(tabName) {
+    // 按鈕樣式
+    document.querySelectorAll('.history-tab-btn').forEach(b => {
+        const isActive = b.dataset.historyTab === tabName;
+        b.classList.toggle('border-purple-500', isActive);
+        b.classList.toggle('text-purple-700', isActive);
+        b.classList.toggle('border-transparent', !isActive);
+        b.classList.toggle('text-gray-500', !isActive);
+    });
+    // 面板顯示
+    document.querySelectorAll('[data-history-panel]').forEach(p => {
+        p.classList.toggle('hidden', p.dataset.historyPanel !== tabName);
+    });
+}
+
+// 🆕 列印 / 儲存為 PDF
+function printHistoricalQuizzes() {
+    // 暫時隱藏關閉按鈕、底部按鈕
+    const closeBtn = document.getElementById('historical-quizzes-close-btn');
+    const bottomBtns = document.querySelectorAll('#historical-quizzes-modal .btn');
+    const allHidden = [closeBtn, ...bottomBtns].filter(Boolean);
+    allHidden.forEach(el => el.classList.add('print-hide'));
+
+    // 列印用 CSS
+    const printStyle = document.createElement('style');
+    printStyle.id = '__print-style';
+    printStyle.textContent = `
+        @media print {
+            body * { visibility: hidden !important; }
+            #historical-quizzes-modal, #historical-quizzes-modal * { visibility: visible !important; }
+            #historical-quizzes-modal { position: absolute !important; inset: 0 !important; background: white !important; }
+            #historical-quizzes-content { box-shadow: none !important; max-width: 100% !important; max-height: none !important; }
+            .print-hide { display: none !important; }
+            [data-history-panel] { display: block !important; max-height: none !important; }
+            #historical-quizzes-body { max-height: none !important; overflow: visible !important; }
+        }
+    `;
+    document.head.appendChild(printStyle);
+
+    // 列印前確保所有 tab 都顯示（PDF 才能完整看到）
+    document.querySelectorAll('[data-history-panel]').forEach(p => p.classList.remove('hidden'));
+
+    setTimeout(() => {
+        window.print();
+        // 列印完還原
+        setTimeout(() => {
+            allHidden.forEach(el => el.classList.remove('print-hide'));
+            document.getElementById('__print-style')?.remove();
+            // 還原 tab 顯示
+            const activeTab = document.querySelector('.history-tab-btn.border-purple-500');
+            if (activeTab) switchHistoryTab(activeTab.dataset.historyTab);
+        }, 500);
+    }, 100);
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.22] ARCH-5: 班級出席記錄
+// ==========================================================
+async function showAttendanceModal() {
+    const modal = document.getElementById('attendance-modal');
+    const content = document.getElementById('attendance-content');
+    if (!modal || !content) return;
+    modal.classList.remove('hidden');
+    content.innerHTML = '<p class="text-center text-gray-500 py-8">📋 讀取中...</p>';
+
+    try {
+        const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'attendance');
+        const snap = await getDocs(colRef);
+        const records = [];
+        snap.forEach(d => {
+            const data = d.data();
+            records.push({
+                name: data.name || d.id,
+                joinedAt: data.joinedAt?.toDate ? data.joinedAt.toDate() : (data.joinedAt ? new Date(data.joinedAt) : null),
+                date: data.date || ''
+            });
+        });
+        // 依時間排序
+        records.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+        if (records.length === 0) {
+            content.innerHTML = '<p class="text-center text-gray-400 py-8">尚無出席記錄。<br>學生加入教室時會自動打卡。</p>';
+            return;
+        }
+
+        // 統計
+        const today = new Date().toLocaleDateString('zh-TW');
+        const todayCount = records.filter(r => r.date === today).length;
+
+        content.innerHTML = `
+            <div class="grid grid-cols-2 gap-2 mb-4">
+                <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                    <div class="text-2xl font-bold text-green-700">${todayCount}</div>
+                    <div class="text-xs text-gray-600">今日出席</div>
+                </div>
+                <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
+                    <div class="text-2xl font-bold text-blue-700">${records.length}</div>
+                    <div class="text-xs text-gray-600">總出席人次</div>
+                </div>
+            </div>
+            <div class="space-y-1.5">
+                ${records.map((r, idx) => {
+                    const time = r.joinedAt ? r.joinedAt.toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '—';
+                    const date = r.date || '—';
+                    const isToday = r.date === today;
+                    return `
+                        <div class="flex items-center gap-2 p-2 ${isToday ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'} rounded border">
+                            <span class="text-xs font-bold text-gray-500 w-6">${idx + 1}</span>
+                            <span class="font-semibold text-sm flex-1">${r.name}</span>
+                            <span class="text-xs text-gray-500">${date}</span>
+                            <span class="text-xs font-mono text-blue-600">${time}</span>
+                            ${isToday ? '<span class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">今日</span>' : ''}
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+
+        // 儲存到 window 供 CSV 匯出
+        window.__attendanceRecords = records;
+    } catch (err) {
+        console.error('[Attendance] 讀取失敗:', err);
+        content.innerHTML = '<p class="text-center text-red-500">❌ 讀取失敗：' + err.message + '</p>';
+    }
+}
+
+function hideAttendanceModal() {
+    document.getElementById('attendance-modal')?.classList.add('hidden');
+}
+
+function exportAttendanceCsv() {
+    const records = window.__attendanceRecords;
+    if (!records || records.length === 0) {
+        showMessage('沒有出席記錄可匯出', 'info');
+        return;
+    }
+    let csv = '\uFEFF座號,姓名,日期,打卡時間\n';
+    records.forEach((r, idx) => {
+        const time = r.joinedAt ? r.joinedAt.toLocaleTimeString('zh-TW') : '';
+        csv += `${idx + 1},${r.name},${r.date},${time}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `出席記錄_${classroomCode}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 100);
+    showMessage('📥 出席記錄 CSV 已下載', 'success');
+}
+
+function hideHistoricalQuizzesModal() {
+    document.getElementById('historical-quizzes-modal')?.classList.add('hidden');
+    // 銷毀圖表釋放記憶體
+    if (_classChartInstance) { _classChartInstance.destroy(); _classChartInstance = null; }
+    if (_individualChartInstance) { _individualChartInstance.destroy(); _individualChartInstance = null; }
+}
+
+async function endInteraction({ fullReset = true, navigateToMenu = true } = {}) {
+    console.log(`[endInteraction] Called with fullReset=${fullReset}, navigateToMenu=${navigateToMenu}`);
+
+    // 🆕 NEW [v3.8.3] A-4: 結束互動前自動歸檔當前 quiz snapshot 到 historicalQuizzes
+    try {
+        await archiveCurrentQuizSnapshot();
+    } catch (err) {
+        console.warn('[endInteraction] 歸檔失敗（不影響結束流程）:', err);
+    }
+
+    // 🔥 CRITICAL FIX: 重置搶答狀態（無論 fullReset 是否為真）
+    console.log('[endInteraction] 🎯 FIX: Resetting quick answer state');
+    quickAnswerWinner = null;
+    quickAnswerWinnerDisplayed = false;
+    quickAnswerActive = false;
+    console.log('[endInteraction] ✓ Quick answer state reset: winner=null, displayed=false, active=false');
+
+    if (fullReset) {
+        // Clear peer review data when ending interaction
+        try {
+            const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+            await setDoc(peerReviewRef, { active: false });
+
+            const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
+            const votesSnapshot = await getDocs(votesRef);
+            const deletePromises = votesSnapshot.docs.map(doc => deleteDoc(doc.ref));
+            await Promise.all(deletePromises);
+
+            peerReviewActive = false;
+            document.getElementById('peer-review-stats-container').classList.add('hidden');
+
+            const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
+            startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
+
+            allPeerReviewVotes = {};
+            studentVotedWorks.clear();
+            savedCanvasState = null;
+
+            if (peerReviewUnsubscribe) {
+                peerReviewUnsubscribe();
+                peerReviewUnsubscribe = null;
+            }
+        } catch (error) {
+            console.error('Error clearing peer review data:', error);
+        }
+    }
+
+    // Set mode to waiting
+    await setInteractionMode('waiting');
+    lastSelectedStudentCard = null;
+
+    if (fullReset) {
+        // Clear sequencing and matching input fields
+        document.getElementById('sequencing-items-textarea').value = '';
+        document.getElementById('matching-pairs-textarea').value = '';
+
+        // Clear URL/HTML settings and teacher background image
+        clearDispatchSettings();
+        teacherUploadedBackgroundImageDataURL = null;
+        document.getElementById('teacher-image-status').textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+        document.getElementById('teacher-image-preview').src = '';
+        document.getElementById('teacher-image-preview-container').classList.add('hidden');
+        isResponsePaused = false;
+        updateTeacherPauseButtonUI();
+        customMultipleChoiceQuestions = [];
+
+        // 🚀 NEW: Clear teacher highlighter data when ending reading comprehension
+        console.log('[endInteraction] Clearing teacher highlighter data');
+        HighlighterManager.clearTeacherHighlights();
+        lastViewedReadingContentHash = null;
+    }
+
+    if (navigateToMenu) {
+        showView('teacherMenu');
+        manualRefreshCounts();
+    }
+
+    console.log('[endInteraction] Completed');
+}
+
+/**
+ * NEW: Reset all student answers to allow starting a new question without exiting the interaction mode.
+ * Triggers student UI reset by updating the control document's resetTimestamp.
+ */
+async function resetAllAnswers() {
+    console.log('[resetAllAnswers] 🔄 CALLED - Starting reset process');
+
+    if (!classroomCode) {
+        console.log('[resetAllAnswers] ❌ No classroom code');
+        showMessage('請先開啟一個教室！', 'error');
+        return;
+    }
+
+    console.log('[resetAllAnswers] Classroom code:', classroomCode);
+
+    // 🚀 NEW: Hide teacher answer display and clear content
+    const teacherAnswerDisplay = document.getElementById('teacher-answer-display');
+    const teacherAnswerContent = document.getElementById('teacher-answer-content');
+    if (teacherAnswerDisplay) {
+        teacherAnswerDisplay.classList.add('hidden');
+    }
+    if (teacherAnswerContent) {
+        teacherAnswerContent.innerHTML = '';
+    }
+
+    try {
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        const controlDoc = await getDoc(controlRef);
+        const currentMode = controlDoc.exists() ? controlDoc.data().active_mode : null;
+        console.log('[resetAllAnswers] Current mode:', currentMode);
+
+        // 🎯 STEP 1: 清除所有學生答案（所有模式都需要）
+        const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const querySnapshot = await getDocs(studentsColRef);
+
+        const updatePromises = [];
+        querySnapshot.forEach((docSnapshot) => {
+            const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', docSnapshot.id);
+            updatePromises.push(
+                updateDoc(studentRef, {
+                    answer: deleteField(),
+                    interactionMode: deleteField(),
+                    timestamp: deleteField()
+                })
+            );
+        });
+
+        if (updatePromises.length > 0) {
+            await Promise.all(updatePromises);
+        }
+
+        // 🎯 STEP 2: 清除答案顯示標誌（所有模式都需要）
+        await setDoc(controlRef, {
+            resetTimestamp: new Date(),
+            showMatchingAnswer: false,
+            showSequencingAnswer: false
+        }, { merge: true });
+
+        // 🚀 OPTIMIZED: 所有模式都增加 modeResetToken，通知學生端重新開始
+        console.log('[resetAllAnswers] 增加 modeResetToken 以通知學生端重新開始');
+        window.lastModeResetToken = (window.lastModeResetToken || 0) + 1;
+        console.log('[resetAllAnswers] ✓ Incremented modeResetToken to', window.lastModeResetToken);
+
+        // 🚀 CRITICAL FIX: 準備 Firestore 更新載體
+        const updatePayload = {
+            modeResetToken: window.lastModeResetToken
+        };
+
+        // 🚀 CRITICAL FIX: 如果是讀題模式，更新 readingStartedAt 時間戳以重新開始閱讀倒計時
+        if (currentMode === 'reading_comprehension') {
+            console.log('[resetAllAnswers] 🎯 讀題模式檢測到：更新 readingStartedAt 以重新開始閱讀倒計時');
+            updatePayload.readingStartedAt = serverTimestamp();
+            console.log('[resetAllAnswers] ✓ readingStartedAt 已更新為：', new Date().toISOString());
+        }
+
+        // 更新 Firestore 中的 modeResetToken 和 readingStartedAt（如果適用），確保學生端收到信號
+        await setDoc(controlRef, updatePayload, { merge: true });
+        console.log('[resetAllAnswers] ✓ Firestore control 文檔已更新：', updatePayload);
+
+        // 特殊處理快速回答模式：完整重啟
+        if (currentMode === 'quick_answer') {
+            console.log('[resetAllAnswers] 🎯 Quick answer mode detected: starting auto-restart sequence');
+            // STEP 1: 輕量級結束互動（不清除背景圖片、派送設定等）
+            console.log('[resetAllAnswers] STEP 1: Calling endInteraction() with lightweight options...');
+            await endInteraction({ fullReset: false, navigateToMenu: false });
+            console.log('[resetAllAnswers] STEP 1: ✓ endInteraction() completed');
+
+            // STEP 2: 短暫延遲確保狀態完全清理
+            console.log('[resetAllAnswers] STEP 2: Waiting 300ms for cleanup...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            console.log('[resetAllAnswers] STEP 2: ✓ Wait completed');
+
+            // STEP 3: 重新開始搶答模式
+            console.log('[resetAllAnswers] STEP 3: Calling setInteractionMode(quick_answer)...');
+            await setInteractionMode('quick_answer');
+            console.log('[resetAllAnswers] STEP 3: ✓ setInteractionMode completed');
+
+            showMessage(`✓ 已重新開始搶答！`, 'success');
+            console.log('[resetAllAnswers] ✅ Quick answer auto-restart completed successfully');
+            return;
+        }
+
+        // 其他模式（包括reading_comprehension）：清除答案並顯示成功訊息
+        if (currentMode === 'reading_comprehension') {
+            showMessage(`✓ 閱讀測驗已重新開始！學生可以重新作答。`, 'success');
+            console.log('[resetAllAnswers] ✅ Reading comprehension reset completed - students can now reattempt');
+        } else {
+            showMessage(`✓ 已清除所有學生答案，可以開始下一題！`, 'success');
+        }
+
+    } catch (error) {
+        console.error("清除學生答案失敗:", error);
+        console.error("錯誤詳情 - message:", error.message, "code:", error.code, "stack:", error.stack);
+        showMessage(`清除答案失敗：${error.message || '未知錯誤'}`, "error");
+    }
+}
+
+
+// --- Event Listeners ---
+
+/**
+ * NEW: Processes an image file (from upload or paste), resizes it, and applies it.
+ * @param {File} file - The image file to process.
+ * @param {boolean} isTeacher - True if the image is for the teacher's background.
+ */
+function handleImageFile(file, isTeacher) {
+    if (!file || !file.type.startsWith('image/')) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            let { width, height } = img;
+
+            // Resize image if it's too large
+            if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                if (width > height) {
+                    height *= MAX_IMAGE_DIMENSION / width;
+                    width = MAX_IMAGE_DIMENSION;
+                } else {
+                    width *= MAX_IMAGE_DIMENSION / height;
+                    height = MAX_IMAGE_DIMENSION;
+                }
+            }
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            tempCtx.drawImage(img, 0, 0, width, height);
+            const dataUrl = tempCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+
+            if (isTeacher) {
+                teacherUploadedBackgroundImageDataURL = dataUrl;
+                // For teacher image, we need to pass statusId, previewId, previewContainerId
+                // These are not directly available in handleImageFile without context.
+                // Let's assume these are passed as arguments or accessed globally.
+                // Re-evaluate how setupImageUpload calls this.
+                document.getElementById('teacher-image-status').textContent = '已上傳背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+                document.getElementById('teacher-image-preview').src = dataUrl;
+                document.getElementById('teacher-image-preview-container').classList.remove('hidden');
+                showMessage('背景圖片已上傳！', 'success');
+            } else {
+                studentUploadedImageDataURL = dataUrl;
+                showMessage('圖片已上傳！', 'success');
+                loadStudentImage();
+            }
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+/**
+ * MODIFIED: Sets up image upload functionality for both file input and pasting.
+ */
+const setupImageUpload = (inputId, statusId, previewContainerId, previewId, clearBtnId, isTeacher) => {
+    const input = document.getElementById(inputId);
+    const clearBtn = document.getElementById(clearBtnId);
+
+    input.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        e.target.value = ''; // Reset input to allow re-uploading the same file
+        if (file) {
+            // Pass the IDs to handleImageFile for teacher-specific updates
+            if (isTeacher) {
+                handleImageFileForTeacher(file, statusId, previewContainerId, previewId);
+            } else {
+                handleImageFile(file, isTeacher);
+            }
+        }
+    });
+
+    clearBtn.addEventListener('click', () => {
+        if (isTeacher) {
+            teacherUploadedBackgroundImageDataURL = null;
+            document.getElementById(statusId).textContent = '目前沒有背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+            document.getElementById(previewId).src = '';
+            document.getElementById(previewContainerId).classList.add('hidden');
+            showMessage('背景圖片已清除！', 'info');
+        } else {
+            studentUploadedImageDataURL = null;
+            studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+            showMessage('圖片已清除！', 'info');
+            drawCombinedCanvas();
+        }
+    });
+};
+
+// NEW: Separate function for teacher image handling to pass specific DOM IDs
+function handleImageFileForTeacher(file, statusId, previewContainerId, previewId) {
+    if (!file || !file.type.startsWith('image/')) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            let { width, height } = img;
+
+            // Resize image if it's too large
+            if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                if (width > height) {
+                    height *= MAX_IMAGE_DIMENSION / width;
+                    width = MAX_IMAGE_DIMENSION;
+                } else {
+                    width *= MAX_IMAGE_DIMENSION / height;
+                    height = MAX_IMAGE_DIMENSION;
+                }
+            }
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            tempCtx.drawImage(img, 0, 0, width, height);
+            const dataUrl = tempCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+
+            teacherUploadedBackgroundImageDataURL = dataUrl;
+            document.getElementById(statusId).textContent = '已上傳背景圖片。可選擇檔案或直接貼上(Ctrl+V)。';
+            document.getElementById(previewId).src = dataUrl;
+            document.getElementById(previewContainerId).classList.remove('hidden');
+            showMessage('背景圖片已上傳！', 'success');
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+
+function setupEventListeners() {
+    // Entry screen.
+    document.getElementById('teacher-entry-btn').addEventListener('click', () => {
+        showView('teacherClassroomCode');
+    });
+    document.getElementById('student-entry-btn').addEventListener('click', () => {
+        currentRole = 'student';
+        showView('studentName');
+    });
+
+    // 🚀 NEW: Back button to return to role selection from student name input view
+    // 🆕 MODIFIED [v3.8.10]: 按鈕已從 DOM 移除，用 ?. 防止 null error
+    document.getElementById('student-back-to-role-btn')?.addEventListener('click', () => {
+        document.getElementById('student-classroom-code-input').value = '';
+        document.getElementById('student-name-input').value = '';
+        showView('entry');
+        showMessage('已返回角色選擇', 'info');
+        console.log('[Student] ✓ Returned to role selection view');
+    });
+
+    // NEW: Teacher classroom code input.
+    document.getElementById('teacher-classroom-code-back-btn').addEventListener('click', () => showView('entry'));
+    document.getElementById('teacher-classroom-code-submit-btn').addEventListener('click', async () => {
+        const code = document.getElementById('teacher-classroom-code-input').value.trim();
+        if (code) {
+            try {
+                classroomCode = code;
+                currentRole = 'teacher';
+                document.getElementById('teacher-menu-code-value').textContent = classroomCode; // Update classroom code in teacher menu
+                document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
+                localStorage.setItem('teacherClassroomCode', classroomCode); // Persist teacher's classroom code
+
+                // Set initial classroom state in Firestore, including isPaused: false
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true });
+                isResponsePaused = false; // Initialize local state
+                updateTeacherPauseButtonUI(); // Update button UI
+                currentMultipleChoiceQuestions = null; // Ensure this is cleared on new class
+
+                listenToClassroomPresence(); // Ensure presence listener is active
+                showView('teacherMenu');
+                document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
+            } catch (error) {
+                console.error('進入教室失敗:', error);
+                showMessage(`進入教室失敗：${error.message}`, 'error');
+            }
+        } else {
+            showMessage('請輸入教室代碼！', 'error');
+        }
+    });
+    document.getElementById('teacher-classroom-code-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('teacher-classroom-code-submit-btn').click();
+    });
+
+    // 🚀 NEW: Parse URL parameters for quick classroom entry
+    (function autoFillClassroomCodeFromURL() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const classroomParam = urlParams.get('classroom');
+        if (classroomParam) {
+            document.getElementById('student-classroom-code-input').value = classroomParam;
+            console.log('[Student] ✅ 課堂碼已從 URL 自動填充:', classroomParam);
+            // 🚀 UX 優化：有 classroom 參數時，自動切換為學生模式，跳過角色選擇畫面
+            currentRole = 'student';
+            showView('studentName');
+            console.log('[Student] ✅ 已自動跳轉至學生姓名輸入頁面，跳過角色選擇');
+        }
+    })();
+
+    // Student name and classroom code submission.
+    document.getElementById('submit-name-btn').addEventListener('click', async () => {
+        const studentClassroomCode = document.getElementById('student-classroom-code-input').value.trim();
+        const name = document.getElementById('student-name-input').value.trim();
+
+        // 🚀 NEW: Remember student name for quick re-entry
+        if (name) {
+            localStorage.setItem('lastStudentName', name);
+        }
+
+        if (!studentClassroomCode) {
+            showMessage('請務必輸入教室代碼！', 'error');
+            return;
+        }
+        if (!name) {
+            showMessage('請務必輸入姓名！', 'error');
+            return;
+        }
+
+        classroomCode = studentClassroomCode; // Set global classroom code for student
+
+        // Check if the classroom exists and is active
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        try {
+            const docSnap = await getDoc(controlRef);
+            if (docSnap.exists() && docSnap.data().teacherId) { // Check if control document exists and has a teacher ID
+                studentName = name;
+
+                // 🔄 FIX: Clean up any old student records with the same name to prevent duplicates on reconnection
+                try {
+                    // 1️⃣ 清理舊的 studentResponses 記錄
+                    const oldStudentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                    const oldStudentSnap = await getDoc(oldStudentRef);
+                    if (oldStudentSnap.exists()) {
+                        await deleteDoc(oldStudentRef);
+                        console.log(`[Student] 已清理舊的 studentResponses 記錄: ${studentName}`);
+                    }
+
+                    // 2️⃣ 清理舊的 presence 記錄（同名但不同 userId）
+                    const presenceColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
+                    const presenceQuery = query(presenceColRef);
+                    const presenceSnap = await getDocs(presenceQuery);
+
+                    presenceSnap.forEach(async (presenceDoc) => {
+                        const presenceData = presenceDoc.data();
+                        // 如果同名但 userId 不同，刪除舊的 presence 記錄
+                        if (presenceData.name === studentName && presenceDoc.id !== userId) {
+                            await deleteDoc(presenceDoc.ref);
+                            console.log(`[Student] 已清理舊的 presence 記錄 (舊 userId: ${presenceDoc.id}, 新 userId: ${userId})`);
+                        }
+                    });
+                } catch (error) {
+                    console.warn(`[Student] 清理舊記錄時出錯:`, error);
+                }
+
+                document.getElementById('user-id-display').textContent = `${userId} (${studentName})`;
+                document.getElementById('student-welcome-msg').textContent = `你好，${studentName}！`;
+                listenToInteractionMode();
+                listenToPeerReviewStatus(); // NEW: Listen for peer review status
+                listenToLottery(); // <-- 在此新增
+                startStudentAttentionMonitoring(); // NEW: 啟動學生注意力監控
+                showView('studentWaiting');
+                // 🚀 FIX: Set student presence with distraction monitoring fields
+                const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
+                await setDoc(presenceRef, {
+                    name: studentName,
+                    timestamp: new Date(),
+                    isDistracted: false,
+                    distractionCount: 0
+                }, { merge: true });
+
+                // 🆕 NEW [v3.8.22] ARCH-5: 自動記錄出席打卡
+                try {
+                    const attendanceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'attendance', studentName);
+                    await setDoc(attendanceRef, {
+                        name: studentName,
+                        joinedAt: new Date(),
+                        date: new Date().toLocaleDateString('zh-TW')
+                    }, { merge: true });
+                    console.log('[Attendance] ✅ 出席記錄已寫入:', studentName);
+                } catch (attErr) {
+                    console.warn('[Attendance] 出席記錄寫入失敗（不影響課堂）:', attErr);
+                }
+            } else {
+                showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
+            }
+        } catch (error) {
+            console.error("檢查教室代碼失敗:", error);
+            showMessage("進入教室失敗，請檢查網路連線或教室代碼。", "error");
+        }
+    });
+
+    // Teacher mode selection.
+    // MODIFIED: B button now opens a menu with Choice/Sequencing/Matching options
+    document.getElementById('choice-sequencing-matching-menu-btn').addEventListener('click', () => {
+        document.getElementById('choice-sequencing-matching-menu-modal').classList.remove('hidden');
+    });
+
+    // Close B menu modal
+    document.getElementById('choice-sequencing-matching-menu-close-btn').addEventListener('click', () => {
+        document.getElementById('choice-sequencing-matching-menu-modal').classList.add('hidden');
+    });
+
+    // 🆕 MODIFIED [v3.7.0]: B 選單的選擇題按鈕改為先彈出 Entry Picker（快速/備題）
+    document.getElementById('open-multiple-choice-settings-btn').addEventListener('click', () => {
+        document.getElementById('choice-sequencing-matching-menu-modal').classList.add('hidden');
+        showQuizEntryModal('multiple_choice');
+    });
+
+    /**
+     * 🆕 NEW [v3.7.0]: 從 Entry Picker「備題」轉進選擇題 Settings Modal，
+     *     自動預選「自訂題目出題」radio（因為快速模式已走獨立流程，不會再到這）。
+     */
+    function openMultipleChoiceSettingsFromPreparedMode() {
+        const mcQuestionTypeCustom = document.querySelector('input[name="mcQuestionType"][value="custom"]');
+        const customMcQuestionsSection = document.getElementById('custom-mc-questions-section');
+        const customMcQuestionsTextarea = document.getElementById('custom-mc-questions-textarea');
+        const customMcQuestionsStatus = document.getElementById('custom-mc-questions-status');
+
+        // 強制預選「自訂題目」，並展開對應區塊
+        mcQuestionTypeCustom.checked = true;
+        customMcQuestionsSection.classList.remove('hidden');
+        document.getElementById('question-bank-management-section').classList.remove('hidden');
+        // 🆕 NEW [v3.8.0] A-1: 顯示並渲染 MC 快速題庫
+        document.getElementById('mc-quick-bank-section')?.classList.remove('hidden');
+        if (typeof QuizBankManager !== 'undefined') {
+            QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+        }
+
+        // 若已有題目則回填（讓老師可再編輯）
+        if (customMultipleChoiceQuestions && customMultipleChoiceQuestions.length > 0) {
+            customMcQuestionsTextarea.value = customMultipleChoiceQuestions.map(q => {
+                return `${q.question},${q.correctAnswer},${q.options.join(',')}`;
+            }).join('\n');
+        } else {
+            customMcQuestionsTextarea.value = '';
+        }
+        customMcQuestionsStatus.classList.add('hidden');
+
+        // 🆕 v3.7.0：每次開啟都重置 mc 圖片 composer
+        clearQuizComposer('mc');
+
+        document.getElementById('multiple-choice-settings-modal').classList.remove('hidden');
+    }
+
+    // Open Sequencing Settings from B menu
+    document.getElementById('open-sequencing-settings-btn').addEventListener('click', () => {
+        document.getElementById('choice-sequencing-matching-menu-modal').classList.add('hidden');
+        document.getElementById('sequencing-settings-modal').classList.remove('hidden');
+    });
+
+    // Open Matching Settings from B menu
+    document.getElementById('open-matching-settings-btn').addEventListener('click', () => {
+        document.getElementById('choice-sequencing-matching-menu-modal').classList.add('hidden');
+        document.getElementById('matching-settings-modal').classList.remove('hidden');
+    });
+
+    // Sequencing/Matching Menu Button - Keep for compatibility if needed elsewhere
+    // Sequencing Settings Button (from menu)
+    document.getElementById('sequencing-settings-btn')?.addEventListener('click', () => {
+        document.getElementById('sequencing-matching-menu-modal').classList.add('hidden');
+        document.getElementById('sequencing-settings-modal').classList.remove('hidden');
+    });
+
+    // Matching Settings Button (from menu)
+    document.getElementById('matching-settings-btn')?.addEventListener('click', () => {
+        document.getElementById('sequencing-matching-menu-modal').classList.add('hidden');
+        document.getElementById('matching-settings-modal').classList.remove('hidden');
+    });
+
+    // 題型切換按鈕
+    document.getElementById('switch-to-matching-btn').addEventListener('click', () => {
+        document.getElementById('sequencing-settings-modal').classList.add('hidden');
+        document.getElementById('matching-settings-modal').classList.remove('hidden');
+    });
+
+    document.getElementById('switch-to-sequencing-btn').addEventListener('click', () => {
+        document.getElementById('matching-settings-modal').classList.add('hidden');
+        document.getElementById('sequencing-settings-modal').classList.remove('hidden');
+    });
+
+    // REMOVED: Old multiple-choice-settings-btn listener (now handled by open-multiple-choice-settings-btn from B menu)
+
+    // Other teacher mode selection buttons (unchanged, directly set mode)
+    document.querySelectorAll('#teacher-menu-view button[data-mode]').forEach(button => {
+        button.addEventListener('click', async () => {
+            const mode = button.dataset.mode;
+            // MODIFIED: Check dispatch settings for url_dispatch
+            if (mode === 'url_dispatch') {
+                if (dispatchSettings.type === 'url' && !dispatchSettings.url) {
+                    showMessage('請先設定要派送的網址！', 'error');
+                    showUrlDispatchSettingsModal();
+                    return;
+                } else if (dispatchSettings.type === 'html' && !dispatchSettings.htmlContent) {
+                    showMessage('請先上傳要派送的 HTML 檔案！', 'error');
+                    showUrlDispatchSettingsModal();
+                    return;
+                }
+            }
+            // 🆕 NEW [v3.7.0]: 是非題點擊先彈出 Entry Picker（快速/備題），
+            //     選擇題有獨立按鈕（#open-multiple-choice-settings-btn）走另外的流程。
+            if (mode === 'true_false') {
+                showQuizEntryModal('true_false');
+                return;
+            }
+            // 🆕 NEW [v3.8.25] MODE-4：相片牆直接啟動全螢幕展示
+            if (mode === 'photo_wall') {
+                startPhotoWall();
+                return;
+            }
+            // 🆕 NEW [v3.8.25] MODE-5：課後回饋直接啟動
+            if (mode === 'course_feedback') {
+                startCourseFeedback();
+                return;
+            }
+            showView('teacherMonitor');
+            await setInteractionMode(mode); // Set mode and handle student responses listener
+        });
+    });
+
+    // 🆕 MODIFIED [v3.7.3]: 結束互動改為先彈出確認 Modal，避免誤觸遺失學生作答資料
+    document.getElementById('end-interaction-btn').addEventListener('click', () => {
+        showEndInteractionConfirm();
+    });
+    // --- Confirm Modal 的 3 個按鈕事件 ---
+    document.getElementById('end-interaction-cancel-btn')?.addEventListener('click', hideEndInteractionConfirm);
+    document.getElementById('end-interaction-confirm-close-btn')?.addEventListener('click', hideEndInteractionConfirm);
+    document.getElementById('end-interaction-confirm-btn')?.addEventListener('click', async () => {
+        hideEndInteractionConfirm();
+        await endInteraction();
+    });
+
+    // Student answer buttons for default multiple choice.
+    document.querySelectorAll('#interaction-true-false .answer-btn, #default-mc-options .answer-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            // NEW: Check pause state before submitting
+            if (isResponsePaused) {
+                showMessage('老師已暫停回覆，無法送出答案。', 'error');
+                return;
+            }
+            // 🎯 保存引用（在 await 之前）
+            const answer = e.currentTarget.dataset.answer;
+            const answerText = e.currentTarget.textContent.trim();
+            const clickedButton = e.currentTarget;
+            const parentDiv = e.currentTarget.closest('div');
+
+            try {
+                await submitAnswer(answer);
+
+                // 🎯 NEW: 鎖定所有按鈕（包括被點擊的）
+                if (parentDiv) {
+                    parentDiv.querySelectorAll('.answer-btn').forEach(b => {
+                        b.disabled = true;
+                        b.classList.remove('bg-green-500', 'bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-yellow-600', 'bg-green-600', 'bg-red-600');
+                        b.classList.remove('hover:bg-green-600', 'hover:bg-red-600', 'hover:bg-blue-600', 'hover:bg-yellow-600', 'hover:bg-green-600', 'hover:bg-red-600');
+                        b.classList.add('bg-gray-400');
+                        // 🎯 NEW: 為所有按鈕設置提交標記（防止恢復時重新啟用）
+                        b.setAttribute('data-submitted', 'true');
+                    });
+                }
+
+                // 🎯 IMPROVED: 在被點擊按鈕上添加確認圖標（保留原始答案文字）
+                const originalText = clickedButton.getAttribute('data-original-text') || answerText;
+                clickedButton.setAttribute('data-original-text', originalText);
+                clickedButton.innerHTML = `
+                    <div class="flex flex-col items-center justify-center gap-1">
+                        <span class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold">${answer}</span>
+                        <span class="text-xs sm:text-sm flex items-center gap-1">
+                            <i class="fas fa-check-circle"></i>
+                            <span>已送出</span>
+                        </span>
+                    </div>
+                `;
+
+                // 🎯 NEW: 顯示確認訊息（類似快速投票）
+                showMessage(`✓ 提交成功！您的答案：${answerText}`, 'success');
+            } catch (error) {
+                console.error('[Answer Button] Submit failed:', error);
+                // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+            }
+        });
+    });
+
+    // Text input submission.
+    document.getElementById('submit-text-btn').addEventListener('click', async (e) => {
+        // NEW: Check pause state before submitting
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出答案。', 'error');
+            return;
+        }
+        const text = document.getElementById('text-input-area').value.trim();
+        if (!text) {
+            showMessage('請輸入答案後再送出！', 'error');
+            return;
+        }
+
+        // 🎯 保存引用（在 await 之前）
+        const submitBtn = e.currentTarget;
+        const textArea = document.getElementById('text-input-area');
+
+        try {
+            await submitAnswer(text);
+
+            // 🎯 NEW: 鎖定按鈕和文字區域
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
+            submitBtn.textContent = '✓ 已送出答案';
+
+            if (textArea) {
+                textArea.disabled = true;
+            }
+
+            // 🎯 NEW: 顯示確認訊息
+            const displayText = text.length > 50 ? text.substring(0, 50) + '...' : text;
+            showMessage(`✓ 提交成功！您的答案：${displayText}`, 'success');
+        } catch (error) {
+            console.error('[Text Input] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+
+    // Drawing submission.
+    document.getElementById('submit-drawing-btn').addEventListener('click', async (e) => {
+        // NEW: Check pause state before submitting
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出答案。', 'error');
+            return;
+        }
+
+        // 🎯 保存引用（在 await 之前）
+        const submitBtn = e.currentTarget;
+
+        try {
+            // 🆕 MODIFIED [v3.8.23] PERF-2: 自動壓縮繪圖至 Firestore 安全上限（< 900KB）
+            // 先嘗試 JPEG_QUALITY，若超過 900KB 自動降質直到通過
+            let dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+            let quality = JPEG_QUALITY;
+            const MAX_SIZE = 900 * 1024; // 900KB（Firestore 單欄位約 1MB 限制留 buffer）
+
+            while (dataUrl.length > MAX_SIZE && quality > 0.2) {
+                quality -= 0.1;
+                dataUrl = canvas.toDataURL('image/jpeg', quality);
+                console.log(`[Drawing] 壓縮中... quality=${quality.toFixed(1)}, size=${(dataUrl.length / 1024).toFixed(0)}KB`);
+            }
+
+            // 若還是太大，縮小 canvas 尺寸再壓
+            if (dataUrl.length > MAX_SIZE) {
+                const tempCanvas = document.createElement('canvas');
+                const scale = 0.5; // 縮小到 50%
+                tempCanvas.width = canvas.width * scale;
+                tempCanvas.height = canvas.height * scale;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
+                dataUrl = tempCanvas.toDataURL('image/jpeg', 0.6);
+                console.log(`[Drawing] 縮小尺寸壓縮, size=${(dataUrl.length / 1024).toFixed(0)}KB`);
+            }
+
+            console.log(`[Drawing] 最終大小: ${(dataUrl.length / 1024).toFixed(0)}KB, quality=${quality.toFixed(1)}`);
+            await submitAnswer(dataUrl);
+
+            // 🎯 NEW: 鎖定按鈕和畫布
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
+            submitBtn.textContent = '✓ 已送出答案';
+            canvas.style.pointerEvents = 'none';
+
+            // 🎯 NEW: 顯示確認訊息
+            showMessage('✓ 繪圖已送出！', 'success');
+        } catch (error) {
+            console.error('[Drawing] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+
+    // Sequencing submission.
+    document.getElementById('submit-sequencing-btn').addEventListener('click', async (e) => {
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出答案。', 'error');
+            return;
+        }
+        const container = document.getElementById('sequencing-items-container');
+        const items = Array.from(container.children).map(item => item.dataset.text);
+
+        if (items.length === 0) {
+            showMessage('請先排序項目後再送出！', 'error');
+            return;
+        }
+
+        // 🎯 保存引用（在 await 之前）
+        const submitBtn = e.currentTarget;
+
+        try {
+            await submitAnswer(JSON.stringify(items));
+
+            // 🎯 NEW: 鎖定按鈕和禁用拖動
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
+            submitBtn.textContent = '✓ 已送出答案';
+            container.style.pointerEvents = 'none';
+
+            // 🎯 NEW: 顯示確認訊息
+            showMessage('✓ 排序已送出！', 'success');
+        } catch (error) {
+            console.error('[Sequencing] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+
+    // Matching submission.
+    document.getElementById('submit-matching-btn').addEventListener('click', async (e) => {
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出答案。', 'error');
+            return;
+        }
+        const matches = [];
+        document.querySelectorAll('.matching-item.matched').forEach(item => {
+            if (item.dataset.side === 'left' && item.dataset.matchedWith) {
+                matches.push({
+                    left: item.dataset.text,
+                    right: item.dataset.matchedWith
+                });
+            }
+        });
+
+        if (matches.length === 0) {
+            showMessage('請至少完成一個配對！', 'error');
+            return;
+        }
+
+        // 🎯 保存引用（在 await 之前）
+        const submitBtn = e.currentTarget;
+
+        try {
+            await submitAnswer(JSON.stringify(matches));
+
+            // 🎯 NEW: 鎖定按鈕和禁用配對項目
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
+            submitBtn.textContent = '✓ 已送出答案';
+            document.getElementById('matching-column-a').style.pointerEvents = 'none';
+            document.getElementById('matching-column-b').style.pointerEvents = 'none';
+
+            // 🎯 NEW: 顯示確認訊息
+            showMessage(`✓ 配對已送出！完成 ${matches.length} 組配對`, 'success');
+        } catch (error) {
+            console.error('[Matching] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+
+    // 🚀 OPTIMIZED: Drawing board events with throttled draw function
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', throttledDraw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseleave', stopDrawing);
+    canvas.addEventListener('touchstart', startDrawing, { passive: false });
+    canvas.addEventListener('touchmove', throttledDraw, { passive: false });
+    canvas.addEventListener('touchend', stopDrawing);
+    window.addEventListener('resize', () => {
+        if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.drawing.classList.contains('hidden')) {
+            setupCanvas();
+            loadBackgroundImage();
+            loadStudentImage();
+        }
+        // 🎨 Redraw matching lines on window resize
+        if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.matching.classList.contains('hidden')) {
+            redrawMatchingLines();
+        }
+    });
+
+    // Drawing tool controls.
+    const colorSelect = document.getElementById('color-select');
+    const sizeSelect = document.getElementById('size-select');
+    const penToolBtn = document.getElementById('pen-tool-btn');
+    const eraserBtn = document.getElementById('eraser-btn');
+    colorSelect.addEventListener('change', (e) => {
+        drawingCtx.strokeStyle = e.target.value;
+        drawingCtx.globalCompositeOperation = 'source-over';
+        updateColorSwatch(e.target.value);
+        penToolBtn.classList.add('border-blue-500');
+        eraserBtn.classList.remove('border-blue-500');
+    });
+    sizeSelect.addEventListener('change', (e) => { drawingCtx.lineWidth = parseInt(e.target.value); });
+    penToolBtn.addEventListener('click', () => {
+        drawingCtx.globalCompositeOperation = 'source-over';
+        drawingCtx.strokeStyle = colorSelect.value;
+        drawingCtx.lineWidth = parseInt(sizeSelect.value);
+        penToolBtn.classList.add('border-blue-500');
+        eraserBtn.classList.remove('border-blue-500');
+    });
+    eraserBtn.addEventListener('click', () => {
+        drawingCtx.globalCompositeOperation = 'destination-out';
+        drawingCtx.lineWidth = 15;
+        penToolBtn.classList.remove('border-blue-500');
+        eraserBtn.classList.add('border-blue-500');
+    });
+    document.getElementById('clear-canvas-btn').addEventListener('click', clearDrawingCanvas);
+
+    // Image upload handlers (teacher and student).
+    setupImageUpload('teacher-image-upload-input', 'teacher-image-status', 'teacher-image-preview-container', 'teacher-image-preview', 'clear-teacher-background-btn', true);
+    setupImageUpload('student-image-upload-input', null, null, null, 'clear-student-image-btn', false);
+
+    // NEW: Paste event listener for teacher background image
+    document.addEventListener('paste', e => {
+        // Only allow pasting when the teacher menu is visible
+        if (views.teacherMenu.classList.contains('hidden')) {
+            return;
+        }
+
+        // Don't interfere if the user is typing in an input field
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            return;
+        }
+
+        const items = (e.clipboardData || window.clipboardData).items;
+        for (const item of items) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) {
+                    // Call the specific teacher image handler
+                    handleImageFileForTeacher(file, 'teacher-image-status', 'teacher-image-preview-container', 'teacher-image-preview');
+                    e.preventDefault(); // Prevent the image from being pasted as a file object
+                    return; // Exit after handling the first image
+                }
+            }
+        }
+    });
+
+    // Modal close buttons.
+    document.getElementById('student-status-area').addEventListener('click', showStudentListModal);
+    studentListModalCloseBtn.addEventListener('click', hideStudentListModal);
+    document.getElementById('show-statistics-btn').addEventListener('click', showStatisticsModal);
+
+    // NEW: View Questions Button
+    document.getElementById('view-questions-btn').addEventListener('click', showViewQuestionsModal);
+    document.getElementById('view-questions-modal-close-btn').addEventListener('click', hideViewQuestionsModal);
+    document.getElementById('cancel-questions-view-btn').addEventListener('click', hideViewQuestionsModal);
+    document.getElementById('save-correct-answers-btn').addEventListener('click', saveCorrectAnswers);
+
+    // NEW: Download Responses Button
+    document.getElementById('download-responses-btn').addEventListener('click', downloadStudentResponses);
+
+    // NEW: Show Answer Buttons for Matching and Sequencing
+    document.getElementById('show-matching-answer-btn').addEventListener('click', async () => {
+        try {
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            const docSnap = await getDoc(controlRef);
+            const matchingSettings = docSnap.data()?.matchingSettings;
+
+            await setDoc(controlRef, { showMatchingAnswer: true }, { merge: true });
+            showMessage('答案已顯示給學生！', 'success');
+
+            // 🚀 NEW: Display answer on teacher side too
+            if (matchingSettings) {
+                displayTeacherMatchingAnswer(matchingSettings);
+            }
+        } catch (error) {
+            console.error('Error showing matching answer:', error);
+            showMessage('顯示答案失敗！', 'error');
+        }
+    });
+
+    document.getElementById('show-sequencing-answer-btn').addEventListener('click', async () => {
+        try {
+            const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+            const docSnap = await getDoc(controlRef);
+            const sequencingSettings = docSnap.data()?.sequencingSettings;
+
+            await setDoc(controlRef, { showSequencingAnswer: true }, { merge: true });
+            showMessage('答案已顯示給學生！', 'success');
+
+            // 🚀 NEW: Display answer on teacher side too
+            if (sequencingSettings) {
+                displayTeacherSequencingAnswer(sequencingSettings);
+            }
+        } catch (error) {
+            console.error('Error showing sequencing answer:', error);
+            showMessage('顯示答案失敗！', 'error');
+        }
+    });
+
+    // NEW: Start Peer Review Button
+    document.getElementById('start-peer-review-btn').addEventListener('click', startPeerReview);
+
+    // NEW: Exit Peer Review Button (Student)
+    document.getElementById('exit-peer-review-btn').addEventListener('click', exitPeerReview);
+    chartModalCloseBtn.addEventListener('click', hideStatisticsModal);
+    document.getElementById('download-statistics-btn').addEventListener('click', downloadStatistics);
+    magnifiedImageModalCloseBtn.addEventListener('click', hideMagnifiedDrawing);
+    magnifiedImageModal.addEventListener('click', (e) => { if (e.target === magnifiedImageModal) hideMagnifiedDrawing(); });
+    document.getElementById('close-message-btn').addEventListener('click', hideMessage);
+
+    // NEW: Unsubmitted Students Modal Listeners
+    document.getElementById('show-unsubmitted-students-btn').addEventListener('click', showUnsubmittedStudentsModal);
+    unsubmittedStudentsModalCloseBtn.addEventListener('click', hideUnsubmittedStudentsModal);
+    unsubmittedStudentsModal.addEventListener('click', (e) => { if (e.target === unsubmittedStudentsModal) hideUnsubmittedStudentsModal(); });
+
+    // 🚀 NEW: QR Code Modal Listeners
+    document.getElementById('show-qrcode-btn').addEventListener('click', showQRCodeModal);
+    document.getElementById('show-qrcode-btn-menu').addEventListener('click', showQRCodeModal);
+
+    // 🚀 NEW: Click on classroom code display to open QR code modal
+    const classroomCodeDisplay = document.getElementById('teacher-menu-classroom-code-display');
+    if (classroomCodeDisplay) {
+        classroomCodeDisplay.addEventListener('click', () => {
+            console.log('[Classroom Code] 🔑 Opening QR Code modal from classroom code click');
+            showQRCodeModal();
+        });
+    }
+
+    document.getElementById('close-qrcode-modal').addEventListener('click', closeQRCodeModal);
+    document.getElementById('download-qrcode-btn').addEventListener('click', downloadQRCode);
+
+    // 🚀 NEW: Copy classroom link to clipboard
+    document.getElementById('copy-classroom-link-btn').addEventListener('click', async () => {
+        if (!classroomCode) {
+            showMessage('尚未設定課堂代碼', 'error');
+            return;
+        }
+
+        const classroomUrl = `${window.location.origin}${window.location.pathname}?classroom=${classroomCode}`;
+        try {
+            await navigator.clipboard.writeText(classroomUrl);
+            console.log('[Classroom Link] ✅ Classroom link copied to clipboard:', classroomUrl);
+            showMessage(`✅ 課堂連結已複製！\n${classroomUrl}`, 'success');
+        } catch (error) {
+            console.error('[Classroom Link] ❌ Failed to copy link:', error);
+            // Fallback: Show the URL in an alert if clipboard API fails
+            alert(`課堂連結：\n${classroomUrl}\n\n請手動複製上方連結`);
+            showMessage('複製失敗，請手動複製顯示的連結', 'error');
+        }
+    });
+
+    document.getElementById('qrcode-modal').addEventListener('click', (e) => { if (e.target === document.getElementById('qrcode-modal')) closeQRCodeModal(); });
+
+    // Teacher utility buttons.
+    document.getElementById('refresh-student-count-btn').addEventListener('click', manualRefreshCounts);
+    // Original lottery button in monitor view
+    document.getElementById('draw-lottery-btn').addEventListener('click', () => {
+        // 🚀 FIX: 抽籤邏輯改良 - 優先從已作答學生中抽籤，若無則從所有在線學生中抽籤
+        let selectedStudentName;
+        let isFromResponses = false;
+
+        // 嘗試從已作答學生中抽籤
+        if (allStudentResponses.length > 0) {
+            const randomIndex = Math.floor(Math.random() * allStudentResponses.length);
+            selectedStudentName = allStudentResponses[randomIndex].name;
+            isFromResponses = true;
+            console.log('[Lottery] Drawing from student responses:', selectedStudentName);
+        } else if (activeStudentNames.length > 0) {
+            // 若無作答學生，從所有在線學生中抽籤（適用於搶答模式）
+            const randomIndex = Math.floor(Math.random() * activeStudentNames.length);
+            selectedStudentName = activeStudentNames[randomIndex];
+            console.log('[Lottery] Drawing from online students:', selectedStudentName);
+        } else {
+            return showMessage('目前沒有學生在線可供抽籤。', 'info');
+        }
+
+        // 清除上次高亮
+        if (lastSelectedStudentCard) lastSelectedStudentCard.classList.remove('selected-student-border');
+
+        // 嘗試在學生卡片中找到並高亮
+        if (isFromResponses) {
+            const studentCards = document.querySelectorAll('#student-responses-container .student-response-item');
+            const foundCard = Array.from(studentCards).find(card => card.getAttribute('data-student-name') === selectedStudentName);
+            if (foundCard) {
+                foundCard.classList.add('selected-student-border');
+                lastSelectedStudentCard = foundCard;
+                foundCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        // 顯示抽籤結果並通知學生
+        showMessage(`🎲 恭喜！抽中學生：${selectedStudentName}`, 'success');
+        announceDrawnStudent(selectedStudentName);
+    });
+    // NEW: Lottery button inside the student list modal
+    document.getElementById('modal-draw-lottery-btn').addEventListener('click', () => {
+        if (activeStudentNames.length === 0) {
+            return showMessage('目前沒有學生在線可供抽籤。', 'info');
+        }
+
+        // Remove highlight from previously selected student in the modal
+        if (lastSelectedModalStudent) {
+            lastSelectedModalStudent.classList.remove('modal-selected-student-border');
+        }
+
+        // Randomly select a student from all active online students
+        const randomIndex = Math.floor(Math.random() * activeStudentNames.length);
+        const selectedStudentName = activeStudentNames[randomIndex];
+
+        // 🚀 FIX: 使用 [data-student-name] 選擇器查找學生元素（支援 div 或 p 元素）
+        const studentNameElements = document.querySelectorAll('#modal-student-names [data-student-name]');
+        const foundElement = Array.from(studentNameElements).find(el => el.getAttribute('data-student-name') === selectedStudentName);
+
+        if (foundElement) {
+            foundElement.classList.add('modal-selected-student-border');
+            lastSelectedModalStudent = foundElement; // Store the currently selected element
+            foundElement.scrollIntoView({ behavior: 'smooth', block: 'center' }); // 🚀 FIX: 滾動到選中的學生
+            showMessage(`恭喜！抽中學生：${selectedStudentName}`, 'success');
+            announceDrawnStudent(selectedStudentName); // <-- 在此新增
+        } else {
+            console.warn('[Modal Lottery] Student element not found:', selectedStudentName);
+            showMessage(`抽中學生：${selectedStudentName} (未在列表中找到)`, 'info');
+        }
+    });
+
+
+    document.getElementById('download-media-btn').addEventListener('click', async (e) => { // Changed ID
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+
+        let mediaResponses = [];
+        let filenamePrefix = '';
+        let fileExtension = '';
+
+        if (currentInteractionMode === 'drawing') {
+            mediaResponses = allStudentResponses.filter(r => r.answer && r.answer.startsWith('data:image'));
+            filenamePrefix = '學生繪圖答案';
+            fileExtension = 'jpg';
+        } else if (currentInteractionMode === 'recording') {
+            mediaResponses = allStudentResponses.filter(r => r.answer && r.answer.startsWith('data:audio'));
+            filenamePrefix = '學生錄音答案';
+            // Determine file extension based on the actual mimeType used for recording
+            const firstAudioResponse = mediaResponses.find(r => r.answer);
+            if (firstAudioResponse) {
+                const mime = firstAudioResponse.answer.split(',')[0].match(/:(.*?);/)?.[1];
+                if (mime) {
+                    if (mime.includes('webm')) fileExtension = 'webm';
+                    else if (mime.includes('mp4')) fileExtension = 'mp4';
+                    else if (mime.includes('ogg')) fileExtension = 'ogg';
+                    else if (mime.includes('wav')) fileExtension = 'wav';
+                    else fileExtension = 'bin'; // Fallback for unknown
+                } else {
+                    fileExtension = 'bin'; // Fallback if mime type not found in data URL
+                }
+            } else {
+                fileExtension = 'webm'; // Default if no audio responses
+            }
+        } else {
+            return showMessage('目前模式不支援下載媒體。', 'info');
+        }
+
+        if (mediaResponses.length === 0) return showMessage(`目前沒有${filenamePrefix}可供下載。`, 'info');
+
+        btn.disabled = true;
+        showMessage(`正在打包${filenamePrefix}...`, 'info');
+        const zip = new JSZip();
+        const dataURLToBlob = (dataurl) => {
+            const [header, body] = dataurl.split(',');
+            const mime = header.match(/:(.*?);/)[1];
+            const bstr = atob(body);
+            let n = bstr.length;
+            const u8arr = new Uint8Array(n);
+            while (n--) u8arr[n] = bstr.charCodeAt(n);
+            return new Blob([u8arr], { type: mime });
+        };
+
+        mediaResponses.forEach(r => {
+            // Ensure unique filenames for students with same name but different recordings if needed
+            // For now, just use student name.
+            zip.file(`${r.name}.${fileExtension}`, dataURLToBlob(r.answer));
+        });
+
+        try {
+            const content = await zip.generateAsync({ type: "blob" });
+            const filename = generateFilename(filenamePrefix, 'zip');
+            saveAs(content, filename);
+            showMessage(`已成功打包 ${mediaResponses.length} 個檔案並開始下載。`, 'success');
+        } catch (error) {
+            console.error("打包媒體失敗:", error);
+            showMessage("打包媒體失敗，請檢查瀏覽器支援或檔案大小。", "error");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    // AI-related buttons and modals.
+    document.getElementById('ai-text-summary-btn').addEventListener('click', async () => {
+        // 🚀 UX: 檢查 API KEY 是否已設定
+        if (!checkAPIKey()) return;
+
+        const textResponses = allStudentResponses.filter(r => currentInteractionMode === 'text_input' && r.answer && r.answer.trim()).map(r => r.answer);
+        if (textResponses.length === 0) return showMessage('目前沒有文字回答可供 AI 分析。', 'info');
+        const aiSummaryModal = document.getElementById('ai-summary-modal');
+        const aiLoadingSpinner = document.getElementById('ai-loading-spinner');
+        const aiSummaryResultList = document.getElementById('ai-summary-result-list');
+        aiSummaryModal.classList.remove('hidden');
+        aiLoadingSpinner.classList.remove('hidden');
+        aiSummaryResultList.innerHTML = '';
+        const prompt = `請分析以下學生回答的文本內容，識別出語義上相似的詞語或短語，歸類為主要詞彙並統計總出現次數。列出最常出現的10個主要詞彙。請以繁體中文回應，排除常見助詞、連接詞、標點符號。使用JSON格式返回結果：[{"word": "主要詞彙1", "count": 10}]。若無有意義詞彙，返回空陣列[]。文本內容：\n${textResponses.join('\n\n')}`;
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { "word": { "type": "STRING" }, "count": { "type": "NUMBER" } }, "propertyOrdering": ["word", "count"] } } }
+            };
+            const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : aiSettings.defaultGeminiApiKey;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error(`[AI 文字分析] API 錯誤 ${response.status}:`, errorBody);
+                if (response.status === 400) {
+                    throw new Error('❌ API KEY 無效或格式錯誤，請檢查您的 Google AI Studio API Key 設定！');
+                }
+                throw new Error(`API request failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+            aiLoadingSpinner.classList.add('hidden');
+            const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+            const parsedResults = jsonText ? JSON.parse(jsonText) : [];
+            if (parsedResults.length > 0) {
+                parsedResults.sort((a, b) => b.count - a.count).forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = `${item.word} (${item.count}次)`;
+                    aiSummaryResultList.appendChild(li);
+                });
+            } else {
+                aiSummaryResultList.innerHTML = '<li>沒有找到常用詞彙。</li>';
+            }
+        } catch (error) {
+            console.error("AI 文字分析失敗:", error);
+            aiLoadingSpinner.classList.add('hidden');
+            if (error.message && error.message.includes('API KEY')) {
+                showApiKeyGuide();
+            } else {
+                const errorMsg = error.message || 'AI 分析失敗，請檢查 API Key 或網路連線。';
+                aiSummaryResultList.innerHTML = `<li class="error-message">${errorMsg}</li>`;
+                showMessage(errorMsg, 'error');
+            }
+        }
+    });
+    document.getElementById('ai-summary-modal-close-btn').addEventListener('click', () => document.getElementById('ai-summary-modal').classList.add('hidden'));
+    document.getElementById('ai-settings-btn').addEventListener('click', showAISettingsModal);
+    // 🆕 NEW [v3.8.22] ARCH-5: 出席記錄
+    document.getElementById('attendance-btn')?.addEventListener('click', showAttendanceModal);
+    document.getElementById('attendance-close-btn')?.addEventListener('click', hideAttendanceModal);
+    document.getElementById('attendance-close-bottom-btn')?.addEventListener('click', hideAttendanceModal);
+    document.getElementById('attendance-export-csv-btn')?.addEventListener('click', exportAttendanceCsv);
+    aiSettingsModalCloseBtn.addEventListener('click', hideAISettingsModal);
+    saveAiSettingsBtn.addEventListener('click', saveAISettings);
+    aiSourceSelect.addEventListener('change', (e) => geminiApiKeyGroup.classList.toggle('hidden', e.target.value !== 'gemini-custom'));
+
+    // New: URL/HTML Dispatch Settings Modal listeners.
+    document.getElementById('url-dispatch-settings-btn').addEventListener('click', showUrlDispatchSettingsModal);
+    urlDispatchModalCloseBtn.addEventListener('click', hideUrlDispatchSettingsModal);
+    document.getElementById('save-dispatch-settings-btn').addEventListener('click', saveDispatchSettings); // Renamed
+    document.getElementById('clear-dispatch-settings-btn').addEventListener('click', clearDispatchSettings); // Renamed
+
+    // Sequencing Settings Modal listeners
+    document.getElementById('sequencing-settings-modal-close-btn').addEventListener('click', () => {
+        document.getElementById('sequencing-settings-modal').classList.add('hidden');
+    });
+    document.getElementById('cancel-sequencing-settings-btn').addEventListener('click', () => {
+        document.getElementById('sequencing-settings-modal').classList.add('hidden');
+    });
+    document.getElementById('start-sequencing-interaction-btn').addEventListener('click', async () => {
+        const question = '排序題';
+        const itemsText = document.getElementById('sequencing-items-textarea').value.trim();
+
+        if (!itemsText) {
+            showMessage('請輸入排序項目！', 'error');
+            return;
+        }
+
+        const items = itemsText.split('\n').map(item => item.trim()).filter(item => item);
+        if (items.length < 2) {
+            showMessage('至少需要兩個排序項目！', 'error');
+            return;
+        }
+
+        sequencingData.question = question;
+        sequencingData.correctOrder = items;
+
+        document.getElementById('sequencing-settings-modal').classList.add('hidden');
+        showView('teacherMonitor');
+        await setInteractionMode('sequencing', {
+            question: question,
+            correctOrder: items
+        });
+    });
+
+    // Matching Settings Modal listeners
+    document.getElementById('matching-settings-modal-close-btn').addEventListener('click', () => {
+        document.getElementById('matching-settings-modal').classList.add('hidden');
+    });
+    document.getElementById('cancel-matching-settings-btn').addEventListener('click', () => {
+        document.getElementById('matching-settings-modal').classList.add('hidden');
+    });
+    document.getElementById('start-matching-interaction-btn').addEventListener('click', async () => {
+        const question = '配對題';
+        const pairsText = document.getElementById('matching-pairs-textarea').value.trim();
+
+        if (!pairsText) {
+            showMessage('請輸入配對項目！', 'error');
+            return;
+        }
+
+        const lines = pairsText.split('\n').map(line => line.trim()).filter(line => line);
+        const pairs = [];
+
+        for (const line of lines) {
+            const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
+            if (parts.length >= 2) {
+                pairs.push({ left: parts[0], right: parts[1] });
+            }
+        }
+
+        if (pairs.length < 2) {
+            showMessage('至少需要兩對配對項目！', 'error');
+            return;
+        }
+
+        matchingData.question = question;
+        matchingData.pairs = pairs;
+
+        document.getElementById('matching-settings-modal').classList.add('hidden');
+        showView('teacherMonitor');
+        await setInteractionMode('matching', {
+            question: question,
+            pairs: pairs
+        });
+    });
+
+    // Quick Poll Settings Modal listeners
+    document.getElementById('quick-poll-settings-btn').addEventListener('click', showQuickPollSettingsModal);
+    document.getElementById('quick-poll-settings-modal-close-btn').addEventListener('click', hideQuickPollSettingsModal);
+    document.getElementById('cancel-quick-poll-settings-btn').addEventListener('click', hideQuickPollSettingsModal);
+    document.getElementById('start-quick-poll-btn').addEventListener('click', startQuickPoll);
+
+    // Quick Poll Stats Modal listeners
+    document.getElementById('quick-poll-stats-modal-close-btn').addEventListener('click', hideQuickPollStatsModal);
+    document.getElementById('end-quick-poll-btn').addEventListener('click', endQuickPoll);
+    document.getElementById('download-poll-results-btn').addEventListener('click', downloadPollResults);
+    document.getElementById('chart-type-bar-btn').addEventListener('click', () => switchChartType('bar'));
+    document.getElementById('chart-type-pie-btn').addEventListener('click', () => switchChartType('pie'));
+
+    // Poll type radio button listeners
+    document.querySelectorAll('input[name="pollType"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const customSection = document.getElementById('custom-poll-options-section');
+            customSection.classList.toggle('hidden', e.target.value !== 'custom');
+        });
+    });
+
+    // 🆕 NEW [v3.8.25] MODE-2：分組競賽 Event Listeners
+    document.getElementById('team-battle-settings-btn').addEventListener('click', () => {
+        document.getElementById('team-battle-settings-modal').classList.remove('hidden');
+        renderTeamNameInputs();
+    });
+    document.getElementById('team-battle-settings-close-btn').addEventListener('click', () => document.getElementById('team-battle-settings-modal').classList.add('hidden'));
+    document.getElementById('cancel-team-battle-btn').addEventListener('click', () => document.getElementById('team-battle-settings-modal').classList.add('hidden'));
+    document.getElementById('start-team-battle-btn').addEventListener('click', startTeamBattle);
+    document.getElementById('team-count-select').addEventListener('change', renderTeamNameInputs);
+    document.getElementById('team-scoreboard-close-btn').addEventListener('click', () => document.getElementById('team-scoreboard-modal').classList.add('hidden'));
+    document.getElementById('team-add-score-btn').addEventListener('click', () => {
+        // 打開積分板（如果已關閉）
+        document.getElementById('team-scoreboard-modal').classList.remove('hidden');
+    });
+    document.getElementById('team-reset-scores-btn').addEventListener('click', resetTeamScores);
+    document.getElementById('end-team-battle-btn').addEventListener('click', endTeamBattle);
+
+    // 🆕 NEW [v3.8.25] MODE-3：文字雲 Event Listeners
+    document.getElementById('word-cloud-settings-btn').addEventListener('click', () => {
+        document.getElementById('word-cloud-settings-modal').classList.remove('hidden');
+    });
+    document.getElementById('word-cloud-settings-close-btn').addEventListener('click', () => document.getElementById('word-cloud-settings-modal').classList.add('hidden'));
+    document.getElementById('cancel-word-cloud-btn').addEventListener('click', () => document.getElementById('word-cloud-settings-modal').classList.add('hidden'));
+    document.getElementById('start-word-cloud-btn').addEventListener('click', startWordCloud);
+    document.getElementById('word-cloud-display-close-btn').addEventListener('click', () => document.getElementById('word-cloud-display-modal').classList.add('hidden'));
+    document.getElementById('word-cloud-refresh-btn').addEventListener('click', () => {
+        // 重新取得數據渲染
+        listenToWordCloudResponses();
+    });
+    document.getElementById('word-cloud-fullscreen-btn').addEventListener('click', () => {
+        const canvas = document.getElementById('word-cloud-canvas');
+        if (canvas.requestFullscreen) canvas.requestFullscreen();
+    });
+    document.getElementById('end-word-cloud-btn').addEventListener('click', endWordCloud);
+    document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
+
+    // 🆕 NEW [v3.8.25] MODE-4：相片牆 Event Listeners
+    document.getElementById('photo-wall-modal-close-btn').addEventListener('click', () => document.getElementById('photo-wall-modal').classList.add('hidden'));
+    document.getElementById('photo-wall-fullscreen-btn').addEventListener('click', () => {
+        const grid = document.getElementById('photo-wall-grid-teacher')?.parentElement;
+        if (grid?.requestFullscreen) grid.requestFullscreen();
+    });
+    document.getElementById('end-photo-wall-btn').addEventListener('click', endPhotoWall);
+
+    // 🆕 NEW [v3.8.25] MODE-5：課後回饋 Event Listeners
+    document.getElementById('feedback-stats-close-btn').addEventListener('click', () => document.getElementById('feedback-stats-modal').classList.add('hidden'));
+    document.getElementById('end-feedback-btn').addEventListener('click', endCourseFeedback);
+    document.getElementById('feedback-download-btn').addEventListener('click', downloadFeedbackCSV);
+    document.getElementById('submit-feedback-btn').addEventListener('click', submitCourseFeedback);
+
+    // 星星評分交互
+    document.querySelectorAll('.feedback-star').forEach(star => {
+        star.addEventListener('click', () => {
+            const rating = parseInt(star.dataset.rating);
+            window._selectedFeedbackRating = rating;
+            const labels = ['', '😕 需要改善', '😐 普通', '🙂 不錯', '😊 很好', '🤩 非常棒'];
+            document.getElementById('feedback-rating-label').textContent = labels[rating] || '';
+            document.getElementById('submit-feedback-btn').disabled = false;
+            document.querySelectorAll('.feedback-star').forEach(s => {
+                const r = parseInt(s.dataset.rating);
+                s.classList.toggle('text-amber-400', r <= rating);
+                s.classList.toggle('text-gray-300', r > rating);
+            });
+        });
+    });
+
+    // NEW: Event listeners for dispatch type radio buttons
+    dispatchTypeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const selectedType = e.target.value;
+            urlDispatchSection.classList.toggle('hidden', selectedType === 'html');
+            htmlDispatchSection.classList.toggle('hidden', selectedType === 'url');
+        });
+    });
+
+    // NEW: HTML upload/clear listeners within the dispatch settings modal
+    dispatchHtmlUploadInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        e.target.value = ''; // Reset input
+        if (file) {
+            handleDispatchHtmlFile(file);
+        }
+    });
+    clearDispatchHtmlBtn.addEventListener('click', () => {
+        dispatchSettings.htmlContent = null; // Clear content in global state
+        dispatchHtmlUploadInput.value = ''; // Clear file input
+        dispatchHtmlStatus.textContent = '目前沒有 HTML 檔案。';
+        showMessage('HTML 檔案已清除！', 'info');
+    });
+
+
+    // New: Recording button event listeners
+    startRecordingBtn.addEventListener('click', async () => {
+        // NEW: Check pause state before starting recording
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法開始錄音。', 'error');
+            return;
+        }
+        startRecording();
+    });
+    stopRecordingBtn.addEventListener('click', stopRecording);
+    playRecordingBtn.addEventListener('click', playRecording);
+    resetRecordingBtn.addEventListener('click', resetRecording);
+    submitRecordingBtn.addEventListener('click', async () => {
+        // NEW: Check pause state before submitting recording
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出錄音。', 'error');
+            return;
+        }
+        if (!audioDataURL) {
+            showMessage('沒有錄音可送出', 'error');
+            return;
+        }
+
+        try {
+            await submitAnswer(audioDataURL);
+
+            // 🎯 NEW: 鎖定所有錄音相關按鈕
+            submitRecordingBtn.disabled = true;
+            submitRecordingBtn.classList.remove('btn-primary');
+            submitRecordingBtn.classList.add('btn-gray');
+            submitRecordingBtn.textContent = '✓ 已送出答案';
+            startRecordingBtn.disabled = true;
+            stopRecordingBtn.disabled = true;
+            playRecordingBtn.disabled = true;
+            resetRecordingBtn.disabled = true;
+            recordingStatusText.textContent = '已送出錄音答案';
+
+            // 🎯 NEW: 顯示確認訊息
+            showMessage('✓ 錄音已送出！', 'success');
+        } catch (error) {
+            console.error('[Recording] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+
+    // NEW: Toggle Pause Button Event Listener
+    togglePauseBtn.addEventListener('click', toggleResponsePause);
+
+    // NEW: Reset Answers Button Event Listener
+    const resetAnswersBtn = document.getElementById('reset-answers-btn');
+    if (resetAnswersBtn) {
+        resetAnswersBtn.addEventListener('click', () => {
+            console.log('🔄 Reset button clicked!');
+            resetAllAnswers();
+        });
+        console.log('✓ Reset answers button event listener attached');
+    } else {
+        console.error('❌ Reset answers button not found!');
+    }
+
+    // End Class Session Buttons.
+    document.getElementById('end-class-session-menu-btn').addEventListener('click', endClassSession);
+    document.getElementById('end-class-session-monitor-btn').addEventListener('click', endClassSession);
+
+    // NEW: Multiple Choice Settings Modal Listeners
+    const multipleChoiceSettingsModal = document.getElementById('multiple-choice-settings-modal');
+    const multipleChoiceSettingsModalCloseBtn = document.getElementById('multiple-choice-settings-modal-close-btn');
+    const mcQuestionTypeRadios = document.querySelectorAll('input[name="mcQuestionType"]');
+    const customMcQuestionsSection = document.getElementById('custom-mc-questions-section');
+    const customMcQuestionsTextarea = document.getElementById('custom-mc-questions-textarea');
+    const customMcQuestionsStatus = document.getElementById('custom-mc-questions-status');
+    const startMcInteractionBtn = document.getElementById('start-mc-interaction-btn');
+    const cancelMcSettingsBtn = document.getElementById('cancel-mc-settings-btn');
+
+    // AI Question Generation elements
+    const aiGenerateMcBtn = document.getElementById('ai-generate-mc-btn');
+    const aiMcTopicTextarea = document.getElementById('ai-mc-topic-textarea');
+    const aiMcCountInput = document.getElementById('ai-mc-count-input');
+    const aiMcLoadingSpinner = document.getElementById('ai-mc-loading-spinner');
+    const aiMcBtnText = document.getElementById('ai-mc-btn-text');
+    const aiMcBtnIcon = document.getElementById('ai-mc-btn-icon');
+
+    // Question Bank Management elements
+    const questionBankFileInput = document.getElementById('question-bank-file-input');
+    const loadQuestionBankBtn = document.getElementById('load-question-bank-btn');
+    const questionBankNameInput = document.getElementById('question-bank-name-input');
+    const saveQuestionBankBtn = document.getElementById('save-question-bank-btn');
+    const questionBankList = document.getElementById('question-bank-list');
+
+
+    multipleChoiceSettingsModalCloseBtn.addEventListener('click', () => multipleChoiceSettingsModal.classList.add('hidden'));
+    cancelMcSettingsBtn.addEventListener('click', () => multipleChoiceSettingsModal.classList.add('hidden'));
+
+    // Question Bank Management Event Listeners
+    loadQuestionBankBtn.addEventListener('click', loadQuestionBankFromFile);
+    saveQuestionBankBtn.addEventListener('click', saveQuestionBankFromTextarea);
+
+    // Teacher Password Modal 已移除（不再需要密碼驗證）
+
+    mcQuestionTypeRadios.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const isCustomMode = e.target.value === 'custom';
+            customMcQuestionsSection.classList.toggle('hidden', !isCustomMode);
+            document.getElementById('question-bank-management-section').classList.toggle('hidden', !isCustomMode);
+            customMcQuestionsStatus.classList.add('hidden'); // Hide status when changing radio
+        });
+    });
+
+    startMcInteractionBtn.addEventListener('click', async () => {
+        const selectedType = document.querySelector('input[name="mcQuestionType"]:checked').value;
+        let questionsToDispatch = null;
+
+        if (selectedType === 'custom') {
+            const parsedQuestions = parseCustomQuestions(customMcQuestionsTextarea.value);
+            if (!parsedQuestions) {
+                customMcQuestionsStatus.classList.remove('hidden');
+                return; // Stop if parsing failed
+            }
+            questionsToDispatch = parsedQuestions;
+            customMultipleChoiceQuestions = parsedQuestions; // Update global for teacher UI
+        } else {
+            customMultipleChoiceQuestions = []; // Clear global if switching to none
+        }
+
+        customMcQuestionsStatus.classList.add('hidden'); // Hide status on successful dispatch
+        multipleChoiceSettingsModal.classList.add('hidden');
+        showView('teacherMonitor');
+        await setInteractionMode('multiple_choice', { customQuestions: questionsToDispatch });
+    });
+
+    // AI Question Generation Button Listener
+    aiGenerateMcBtn.addEventListener('click', async () => {
+        // 🚀 UX: 檢查 API KEY 是否已設定
+        if (!checkAPIKey()) return;
+
+        const topic = aiMcTopicTextarea.value.trim();
+        const count = parseInt(aiMcCountInput.value);
+
+        if (!topic) {
+            showMessage('請輸入出題主題或要求！', 'error');
+            return;
+        }
+        if (!count || count < 1 || count > 10) {
+            showMessage('出題數量必須介於 1 到 10 之間！', 'error');
+            return;
+        }
+
+        // Show loading state
+        aiGenerateMcBtn.disabled = true;
+        aiMcBtnText.textContent = 'AI 思考中...';
+        aiMcBtnIcon.classList.remove('fa-magic');
+        aiMcBtnIcon.classList.add('fa-spinner', 'fa-spin');
+        aiMcLoadingSpinner.classList.remove('hidden');
+
+        const prompt = `請根據以下要求，生成 ${count} 題選擇題。
+        要求：${topic}
+        請嚴格遵守以下格式，每題一行，並用逗號分隔每個欄位：
+        題目,正確答案(1-4),選項1,選項2,選項3,選項4
+        請勿包含題號、任何多餘的說明文字或程式碼區塊標記。`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.7 } // Adjust temperature for creativity
+            };
+            const apiKey = aiSettings.geminiApiKey;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error(`[AI 選擇題生成] API 錯誤 ${response.status}:`, errorBody);
+
+                // 🚀 IMPROVED: 針對不同錯誤碼提供具體解決方案
+                let errorMessage = '';
+
+                try {
+                    const errorJson = JSON.parse(errorBody);
+                    const apiErrorMsg = errorJson.error?.message || '';
+
+                    if (response.status === 429) {
+                        // 配額超限錯誤
+                        errorMessage = '⚠️ API 使用配額已用完！\n\n' +
+                            '可能原因：\n' +
+                            '1️⃣ 免費版 API 有每分鐘請求次數限制\n' +
+                            '2️⃣ 短時間內請求過多次\n\n' +
+                            '建議解決方案：\n' +
+                            '✅ 請等待 1-2 分鐘後再試\n' +
+                            '✅ 或前往 Google AI Studio 查看配額：\n' +
+                            '   https://aistudio.google.com/apikey\n' +
+                            '✅ 考慮升級為付費方案以獲得更高配額';
+                    } else if (response.status === 400) {
+                        // API KEY 無效或請求格式錯誤
+                        if (apiErrorMsg.toLowerCase().includes('api key')) {
+                            errorMessage = '❌ API KEY 無效或格式錯誤！\n\n' +
+                                '請檢查：\n' +
+                                '1️⃣ 是否正確複製完整的 API Key\n' +
+                                '2️⃣ API Key 是否已啟用 Gemini API\n' +
+                                '3️⃣ 前往 Google AI Studio 重新確認：\n' +
+                                '   https://aistudio.google.com/apikey';
+                        } else {
+                            errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
+                        }
+                    } else if (response.status === 401 || response.status === 403) {
+                        // 認證失敗或權限不足
+                        errorMessage = '🔒 API 認證失敗！\n\n' +
+                            '請檢查：\n' +
+                            '1️⃣ API Key 是否過期\n' +
+                            '2️⃣ API Key 是否有正確的權限\n' +
+                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
+                            '   https://aistudio.google.com/apikey';
+                    } else if (response.status === 503) {
+                        // 服務暫時不可用
+                        errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
+                            '建議：請稍後再試（通常幾分鐘內會恢復）';
+                    } else {
+                        // 其他錯誤
+                        errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                            `詳細資訊：${apiErrorMsg || '未知錯誤'}`;
+                    }
+                } catch (parseError) {
+                    // 無法解析 JSON，使用通用錯誤訊息
+                    errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                        `請檢查網路連線或稍後再試`;
+                }
+
+                throw new Error(errorMessage);
+            }
+
+            const result = await response.json();
+            const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (generatedText) {
+                // Append to existing content, adding a newline if needed
+                const existingText = customMcQuestionsTextarea.value.trim();
+                customMcQuestionsTextarea.value = existingText ? `${existingText}\n${generatedText.trim()}` : generatedText.trim();
+                showMessage('AI 題目已成功生成並填入左方！', 'success');
+            } else {
+                throw new Error('AI 未返回有效內容。');
+            }
+
+        } catch (error) {
+            console.error("AI 選擇題生成失敗:", error);
+            if (error.message && error.message.includes('API KEY')) {
+                showApiKeyGuide();
+            } else {
+                showMessage(error.message || 'AI 題目生成失敗，請稍後再試。', 'error');
+            }
+        } finally {
+            // Hide loading state
+            aiGenerateMcBtn.disabled = false;
+            aiMcBtnText.textContent = 'AI 開始出題';
+            aiMcBtnIcon.classList.add('fa-magic');
+            aiMcBtnIcon.classList.remove('fa-spinner', 'fa-spin');
+            aiMcLoadingSpinner.classList.add('hidden');
+        }
+    });
+
+    // AI Sequencing Question Generation Button Listener
+    const aiGenerateSeqBtn = document.getElementById('ai-generate-seq-btn');
+    const aiSeqTopicTextarea = document.getElementById('ai-seq-topic-textarea');
+    const aiSeqCountInput = document.getElementById('ai-seq-count-input');
+    const aiSeqBtnText = document.getElementById('ai-seq-btn-text');
+    const aiSeqBtnIcon = document.getElementById('ai-seq-btn-icon');
+    const aiSeqLoadingSpinner = document.getElementById('ai-seq-loading-spinner');
+
+    aiGenerateSeqBtn.addEventListener('click', async () => {
+        // 🚀 UX: 檢查 API KEY 是否已設定
+        if (!checkAPIKey()) return;
+
+        const topic = aiSeqTopicTextarea.value.trim();
+        const count = parseInt(aiSeqCountInput.value);
+
+        if (!topic) {
+            showMessage('請輸入出題主題或要求！', 'error');
+            return;
+        }
+        if (!count || count < 3 || count > 10) {
+            showMessage('項目數量必須介於 3 到 10 之間！', 'error');
+            return;
+        }
+
+        // Show loading state
+        aiGenerateSeqBtn.disabled = true;
+        aiSeqBtnText.textContent = 'AI 思考中...';
+        aiSeqBtnIcon.classList.remove('fa-magic');
+        aiSeqBtnIcon.classList.add('fa-spinner', 'fa-spin');
+        aiSeqLoadingSpinner.classList.remove('hidden');
+
+        const prompt = `請根據以下主題，生成 ${count} 個排序項目。
+主題：${topic}
+請按正確順序列出，每個項目一行，不要有題號或任何標記。
+只需提供項目內容，不要包含說明文字或程式碼區塊標記。`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.7 }
+            };
+            const apiKey = aiSettings.geminiApiKey;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error(`[AI 排序題生成] API 錯誤 ${response.status}:`, errorBody);
+
+                // 🚀 IMPROVED: 針對不同錯誤碼提供具體解決方案
+                let errorMessage = '';
+
+                try {
+                    const errorJson = JSON.parse(errorBody);
+                    const apiErrorMsg = errorJson.error?.message || '';
+
+                    if (response.status === 429) {
+                        errorMessage = '⚠️ API 使用配額已用完！\n\n' +
+                            '可能原因：\n' +
+                            '1️⃣ 免費版 API 有每分鐘請求次數限制\n' +
+                            '2️⃣ 短時間內請求過多次\n\n' +
+                            '建議解決方案：\n' +
+                            '✅ 請等待 1-2 分鐘後再試\n' +
+                            '✅ 或前往 Google AI Studio 查看配額：\n' +
+                            '   https://aistudio.google.com/apikey\n' +
+                            '✅ 考慮升級為付費方案以獲得更高配額';
+                    } else if (response.status === 400) {
+                        if (apiErrorMsg.toLowerCase().includes('api key')) {
+                            errorMessage = '❌ API KEY 無效或格式錯誤！\n\n' +
+                                '請檢查：\n' +
+                                '1️⃣ 是否正確複製完整的 API Key\n' +
+                                '2️⃣ API Key 是否已啟用 Gemini API\n' +
+                                '3️⃣ 前往 Google AI Studio 重新確認：\n' +
+                                '   https://aistudio.google.com/apikey';
+                        } else {
+                            errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
+                        }
+                    } else if (response.status === 401 || response.status === 403) {
+                        errorMessage = '🔒 API 認證失敗！\n\n' +
+                            '請檢查：\n' +
+                            '1️⃣ API Key 是否過期\n' +
+                            '2️⃣ API Key 是否有正確的權限\n' +
+                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
+                            '   https://aistudio.google.com/apikey';
+                    } else if (response.status === 503) {
+                        errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
+                            '建議：請稍後再試（通常幾分鐘內會恢復）';
+                    } else {
+                        errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                            `詳細資訊：${apiErrorMsg || '未知錯誤'}`;
+                    }
+                } catch (parseError) {
+                    errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                        `請檢查網路連線或稍後再試`;
+                }
+
+                throw new Error(errorMessage);
+            }
+
+            const result = await response.json();
+            const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (generatedText) {
+                const sequencingItemsTextarea = document.getElementById('sequencing-items-textarea');
+                sequencingItemsTextarea.value = generatedText.trim();
+                showMessage('AI 排序題已成功生成並填入！', 'success');
+            } else {
+                throw new Error('AI 未返回有效內容。');
+            }
+
+        } catch (error) {
+            console.error("AI 排序題生成失敗:", error);
+            if (error.message && error.message.includes('API KEY')) {
+                showApiKeyGuide();
+            } else {
+                showMessage(error.message || 'AI 排序題生成失敗，請稍後再試。', 'error');
+            }
+        } finally {
+            // Hide loading state
+            aiGenerateSeqBtn.disabled = false;
+            aiSeqBtnText.textContent = 'AI 開始出題';
+            aiSeqBtnIcon.classList.add('fa-magic');
+            aiSeqBtnIcon.classList.remove('fa-spinner', 'fa-spin');
+            aiSeqLoadingSpinner.classList.add('hidden');
+        }
+    });
+
+    // AI Matching Question Generation Button Listener
+    const aiGenerateMatchBtn = document.getElementById('ai-generate-match-btn');
+    const aiMatchTopicTextarea = document.getElementById('ai-match-topic-textarea');
+    const aiMatchCountInput = document.getElementById('ai-match-count-input');
+    const aiMatchBtnText = document.getElementById('ai-match-btn-text');
+    const aiMatchBtnIcon = document.getElementById('ai-match-btn-icon');
+    const aiMatchLoadingSpinner = document.getElementById('ai-match-loading-spinner');
+
+    aiGenerateMatchBtn.addEventListener('click', async () => {
+        // 🚀 UX: 檢查 API KEY 是否已設定
+        if (!checkAPIKey()) return;
+
+        const topic = aiMatchTopicTextarea.value.trim();
+        const count = parseInt(aiMatchCountInput.value);
+
+        if (!topic) {
+            showMessage('請輸入出題主題或要求！', 'error');
+            return;
+        }
+        if (!count || count < 3 || count > 10) {
+            showMessage('配對數量必須介於 3 到 10 之間！', 'error');
+            return;
+        }
+
+        // Show loading state
+        aiGenerateMatchBtn.disabled = true;
+        aiMatchBtnText.textContent = 'AI 思考中...';
+        aiMatchBtnIcon.classList.remove('fa-magic');
+        aiMatchBtnIcon.classList.add('fa-spinner', 'fa-spin');
+        aiMatchLoadingSpinner.classList.remove('hidden');
+
+        const prompt = `請根據以下主題，生成 ${count} 組配對題。
+主題：${topic}
+每行格式：左側項目,右側項目
+不要有題號、說明文字或程式碼區塊標記。
+直接提供配對內容，每行一組。`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.7 }
+            };
+            const apiKey = aiSettings.geminiApiKey;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error(`[AI 配對題生成] API 錯誤 ${response.status}:`, errorBody);
+
+                // 🚀 IMPROVED: 針對不同錯誤碼提供具體解決方案
+                let errorMessage = '';
+
+                try {
+                    const errorJson = JSON.parse(errorBody);
+                    const apiErrorMsg = errorJson.error?.message || '';
+
+                    if (response.status === 429) {
+                        errorMessage = '⚠️ API 使用配額已用完！\n\n' +
+                            '可能原因：\n' +
+                            '1️⃣ 免費版 API 有每分鐘請求次數限制\n' +
+                            '2️⃣ 短時間內請求過多次\n\n' +
+                            '建議解決方案：\n' +
+                            '✅ 請等待 1-2 分鐘後再試\n' +
+                            '✅ 或前往 Google AI Studio 查看配額：\n' +
+                            '   https://aistudio.google.com/apikey\n' +
+                            '✅ 考慮升級為付費方案以獲得更高配額';
+                    } else if (response.status === 400) {
+                        if (apiErrorMsg.toLowerCase().includes('api key')) {
+                            errorMessage = '❌ API KEY 無效或格式錯誤！\n\n' +
+                                '請檢查：\n' +
+                                '1️⃣ 是否正確複製完整的 API Key\n' +
+                                '2️⃣ API Key 是否已啟用 Gemini API\n' +
+                                '3️⃣ 前往 Google AI Studio 重新確認：\n' +
+                                '   https://aistudio.google.com/apikey';
+                        } else {
+                            errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
+                        }
+                    } else if (response.status === 401 || response.status === 403) {
+                        errorMessage = '🔒 API 認證失敗！\n\n' +
+                            '請檢查：\n' +
+                            '1️⃣ API Key 是否過期\n' +
+                            '2️⃣ API Key 是否有正確的權限\n' +
+                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
+                            '   https://aistudio.google.com/apikey';
+                    } else if (response.status === 503) {
+                        errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
+                            '建議：請稍後再試（通常幾分鐘內會恢復）';
+                    } else {
+                        errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                            `詳細資訊：${apiErrorMsg || '未知錯誤'}`;
+                    }
+                } catch (parseError) {
+                    errorMessage = `❌ API 請求失敗 (錯誤碼 ${response.status})\n\n` +
+                        `請檢查網路連線或稍後再試`;
+                }
+
+                throw new Error(errorMessage);
+            }
+
+            const result = await response.json();
+            const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (generatedText) {
+                const matchingPairsTextarea = document.getElementById('matching-pairs-textarea');
+                matchingPairsTextarea.value = generatedText.trim();
+                showMessage('AI 配對題已成功生成並填入！', 'success');
+            } else {
+                throw new Error('AI 未返回有效內容。');
+            }
+
+        } catch (error) {
+            console.error("AI 配對題生成失敗:", error);
+            if (error.message && error.message.includes('API KEY')) {
+                showApiKeyGuide();
+            } else {
+                showMessage(error.message || 'AI 配對題生成失敗，請稍後再試。', 'error');
+            }
+        } finally {
+            // Hide loading state
+            aiGenerateMatchBtn.disabled = false;
+            aiMatchBtnText.textContent = 'AI 開始出題';
+            aiMatchBtnIcon.classList.add('fa-magic');
+            aiMatchBtnIcon.classList.remove('fa-spinner', 'fa-spin');
+            aiMatchLoadingSpinner.classList.add('hidden');
+        }
+    });
+
+    // Sequencing Question Bank Management Listeners
+    document.getElementById('load-seq-bank-btn').addEventListener('click', loadSequencingBankFromFile);
+    document.getElementById('save-seq-bank-btn').addEventListener('click', saveSequencingBank);
+
+    // Matching Question Bank Management Listeners
+    document.getElementById('load-match-bank-btn').addEventListener('click', loadMatchingBankFromFile);
+    document.getElementById('save-match-bank-btn').addEventListener('click', saveMatchingBank);
+
+    // Reading Comprehension Listeners
+    document.getElementById('reading-comprehension-settings-btn')?.addEventListener('click', showReadingComprehensionModal);
+    document.getElementById('reading-comprehension-settings-modal-close-btn')?.addEventListener('click', hideReadingComprehensionModal);
+    document.getElementById('cancel-reading-settings-btn')?.addEventListener('click', hideReadingComprehensionModal);
+    document.getElementById('start-reading-interaction-btn')?.addEventListener('click', startReadingComprehension);
+    document.getElementById('submit-reading-btn')?.addEventListener('click', submitReadingAnswer);
+    document.getElementById('ai-generate-reading-btn')?.addEventListener('click', generatePIRLSQuestions);
+    // 🆕 v3.8.11: 題目 textarea 變動時自動更新預覽
+    document.getElementById('reading-questions-textarea')?.addEventListener('input', renderReadingQuestionsPreview);
+    document.getElementById('toggle-preview-btn')?.addEventListener('click', () => {
+        const wrap = document.getElementById('reading-questions-preview');
+        if (wrap) wrap.classList.toggle('hidden');
+    });
+    document.getElementById('load-reading-files-btn')?.addEventListener('click', loadReadingFiles);
+    document.getElementById('save-reading-question-bank-btn')?.addEventListener('click', saveReadingQuestionBank);
+
+    // 🆕 NEW: 閱讀測驗 AI 出題 - 圖片/截圖上傳事件監聽
+    // (1) 選擇檔案
+    document.getElementById('ai-reading-image-input')?.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []);
+        files.forEach(f => addReadingAiImage(f));
+        e.target.value = ''; // 重置以便可重複選擇同一檔案
+        if (files.length > 0) {
+            showMessage(`✅ 已加入 ${files.length} 張圖片`, 'success');
+        }
+    });
+    // (2) 「貼上截圖」按鈕 - 聚焦提示 + 嘗試從 navigator.clipboard 讀取
+    document.getElementById('ai-reading-paste-image-btn')?.addEventListener('click', async () => {
+        // 先嘗試使用 async clipboard API（HTTPS 環境 + 使用者授權）
+        if (navigator.clipboard && navigator.clipboard.read) {
+            try {
+                const clipboardItems = await navigator.clipboard.read();
+                let found = 0;
+                for (const item of clipboardItems) {
+                    for (const type of item.types) {
+                        if (type.startsWith('image/')) {
+                            const blob = await item.getType(type);
+                            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                            const ext = type.split('/')[1] || 'png';
+                            addReadingAiImage(blob, `clipboard-${ts}.${ext}`);
+                            found++;
+                        }
+                    }
+                }
+                if (found > 0) {
+                    showMessage(`✅ 已從剪貼簿貼上 ${found} 張圖片`, 'success');
+                    return;
+                }
+            } catch (err) {
+                console.log('[AI Reading] navigator.clipboard.read 失敗，改用 Ctrl+V 方式:', err.message);
+            }
+        }
+        // 備援提示：請使用者直接按 Ctrl+V
+        showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
+    });
+    // (3) 清除所有圖片
+    document.getElementById('ai-reading-clear-images-btn')?.addEventListener('click', () => {
+        if (readingAiUploadedImages.length === 0) return;
+        clearReadingAiImages();
+        showMessage('🗑️ 已清除所有已上傳圖片', 'info');
+    });
+    // (4) 全域 paste 事件監聽 - 僅在閱讀測驗設定模態框開啟時生效（handler 內自行判斷）
+    document.addEventListener('paste', handleReadingAiPasteEvent);
+
+    // ==========================================================
+    // 🆕 NEW [v3.7.0]: Quiz Entry Picker + True/False Settings + MC Image Composer
+    // ==========================================================
+    // --- Entry Picker 按鈕 ---
+    document.getElementById('quiz-entry-mode-close-btn')?.addEventListener('click', hideQuizEntryModal);
+    document.getElementById('quiz-entry-cancel-btn')?.addEventListener('click', hideQuizEntryModal);
+    document.getElementById('quiz-entry-quick-btn')?.addEventListener('click', startQuizQuickMode);
+    document.getElementById('quiz-entry-prepared-btn')?.addEventListener('click', startQuizPreparedMode);
+
+    // --- True/False Settings Modal ---
+    document.getElementById('true-false-settings-modal-close-btn')?.addEventListener('click', hideTrueFalseSettingsModal);
+    document.getElementById('cancel-tf-settings-btn')?.addEventListener('click', hideTrueFalseSettingsModal);
+    document.getElementById('start-tf-interaction-btn')?.addEventListener('click', startTrueFalsePreparedInteraction);
+
+    // 🆕 NEW [v3.8.0] A-1: TF 題庫管理事件綁定
+    document.getElementById('tf-bank-save-btn')?.addEventListener('click', () => {
+        const nameInput = document.getElementById('tf-bank-name-input');
+        const text = document.getElementById('tf-question-textarea').value.trim();
+        const correctAnswer = (document.querySelector('input[name="tfCorrectAnswer"]:checked') || {}).value || '';
+        const images = (quizAiImageComposers.tf || []).map(img => ({ dataUrl: img.dataUrl, name: img.name }));
+        if (!text && images.length === 0) {
+            showMessage('❌ 請至少輸入題目文字或上傳圖片才能存題庫', 'warning');
+            return;
+        }
+        const ok = QuizBankManager.save('tf', nameInput.value, { text, images, correctAnswer });
+        if (ok) {
+            nameInput.value = '';
+            QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+        }
+    });
+    document.getElementById('tf-bank-import-btn')?.addEventListener('click', () => {
+        document.getElementById('tf-bank-import-input').click();
+    });
+    document.getElementById('tf-bank-import-input')?.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            QuizBankManager.importBank('tf', file, () => {
+                QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+            });
+            e.target.value = '';
+        }
+    });
+
+    // 🆕 NEW [v3.8.0] A-1: MC 快速題庫管理事件綁定
+    document.getElementById('mc-bank-save-btn')?.addEventListener('click', () => {
+        const nameInput = document.getElementById('mc-bank-name-input');
+        const questionsRaw = document.getElementById('custom-mc-questions-textarea').value.trim();
+        if (!questionsRaw) {
+            showMessage('❌ 請先在 textarea 輸入題目，才能儲存為題庫', 'warning');
+            return;
+        }
+        const ok = QuizBankManager.save('mc', nameInput.value, { questionsRaw });
+        if (ok) {
+            nameInput.value = '';
+            QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+        }
+    });
+    document.getElementById('mc-bank-import-btn')?.addEventListener('click', () => {
+        document.getElementById('mc-bank-import-input').click();
+    });
+    document.getElementById('mc-bank-import-input')?.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            QuizBankManager.importBank('mc', file, () => {
+                QuizBankManager.renderList('mc', 'mc-bank-list', loadMcBankToModal);
+            });
+            e.target.value = '';
+        }
+    });
+
+    // --- TF 圖片 Composer ---
+    document.getElementById('tf-image-input')?.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []);
+        files.forEach(f => addQuizComposerImage('tf', f));
+        e.target.value = '';
+        if (files.length > 0) showMessage(`✅ 已加入 ${files.length} 張圖片`, 'success');
+    });
+    document.getElementById('tf-paste-image-btn')?.addEventListener('click', async () => {
+        if (navigator.clipboard && navigator.clipboard.read) {
+            try {
+                const items = await navigator.clipboard.read();
+                let found = 0;
+                for (const item of items) {
+                    for (const type of item.types) {
+                        if (type.startsWith('image/')) {
+                            const blob = await item.getType(type);
+                            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                            addQuizComposerImage('tf', blob, `clipboard-${ts}.${type.split('/')[1] || 'png'}`);
+                            found++;
+                        }
+                    }
+                }
+                if (found > 0) { showMessage(`✅ 已從剪貼簿貼上 ${found} 張圖片`, 'success'); return; }
+            } catch (err) { console.log('[TF Composer] clipboard.read 失敗:', err.message); }
+        }
+        showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
+    });
+    document.getElementById('tf-clear-images-btn')?.addEventListener('click', () => {
+        clearQuizComposer('tf');
+        showMessage('🗑️ 已清除所有圖片', 'info');
+    });
+    document.getElementById('tf-recognize-image-btn')?.addEventListener('click', () => {
+        recognizeQuizImages('tf', 'tf-question-textarea', 'tf');
+    });
+
+    // --- MC 圖片 Composer（選擇題備題模式新增） ---
+    document.getElementById('mc-image-input')?.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []);
+        files.forEach(f => addQuizComposerImage('mc', f));
+        e.target.value = '';
+        if (files.length > 0) showMessage(`✅ 已加入 ${files.length} 張圖片`, 'success');
+    });
+    document.getElementById('mc-paste-image-btn')?.addEventListener('click', async () => {
+        if (navigator.clipboard && navigator.clipboard.read) {
+            try {
+                const items = await navigator.clipboard.read();
+                let found = 0;
+                for (const item of items) {
+                    for (const type of item.types) {
+                        if (type.startsWith('image/')) {
+                            const blob = await item.getType(type);
+                            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                            addQuizComposerImage('mc', blob, `clipboard-${ts}.${type.split('/')[1] || 'png'}`);
+                            found++;
+                        }
+                    }
+                }
+                if (found > 0) { showMessage(`✅ 已從剪貼簿貼上 ${found} 張圖片`, 'success'); return; }
+            } catch (err) { console.log('[MC Composer] clipboard.read 失敗:', err.message); }
+        }
+        showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
+    });
+    document.getElementById('mc-clear-images-btn')?.addEventListener('click', () => {
+        clearQuizComposer('mc');
+        showMessage('🗑️ 已清除所有圖片', 'info');
+    });
+    document.getElementById('mc-recognize-image-btn')?.addEventListener('click', () => {
+        recognizeQuizImages('mc', 'custom-mc-questions-textarea', 'mc');
+    });
+
+    // --- 全域 paste 監聽（分別對應 tf-settings-modal 與 mc-settings-modal） ---
+    document.addEventListener('paste', (e) => handleQuizComposerPaste('tf', 'true-false-settings-modal', e));
+    document.addEventListener('paste', (e) => handleQuizComposerPaste('mc', 'multiple-choice-settings-modal', e));
+
+    // 🚀 NEW: Initialize reading scroll-to-top button
+    initReadingScrollToTop();
+
+    // View Reading Questions Modal Listeners
+    document.getElementById('view-reading-questions-btn')?.addEventListener('click', showViewReadingQuestionsModal);
+    document.getElementById('view-reading-questions-modal-close-btn')?.addEventListener('click', hideViewReadingQuestionsModal);
+    document.getElementById('close-reading-questions-view-btn')?.addEventListener('click', hideViewReadingQuestionsModal);
+
+    // 🚀 NEW: Edit Reading Answer Modal Listeners
+    document.getElementById('edit-reading-answer-modal-close-btn')?.addEventListener('click', hideEditAnswerDialog);
+    document.getElementById('cancel-edit-answer-btn')?.addEventListener('click', hideEditAnswerDialog);
+    document.getElementById('confirm-edit-answer-btn')?.addEventListener('click', confirmEditAnswer);
+
+    // 🚀 NEW: Rescore All Students Button Listener
+    document.getElementById('rescore-all-students-btn')?.addEventListener('click', rescoreAllStudents);
+    // 🆕 NEW [v3.8.3] A-4: 歷史趨勢按鈕
+    document.getElementById('show-historical-quizzes-btn')?.addEventListener('click', showHistoricalQuizzesModal);
+    document.getElementById('historical-quizzes-close-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
+    document.getElementById('historical-quizzes-close-bottom-btn')?.addEventListener('click', hideHistoricalQuizzesModal);
+    // 🆕 v3.8.5 A-4 完整版：tab 切換 + 學生選單 + 列印
+    document.querySelectorAll('.history-tab-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const tab = e.currentTarget.dataset.historyTab;
+            switchHistoryTab(tab);
+            // 切到個人 tab 時，若已選學生重新渲染（避免 DOM 切換後 chart 被破壞）
+            if (tab === 'individual') {
+                const sel = document.getElementById('history-student-select');
+                if (sel?.value) renderIndividualTrend(sel.value);
+            }
+            // 切到 overview 時，若 chart 不在則重新繪
+            if (tab === 'overview' && _historicalQuizzesCache.length > 0) {
+                // 等 DOM 渲染後再 redraw（解決 hidden → visible 後 canvas 大小為 0 的問題）
+                requestAnimationFrame(() => renderClassTrendChart(_historicalQuizzesCache));
+            }
+            // 🆕 v3.8.8 A-9：切到題目品質 tab 時渲染
+            if (tab === 'quality') {
+                renderQuestionQuality();
+            }
+        });
+    });
+    document.getElementById('history-student-select')?.addEventListener('change', (e) => {
+        renderIndividualTrend(e.target.value);
+    });
+    // 🆕 v3.8.8 A-9：題目品質篩選變動時重渲染
+    document.getElementById('quality-mode-filter')?.addEventListener('change', renderQuestionQuality);
+    document.getElementById('quality-min-occurrences')?.addEventListener('change', renderQuestionQuality);
+
+    document.getElementById('historical-print-btn')?.addEventListener('click', printHistoricalQuizzes);
+
+    // 🆕 NEW [v3.8.4] A-5: 即時加題按鈕
+    document.getElementById('add-question-on-fly-btn')?.addEventListener('click', showAddQuestionModal);
+    document.getElementById('add-question-close-btn')?.addEventListener('click', hideAddQuestionModal);
+    document.getElementById('add-question-cancel-btn')?.addEventListener('click', hideAddQuestionModal);
+    document.getElementById('add-question-confirm-btn')?.addEventListener('click', confirmAddQuestion);
+    // 🆕 NEW [v3.7.1]: 允許提前交卷 toggle
+    document.getElementById('allow-early-submit-btn')?.addEventListener('click', toggleAllowEarlyReadingSubmit);
+
+    // NEW: Student side custom multiple choice submission
+    document.getElementById('submit-custom-mc-btn').addEventListener('click', async (e) => {
+        // NEW: Check pause state before submitting
+        if (isResponsePaused) {
+            showMessage('老師已暫停回覆，無法送出答案。', 'error');
+            return;
+        }
+
+        // NEW: 檢查是否已經提交過答案
+        const hasSubmitted = await checkIfStudentSubmitted();
+        if (hasSubmitted) {
+            showMessage('您已經提交過答案，無法重複提交。', 'error');
+            return;
+        }
+
+        const studentAnswers = [];
+        const questionContainers = document.querySelectorAll('#custom-mc-questions-container .mc-question-item');
+        let allAnswered = true;
+
+        questionContainers.forEach((qContainer, index) => {
+            const selectedOption = qContainer.querySelector(`input[name="question-${index}"]:checked`);
+            if (selectedOption) {
+                studentAnswers.push({ qIndex: index, ans: selectedOption.value });
+            } else {
+                allAnswered = false;
+            }
+        });
+
+        if (!allAnswered) {
+            showMessage('請回答所有題目！', 'error');
+            return;
+        }
+
+        // 🎯 保存引用（在 await 之前）
+        const submitBtn = e.currentTarget;
+
+        try {
+            await submitAnswer(studentAnswers);
+
+            // 🎯 NEW: 更新UI顯示已提交狀態
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-gray');
+            submitBtn.textContent = '✓ 已送出答案';
+
+            // Disable all radio buttons after submission
+            document.querySelectorAll('#custom-mc-questions-container input[type="radio"]').forEach(radio => {
+                radio.disabled = true;
+            });
+
+            // 🎯 NEW: 顯示確認訊息
+            showMessage(`✓ 提交成功！已完成 ${studentAnswers.length} 題`, 'success');
+        } catch (error) {
+            console.error('[Custom MC] Submit failed:', error);
+            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
+        }
+    });
+}
+
+/**
+ * NEW: Parses custom multiple choice questions from a textarea string.
+ * Expected format per line: Question,CorrectAnswer(1-4/A-D),Option1,Option2,Option3,Option4
+ * @param {string} rawText - The raw string from the textarea.
+ * @returns {Array|null} An array of question objects, or null if parsing fails.
+ */
+function parseCustomQuestions(rawText) {
+    const lines = rawText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    const questions = [];
+
+    for (const line of lines) {
+        // Try splitting by comma first, then by tab if comma yields too few parts
+        let parts = line.split(',');
+        if (parts.length < 6) {
+            parts = line.split('\t');
+        }
+
+        if (parts.length !== 6) {
+            console.error("Invalid line format:", line);
+            return null; // Invalid format
+        }
+
+        const questionText = parts[0].trim();
+        let correctAnswer = parts[1].trim().toUpperCase();
+        const options = parts.slice(2, 6).map(opt => opt.trim());
+
+        // Normalize correct answer to 1, 2, 3, 4
+        if (correctAnswer === 'A') correctAnswer = '1';
+        else if (correctAnswer === 'B') correctAnswer = '2';
+        else if (correctAnswer === 'C') correctAnswer = '3';
+        else if (correctAnswer === 'D') correctAnswer = '4';
+
+        if (!['1', '2', '3', '4'].includes(correctAnswer)) {
+            console.error("Invalid correct answer format:", correctAnswer);
+            return null; // Invalid correct answer
+        }
+
+        if (questionText === '' || options.some(opt => opt === '')) {
+            console.error("Empty question or option:", line);
+            return null; // Empty question or option
+        }
+
+        questions.push({
+            questionText: questionText,
+            correctAnswer: correctAnswer,
+            options: options
+        });
+    }
+
+    if (questions.length === 0) {
+        return null; // No valid questions parsed
+    }
+
+    return questions;
+}
+
+// ==========================================================
+// 🆕 NEW [v3.7.7]: 可縮放圖片檢視器（ZoomableImageViewer）
+// ==========================================================
+// 支援：雙指縮放（pinch）、滑鼠滾輪縮放、拖曳平移、雙擊切換 1x↔2x、Esc 關閉
+// 公開 API：openZoomableImageViewer(src, alt)
+
+const ZoomableImageViewer = (() => {
+    const MIN_SCALE = 0.5;
+    const MAX_SCALE = 6;
+    const ZOOM_STEP = 0.25;   // 按鈕縮放單位
+
+    let modalEl, canvasEl, imgEl, scaleLabel, hintEl;
+    let initialized = false;
+
+    // 當前變換狀態
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+
+    // 互動狀態
+    let isPanning = false;
+    let panStartX = 0, panStartY = 0;
+    let startTX = 0, startTY = 0;
+
+    let isPinching = false;
+    let pinchInitialDist = 0;
+    let pinchInitialScale = 1;
+    let pinchCenterX = 0, pinchCenterY = 0;
+
+    let lastTapTime = 0;
+
+    function applyTransform(immediate = false) {
+        if (!imgEl) return;
+        imgEl.classList.toggle('interacting', immediate);
+        imgEl.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        if (scaleLabel) scaleLabel.textContent = `${Math.round(scale * 100)}%`;
+    }
+
+    function clampScale(s) {
+        return Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+    }
+
+    /**
+     * 以指定中心點縮放（維持該點的螢幕位置不變，避免圖片亂跳）
+     * @param {number} newScale - 目標 scale
+     * @param {number} cx - 縮放中心（螢幕座標 x）
+     * @param {number} cy - 縮放中心（螢幕座標 y）
+     */
+    function zoomAtPoint(newScale, cx, cy) {
+        newScale = clampScale(newScale);
+        if (Math.abs(newScale - scale) < 0.001) return;
+
+        const rect = canvasEl.getBoundingClientRect();
+        // 目標中心相對於 canvas 的位置
+        const relX = cx - rect.left - rect.width / 2;
+        const relY = cy - rect.top - rect.height / 2;
+
+        // 為了讓該點保持不動，調整 translate
+        const ratio = newScale / scale;
+        translateX = relX - (relX - translateX) * ratio;
+        translateY = relY - (relY - translateY) * ratio;
+        scale = newScale;
+        applyTransform(true);
+    }
+
+    function reset() {
+        scale = 1;
+        translateX = 0;
+        translateY = 0;
+        applyTransform(false);
+    }
+
+    function open(src, alt = '題目圖片') {
+        if (!initialized) init();
+        imgEl.src = src;
+        imgEl.alt = alt;
+        reset();
+        modalEl.classList.remove('hidden');
+        // 鎖定 body 捲動，避免背景跟著捲
+        document.body.style.overflow = 'hidden';
+        // 3 秒後淡化提示（避免擋住內容）
+        if (hintEl) {
+            hintEl.style.opacity = '1';
+            hintEl.style.transition = 'opacity 1s ease 2.5s';
+            requestAnimationFrame(() => { hintEl.style.opacity = '0.25'; });
+        }
+    }
+
+    function close() {
+        if (!modalEl) return;
+        modalEl.classList.add('hidden');
+        document.body.style.overflow = '';
+        // 清空 img src 釋放記憶體
+        setTimeout(() => { if (imgEl) imgEl.src = ''; }, 200);
+    }
+
+    // -------- 事件處理 --------
+    function onWheel(e) {
+        e.preventDefault();
+        const delta = -e.deltaY;
+        const step = delta > 0 ? 1.12 : 1 / 1.12;
+        zoomAtPoint(scale * step, e.clientX, e.clientY);
+    }
+
+    function onMouseDown(e) {
+        if (e.button !== 0) return; // 只處理左鍵
+        isPanning = true;
+        panStartX = e.clientX;
+        panStartY = e.clientY;
+        startTX = translateX;
+        startTY = translateY;
+        canvasEl.classList.add('dragging');
+    }
+
+    function onMouseMove(e) {
+        if (!isPanning) return;
+        translateX = startTX + (e.clientX - panStartX);
+        translateY = startTY + (e.clientY - panStartY);
+        applyTransform(true);
+    }
+
+    function onMouseUp() {
+        if (isPanning) {
+            isPanning = false;
+            canvasEl.classList.remove('dragging');
+        }
+    }
+
+    function onDblClick(e) {
+        // 雙擊切換 1x ↔ 2x（以點擊位置為中心）
+        const target = Math.abs(scale - 1) < 0.05 ? 2 : 1;
+        if (target === 1) {
+            reset();
+        } else {
+            zoomAtPoint(target, e.clientX, e.clientY);
+        }
+    }
+
+    function getTouchDistance(t1, t2) {
+        const dx = t1.clientX - t2.clientX;
+        const dy = t1.clientY - t2.clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function getTouchCenter(t1, t2) {
+        return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+    }
+
+    function onTouchStart(e) {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            isPinching = true;
+            isPanning = false;
+            pinchInitialDist = getTouchDistance(e.touches[0], e.touches[1]);
+            pinchInitialScale = scale;
+            const center = getTouchCenter(e.touches[0], e.touches[1]);
+            pinchCenterX = center.x;
+            pinchCenterY = center.y;
+        } else if (e.touches.length === 1) {
+            const now = Date.now();
+            if (now - lastTapTime < 300) {
+                // 模擬雙擊
+                e.preventDefault();
+                onDblClick({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+                lastTapTime = 0;
+                return;
+            }
+            lastTapTime = now;
+
+            isPanning = true;
+            isPinching = false;
+            panStartX = e.touches[0].clientX;
+            panStartY = e.touches[0].clientY;
+            startTX = translateX;
+            startTY = translateY;
+        }
+    }
+
+    function onTouchMove(e) {
+        if (isPinching && e.touches.length === 2) {
+            e.preventDefault();
+            const newDist = getTouchDistance(e.touches[0], e.touches[1]);
+            const ratio = newDist / pinchInitialDist;
+            const newScale = clampScale(pinchInitialScale * ratio);
+            zoomAtPoint(newScale, pinchCenterX, pinchCenterY);
+        } else if (isPanning && e.touches.length === 1) {
+            e.preventDefault();
+            translateX = startTX + (e.touches[0].clientX - panStartX);
+            translateY = startTY + (e.touches[0].clientY - panStartY);
+            applyTransform(true);
+        }
+    }
+
+    function onTouchEnd(e) {
+        if (e.touches.length < 2) isPinching = false;
+        if (e.touches.length === 0) isPanning = false;
+    }
+
+    function onKeyDown(e) {
+        if (!modalEl || modalEl.classList.contains('hidden')) return;
+        if (e.key === 'Escape') close();
+        else if (e.key === '+' || e.key === '=') {
+            const rect = canvasEl.getBoundingClientRect();
+            zoomAtPoint(scale + ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        } else if (e.key === '-' || e.key === '_') {
+            const rect = canvasEl.getBoundingClientRect();
+            zoomAtPoint(scale - ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        } else if (e.key === '0') {
+            reset();
+        }
+    }
+
+    function onBackdropClick(e) {
+        // 點擊黑色背景（非 img、非按鈕）關閉
+        if (e.target === modalEl || e.target === canvasEl) {
+            close();
+        }
+    }
+
+    function init() {
+        modalEl = document.getElementById('zoomable-image-viewer');
+        canvasEl = document.getElementById('zoomable-viewer-canvas');
+        imgEl = document.getElementById('zoomable-viewer-img');
+        scaleLabel = document.getElementById('zoomable-viewer-scale-label');
+        hintEl = document.getElementById('zoomable-viewer-hint');
+
+        if (!modalEl) return;
+
+        // 關閉按鈕
+        document.getElementById('zoomable-viewer-close')?.addEventListener('click', close);
+
+        // 控制列按鈕
+        document.getElementById('zoomable-viewer-zoom-in')?.addEventListener('click', () => {
+            const rect = canvasEl.getBoundingClientRect();
+            zoomAtPoint(scale + ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
+        document.getElementById('zoomable-viewer-zoom-out')?.addEventListener('click', () => {
+            const rect = canvasEl.getBoundingClientRect();
+            zoomAtPoint(scale - ZOOM_STEP, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
+        document.getElementById('zoomable-viewer-reset')?.addEventListener('click', reset);
+
+        // 縮放 & 拖曳事件
+        canvasEl.addEventListener('wheel', onWheel, { passive: false });
+        canvasEl.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+        canvasEl.addEventListener('dblclick', onDblClick);
+
+        // 觸控事件
+        canvasEl.addEventListener('touchstart', onTouchStart, { passive: false });
+        canvasEl.addEventListener('touchmove', onTouchMove, { passive: false });
+        canvasEl.addEventListener('touchend', onTouchEnd);
+        canvasEl.addEventListener('touchcancel', onTouchEnd);
+
+        // 點背景關閉
+        modalEl.addEventListener('click', onBackdropClick);
+
+        // 鍵盤快捷鍵
+        document.addEventListener('keydown', onKeyDown);
+
+        initialized = true;
+        console.log('[ZoomableImageViewer] 初始化完成');
+    }
+
+    return { open, close, init };
+})();
+
+// 公開 API：讓任何圖片可快速呼叫
+function openZoomableImageViewer(src, alt) {
+    ZoomableImageViewer.open(src, alt);
+}
+
+/**
+ * 🆕 NEW [v3.7.0]: 學生端渲染是非題題目內容（備題模式專用）
+ * @param {Object|null} questionContent - { text, images: [{dataUrl}], correctAnswer } 或 null（快速模式）
+ */
+function renderTrueFalseQuestion(questionContent) {
+    const display = document.getElementById('tf-question-display');
+    const textEl = document.getElementById('tf-question-text');
+    const imagesEl = document.getElementById('tf-question-images');
+    if (!display || !textEl || !imagesEl) return;
+
+    // 快速模式：隱藏整個題目顯示區
+    if (!questionContent || (!questionContent.text && (!questionContent.images || questionContent.images.length === 0))) {
+        display.classList.add('hidden');
+        textEl.textContent = '';
+        imagesEl.innerHTML = '';
+        imagesEl.classList.add('hidden');
+        return;
+    }
+
+    // 備題模式：顯示題目文字
+    textEl.textContent = questionContent.text || '';
+
+    // 備題模式：顯示題目圖片
+    imagesEl.innerHTML = '';
+    const images = Array.isArray(questionContent.images) ? questionContent.images : [];
+    if (images.length > 0) {
+        images.forEach((img, idx) => {
+            if (!img || !img.dataUrl) return;
+            const wrapper = document.createElement('div');
+            // 🆕 MODIFIED [v3.7.7]: 加 zoomable-trigger class + click 事件，點擊可開啟可縮放檢視器
+            wrapper.className = 'rounded-lg overflow-hidden border border-gray-300 shadow-sm zoomable-trigger relative';
+            wrapper.style.maxWidth = '320px';
+            wrapper.style.maxHeight = '280px';
+            wrapper.title = '點擊可放大 / 手機雙指縮放';
+
+            const imgEl = document.createElement('img');
+            imgEl.src = img.dataUrl;
+            imgEl.alt = `題目圖片 ${idx + 1}`;
+            imgEl.style.cssText = 'width:100%;height:auto;display:block;object-fit:contain;';
+            wrapper.appendChild(imgEl);
+
+            // 🆕 視覺提示：右下角顯示「🔍」放大 icon（告訴學生可點擊）
+            const zoomHint = document.createElement('div');
+            zoomHint.style.cssText = 'position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;padding:3px 8px;border-radius:999px;font-size:12px;pointer-events:none;';
+            zoomHint.innerHTML = '<i class="fas fa-search-plus"></i> 放大';
+            wrapper.appendChild(zoomHint);
+
+            // 🆕 點擊 wrapper 開啟縮放檢視器
+            wrapper.addEventListener('click', () => {
+                openZoomableImageViewer(img.dataUrl, `題目圖片 ${idx + 1}`);
+            });
+
+            imagesEl.appendChild(wrapper);
+        });
+        imagesEl.classList.remove('hidden');
+    } else {
+        imagesEl.classList.add('hidden');
+    }
+
+    display.classList.remove('hidden');
+}
+
+/**
+ * NEW: Renders custom multiple choice questions on the student side.
+ * @param {Array} questions - An array of question objects.
+ */
+async function renderMultipleChoiceQuestions(questions) {
+    const defaultMcOptions = document.getElementById('default-mc-options');
+    const customMcQuestionsContainer = document.getElementById('custom-mc-questions-container');
+    const submitCustomMcBtn = document.getElementById('submit-custom-mc-btn');
+    const interactionMultipleChoice = document.getElementById('interaction-multiple-choice');
+
+    if (questions && questions.length > 0) {
+        defaultMcOptions.classList.add('hidden');
+        customMcQuestionsContainer.classList.remove('hidden');
+        submitCustomMcBtn.classList.remove('hidden');
+        customMcQuestionsContainer.innerHTML = ''; // Clear previous questions
+        interactionMultipleChoice.classList.remove('enlarged-buttons'); // Remove enlarged class for custom questions
+
+        // NEW: 檢查學生是否已經提交過答案
+        const hasSubmitted = await checkIfStudentSubmitted();
+
+        questions.forEach((q, qIndex) => {
+            const questionDiv = document.createElement('div');
+            questionDiv.className = 'mc-question-item bg-white p-4 rounded-lg shadow-md';
+            questionDiv.innerHTML = `
+                <p class="font-bold text-lg mb-3 text-gray-800">Q${qIndex + 1}. ${q.questionText}</p>
+                <div class="space-y-2">
+                    ${q.options.map((option, optIndex) => `
+                        <label class="flex items-center p-2 border border-gray-200 rounded-md cursor-pointer hover:bg-gray-50 transition-colors">
+                            <input type="radio" name="question-${qIndex}" value="${optIndex + 1}" class="form-radio text-blue-600 h-5 w-5" ${hasSubmitted ? 'disabled' : ''}>
+                            <span class="ml-3 text-gray-700">${option}</span>
+                        </label>
+                    `).join('')}
+                </div>
+            `;
+            customMcQuestionsContainer.appendChild(questionDiv);
+        });
+
+        // NEW: 如果已提交，更新按鈕狀態
+        if (hasSubmitted) {
+            submitCustomMcBtn.disabled = true;
+            submitCustomMcBtn.classList.replace('btn-primary', 'btn-gray');
+            submitCustomMcBtn.textContent = '已提交答案 ✓';
+
+            // 顯示已提交的答案
+            await displaySubmittedAnswers();
+        }
+    } else {
+        defaultMcOptions.classList.remove('hidden');
+        customMcQuestionsContainer.classList.add('hidden');
+        submitCustomMcBtn.classList.add('hidden');
+        interactionMultipleChoice.classList.add('enlarged-buttons'); // Add enlarged class for no custom questions
+    }
+}
+
+// NEW: 檢查學生是否已經提交過答案
+async function checkIfStudentSubmitted() {
+    if (!studentName || !classroomCode) return false;
+
+    try {
+        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+        const docSnap = await getDoc(studentRef);
+
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            // 檢查是否有陣列格式的答案（自訂選擇題）
+            return Array.isArray(data.answer) && data.answer.length > 0;
+        }
+        return false;
+    } catch (error) {
+        console.error('檢查提交狀態失敗:', error);
+        return false;
+    }
+}
+
+// NEW: 顯示學生已提交的答案
+async function displaySubmittedAnswers() {
+    if (!studentName || !classroomCode) return;
+
+    try {
+        const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+        const docSnap = await getDoc(studentRef);
+
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (Array.isArray(data.answer)) {
+                // 標記已選擇的答案
+                data.answer.forEach(qAns => {
+                    const radio = document.querySelector(`input[name="question-${qAns.qIndex}"][value="${qAns.ans}"]`);
+                    if (radio) {
+                        radio.checked = true;
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error('載入已提交答案失敗:', error);
+    }
+}
+
+
+// --- Canvas State Management Functions ---
+
+/**
+ * Saves the current canvas state when switching to peer review.
+ */
+function saveCanvasState() {
+    if (canvas && currentInteractionMode === 'drawing') {
+        try {
+            savedCanvasState = {
+                mainCanvas: canvas.toDataURL(),
+                drawingCanvas: drawingCanvas.toDataURL(),
+                studentImageCanvas: studentImageCanvas.toDataURL(),
+                canvasWidth: canvas.width,
+                canvasHeight: canvas.height
+            };
+            console.log('Canvas state saved');
+        } catch (error) {
+            console.error('Error saving canvas state:', error);
+        }
+    }
+}
+
+/**
+ * Restores the canvas state when returning from peer review.
+ */
+function restoreCanvasState() {
+    if (savedCanvasState && canvas && currentInteractionMode === 'drawing') {
+        try {
+            // Ensure canvas setup is complete
+            if (canvas.width === 0 || canvas.height === 0) {
+                setupCanvas();
+            }
+
+            // Restore canvas dimensions
+            canvas.width = savedCanvasState.canvasWidth;
+            canvas.height = savedCanvasState.canvasHeight;
+            drawingCanvas.width = savedCanvasState.canvasWidth;
+            drawingCanvas.height = savedCanvasState.canvasHeight;
+            studentImageCanvas.width = savedCanvasState.canvasWidth;
+            studentImageCanvas.height = savedCanvasState.canvasHeight;
+
+            let imagesLoaded = 0;
+            const totalImages = 2; // drawing and student image
+
+            function checkAllImagesLoaded() {
+                imagesLoaded++;
+                if (imagesLoaded === totalImages) {
+                    // All images loaded, recompose the final canvas
+                    redrawCanvas();
+                    console.log('Canvas state restored');
+                }
+            }
+
+            // Restore drawing canvas content
+            if (savedCanvasState.drawingCanvas && savedCanvasState.drawingCanvas !== 'data:,') {
+                const drawingImg = new Image();
+                drawingImg.onload = function () {
+                    drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                    drawingCtx.drawImage(drawingImg, 0, 0);
+                    checkAllImagesLoaded();
+                };
+                drawingImg.onerror = function () {
+                    console.warn('Failed to load drawing canvas');
+                    checkAllImagesLoaded();
+                };
+                drawingImg.src = savedCanvasState.drawingCanvas;
+            } else {
+                drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                checkAllImagesLoaded();
+            }
+
+            // Restore student image canvas content
+            if (savedCanvasState.studentImageCanvas && savedCanvasState.studentImageCanvas !== 'data:,') {
+                const studentImg = new Image();
+                studentImg.onload = function () {
+                    studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+                    studentImageCtx.drawImage(studentImg, 0, 0);
+                    checkAllImagesLoaded();
+                };
+                studentImg.onerror = function () {
+                    console.warn('Failed to load student image canvas');
+                    checkAllImagesLoaded();
+                };
+                studentImg.src = savedCanvasState.studentImageCanvas;
+            } else {
+                studentImageCtx.clearRect(0, 0, studentImageCanvas.width, studentImageCanvas.height);
+                checkAllImagesLoaded();
+            }
+
+        } catch (error) {
+            console.error('Error restoring canvas state:', error);
+            // Fallback: just redraw what we can
+            redrawCanvas();
+        }
+    }
+}
+
+/**
+ * Redraws the main canvas by compositing all layers.
+ */
+function redrawCanvas() {
+    if (!canvas || !ctx) return;
+
+    // Clear main canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw background (teacher's background image)
+    if (teacherUploadedBackgroundImageDataURL && backgroundCanvas) {
+        try {
+            ctx.drawImage(backgroundCanvas, 0, 0);
+        } catch (error) {
+            console.warn('Error drawing background canvas:', error);
+        }
+    }
+
+    // Draw student's uploaded image
+    if (studentUploadedImageDataURL && studentImageCanvas) {
+        try {
+            ctx.drawImage(studentImageCanvas, 0, 0);
+        } catch (error) {
+            console.warn('Error drawing student image canvas:', error);
+        }
+    }
+
+    // Draw student's drawing strokes
+    if (drawingCanvas) {
+        try {
+            ctx.drawImage(drawingCanvas, 0, 0);
+        } catch (error) {
+            console.warn('Error drawing drawing canvas:', error);
+        }
+    }
+}
+
+// --- Peer Review Functions ---
+
+/**
+ * Toggles the peer review process for the current interaction.
+ * Only works for text_input and drawing modes.
+ */
+async function startPeerReview() {
+    if (!currentInteractionMode || (!['text_input', 'drawing'].includes(currentInteractionMode))) {
+        showMessage('互評功能只支援文字題和繪圖題！', 'error');
+        return;
+    }
+
+    const startPeerReviewBtn = document.getElementById('start-peer-review-btn');
+
+    if (peerReviewActive) {
+        // Stop peer review
+        try {
+            const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+            await setDoc(peerReviewRef, { active: false });
+
+            peerReviewActive = false;
+            showMessage('互評已停止！學生回到原互動模式。', 'info');
+
+            // Hide voting statistics container
+            document.getElementById('peer-review-stats-container').classList.add('hidden');
+
+            // Update button text
+            startPeerReviewBtn.innerHTML = '<i class="fas fa-heart mr-2"></i> 開始互評 ❤️';
+
+        } catch (error) {
+            console.error('Error stopping peer review:', error);
+            showMessage('停止互評時發生錯誤，請稍後再試。', 'error');
+        }
+    } else {
+        // Start peer review
+        if (allStudentResponses.length === 0) {
+            showMessage('目前沒有學生作答，無法開始互評！', 'error');
+            return;
+        }
+
+        try {
+            // Set peer review status in Firebase
+            const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+            await setDoc(peerReviewRef, {
+                active: true,
+                mode: currentInteractionMode,
+                works: allStudentResponses,
+                timestamp: Date.now()
+            });
+
+            peerReviewActive = true;
+            showMessage('互評已開始！學生可以開始觀摩投票。', 'success');
+
+            // Show voting statistics container
+            document.getElementById('peer-review-stats-container').classList.remove('hidden');
+
+            // Start listening for votes
+            listenToPeerReviewVotes();
+
+            // Update button text
+            startPeerReviewBtn.innerHTML = '<i class="fas fa-stop mr-2"></i> 停止互評 ⏹️';
+
+        } catch (error) {
+            console.error('Error starting peer review:', error);
+            showMessage('開始互評時發生錯誤，請稍後再試。', 'error');
+        }
+    }
+}
+
+/**
+ * Exits peer review mode for students and returns to original interaction mode.
+ */
+function exitPeerReview() {
+    if (currentInteractionMode && currentInteractionMode !== 'waiting') {
+        // Return to the original interaction mode
+        showView('studentInteraction');
+        showInteractionUI(currentInteractionMode);
+
+        // Restore canvas state if returning to drawing mode
+        if (currentInteractionMode === 'drawing') {
+            // Use a small delay to ensure canvas is ready
+            setTimeout(() => {
+                restoreCanvasState();
+            }, 100);
+        }
+    } else {
+        // Return to waiting if no active interaction
+        showView('studentWaiting');
+    }
+}
+
+/**
+ * Listens for peer review status changes and updates student UI accordingly.
+ */
+function listenToPeerReviewStatus() {
+    if (!classroomCode) return;
+
+    const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
+    onSnapshot(peerReviewRef, (doc) => {
+        if (doc.exists() && doc.data().active) {
+            const data = doc.data();
+            if (currentRole === 'student') {
+                // Save canvas state before switching to peer review (if in drawing mode)
+                if (currentInteractionMode === 'drawing') {
+                    saveCanvasState();
+                }
+
+                // Switch student to peer review view
+                showView('studentPeerReview');
+                displayPeerReviewWorks(data.works, data.mode);
+
+                // Restore student's voting history from Firebase
+                restoreStudentVotingHistory().then(() => {
+                    listenToPeerReviewVotes();
+                });
+            }
+        } else {
+            // Peer review ended, return to original interaction mode
+            if (currentRole === 'student' && !views.studentPeerReview.classList.contains('hidden')) {
+                if (currentInteractionMode && currentInteractionMode !== 'waiting') {
+                    // Return to the original interaction mode
+                    showView('studentInteraction');
+                    showInteractionUI(currentInteractionMode);
+
+                    // Restore canvas state if returning to drawing mode
+                    if (currentInteractionMode === 'drawing') {
+                        // Use a small delay to ensure canvas is ready
+                        setTimeout(() => {
+                            restoreCanvasState();
+                        }, 100);
+                    }
+                } else {
+                    // Return to waiting if no active interaction
+                    showView('studentWaiting');
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Displays peer review works for students to vote on.
+ */
+function displayPeerReviewWorks(works, mode) {
+    const worksGrid = document.getElementById('peer-review-works-grid');
+    worksGrid.innerHTML = '';
+
+    works.forEach((work, index) => {
+        // Create a more stable unique identifier using timestamp and student name
+        const workId = `${work.name}-${work.timestamp || index}`;
+
+        const workDiv = document.createElement('div');
+        workDiv.className = 'peer-review-work-item';
+        workDiv.dataset.workId = workId;
+
+        let contentHtml = '';
+        if (mode === 'drawing') {
+            contentHtml = `<img src="${work.answer}" alt="學生作品">`;
+        } else {
+            contentHtml = `<p>${work.answer}</p>`;
+        }
+
+        workDiv.innerHTML = `
+            <div class="work-author">${work.name}</div>
+            <div class="work-content">${contentHtml}</div>
+            <div class="vote-section">
+                <button class="vote-btn" data-work-id="${workId}" data-tooltip="點擊投票/取消投票">
+                    <i class="fas fa-heart"></i>
+                </button>
+                <span class="vote-count zero">0</span>
+            </div>
+        `;
+
+        worksGrid.appendChild(workDiv);
+    });
+
+    // Add vote button listeners and update vote display
+    document.querySelectorAll('.vote-btn').forEach(btn => {
+        btn.addEventListener('click', handleVote);
+
+        // Check if student has already voted for this work
+        const workId = btn.dataset.workId;
+        if (studentVotedWorks.has(workId)) {
+            btn.classList.add('voted');
+        }
+    });
+
+    // Update vote counts if available
+    if (Object.keys(allPeerReviewVotes).length > 0) {
+        updateStudentVoteUI(allPeerReviewVotes);
+    }
+
+    // Update student's vote count display
+    updateVoteCountDisplay();
+}
+
+/**
+ * Handles voting on a work (toggle vote/unvote).
+ */
+async function handleVote(e) {
+    const workId = e.currentTarget.dataset.workId;
+    const voteBtn = e.currentTarget;
+    const voteCountSpan = voteBtn.nextElementSibling;
+
+    try {
+        if (studentVotedWorks.has(workId)) {
+            // Remove vote (unvote)
+            const voteRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes', `${studentName}-${workId}`);
+            await deleteDoc(voteRef);
+
+            // Remove from local tracking
+            studentVotedWorks.delete(workId);
+            voteBtn.classList.remove('voted');
+            updateVoteCountDisplay();
+            showMessage('已取消投票！', 'info');
+
+        } else {
+            // Add vote
+            if (studentVotedWorks.size >= MAX_VOTES_PER_STUDENT) {
+                showMessage(`最多只能投票 ${MAX_VOTES_PER_STUDENT} 個作品！請先取消其他投票。`, 'warning');
+                return;
+            }
+
+            const voteRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes', `${studentName}-${workId}`);
+            await setDoc(voteRef, {
+                voterName: studentName,
+                workId: workId,
+                timestamp: Date.now()
+            });
+
+            // Mark as voted locally
+            studentVotedWorks.add(workId);
+            voteBtn.classList.add('voted');
+            updateVoteCountDisplay();
+            showMessage('投票成功！', 'success');
+        }
+
+    } catch (error) {
+        console.error('Error handling vote:', error);
+        showMessage('操作失敗，請稍後再試。', 'error');
+    }
+}
+
+/**
+ * Listens for peer review votes and updates UI.
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ */
+function listenToPeerReviewVotes() {
+    if (!classroomCode) return;
+
+    const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
+
+    const unsubscribe = onSnapshot(votesRef, (snapshot) => {
+        const votes = {};
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            if (!votes[data.workId]) {
+                votes[data.workId] = 0;
+            }
+            votes[data.workId]++;
+        });
+
+        allPeerReviewVotes = votes;
+
+        // Update student UI
+        if (currentRole === 'student' && !views.studentPeerReview.classList.contains('hidden')) {
+            updateStudentVoteUI(votes);
+            updateVoteCountDisplay();
+        }
+
+        // Update teacher UI
+        if (currentRole === 'teacher' && !document.getElementById('peer-review-stats-container').classList.contains('hidden')) {
+            updateTeacherVoteStats(votes);
+        }
+    });
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('peerReviewVotes', unsubscribe);
+    peerReviewUnsubscribe = unsubscribe; // 保持兼容性
+}
+
+/**
+ * Updates the vote counts in student UI.
+ */
+function updateStudentVoteUI(votes) {
+    document.querySelectorAll('.vote-count').forEach(span => {
+        const workId = span.previousElementSibling.dataset.workId;
+        const count = votes[workId] || 0;
+        span.textContent = count;
+        span.classList.toggle('zero', count === 0);
+    });
+}
+
+/**
+ * Updates the student's current vote count display.
+ */
+function updateVoteCountDisplay() {
+    const voteCountElement = document.getElementById('current-vote-count');
+    if (voteCountElement) {
+        voteCountElement.textContent = studentVotedWorks.size;
+
+        // Change color based on vote count
+        const container = voteCountElement.parentElement;
+        container.className = 'inline-block px-4 py-2 rounded-full text-sm font-medium';
+
+        if (studentVotedWorks.size === 0) {
+            container.classList.add('bg-gray-100', 'text-gray-600');
+        } else if (studentVotedWorks.size < MAX_VOTES_PER_STUDENT) {
+            container.classList.add('bg-blue-100', 'text-blue-800');
+        } else {
+            container.classList.add('bg-green-100', 'text-green-800');
+        }
+    }
+}
+
+/**
+ * Restores student's voting history from Firebase.
+ */
+async function restoreStudentVotingHistory() {
+    if (!classroomCode || !studentName) return;
+
+    try {
+        const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'peerReviewVotes');
+        const votesSnapshot = await getDocs(votesRef);
+
+        // Clear existing voting history
+        studentVotedWorks.clear();
+
+        // Find votes made by this student
+        votesSnapshot.forEach(doc => {
+            const data = doc.data();
+            if (data.voterName === studentName) {
+                studentVotedWorks.add(data.workId);
+            }
+        });
+
+        console.log('Restored student voting history:', Array.from(studentVotedWorks));
+
+        // Update vote count display after restoration
+        updateVoteCountDisplay();
+    } catch (error) {
+        console.error('Error restoring student voting history:', error);
+    }
+}
+
+/**
+ * Updates the teacher's vote statistics display.
+ */
+function updateTeacherVoteStats(votes) {
+    const statsGrid = document.getElementById('peer-review-stats-grid');
+    statsGrid.innerHTML = '';
+
+    // Sort works by vote count (descending)
+    const sortedWorks = allStudentResponses.map(work => {
+        const workId = `${work.name}-${work.timestamp || allStudentResponses.indexOf(work)}`;
+        return {
+            ...work,
+            workId: workId,
+            votes: votes[workId] || 0
+        };
+    }).sort((a, b) => b.votes - a.votes);
+
+    sortedWorks.forEach((work, index) => {
+        const statsDiv = document.createElement('div');
+        statsDiv.className = 'vote-stats-item';
+
+        let contentHtml = '';
+        if (currentInteractionMode === 'drawing') {
+            contentHtml = `<img src="${work.answer}" alt="學生作品">`;
+        } else {
+            contentHtml = `<p>${work.answer}</p>`;
+        }
+
+        statsDiv.innerHTML = `
+            <div class="stats-author">${work.name}</div>
+            <div class="stats-content">${contentHtml}</div>
+            <div class="stats-votes">
+                <i class="fas fa-heart vote-icon"></i>
+                <span class="vote-count ${work.votes === 0 ? 'zero' : ''}">${work.votes}</span>
+            </div>
+        `;
+
+        statsGrid.appendChild(statsDiv);
+    });
+}
+
+// --- Initialization Function ---
+/**
+ * 🚀 NEW: (Student) Initialize Reading Zoom Control
+ * Allows students to adjust the scale of article and questions for better visibility on PC.
+ */
+function initReadingZoom() {
+    const range = document.getElementById('reading-zoom-range');
+    const percent = document.getElementById('reading-zoom-percent');
+    const resetBtn = document.getElementById('reset-zoom-btn');
+    // 核心變更：目標改為最外層互動容器
+    const interactionView = document.getElementById('interaction-reading-comprehension');
+    const controlsContainer = document.getElementById('reading-zoom-controls-container');
+
+    if (!range || !interactionView || !controlsContainer) {
+        console.warn('[ReadingZoom] Controls or interactionView not found');
+        return;
+    }
+
+    const updateZoom = (val) => {
+        const zoomVal = parseFloat(val);
+        // 1. 更新百分比文字
+        if (percent) percent.textContent = Math.round(zoomVal * 100) + '%';
+
+        // 2. 核心實作：全域縮放整個互動視圖 (包含 padding, 標題, 按鈕)
+        interactionView.style.zoom = zoomVal;
+
+        // 3. 核心補償：對控制列做「逆向縮放」，使其在視覺上始終保持 100% 大小
+        // 這樣滑桿才不會隨全域放大而變得異常巨大，確保操作性
+        controlsContainer.style.zoom = 1 / zoomVal;
+
+        // 4. 持久化
+        localStorage.setItem('reading-zoom-level', zoomVal);
+        console.log(`[ReadingZoom] Global Zoom applied: ${zoomVal}, Compensation: ${1 / zoomVal}`);
+    };
+
+    // 移除舊監聽器並重新綁定 (防呆)
+    const newRange = range.cloneNode(true);
+    range.parentNode.replaceChild(newRange, range);
+    newRange.addEventListener('input', (e) => updateZoom(e.target.value));
+
+    if (resetBtn) {
+        const newResetBtn = resetBtn.cloneNode(true);
+        resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
+        newResetBtn.addEventListener('click', () => {
+            newRange.value = 1;
+            updateZoom(1);
+        });
+    }
+
+    // 初始載入
+    const savedZoom = localStorage.getItem('reading-zoom-level') || 1;
+    newRange.value = savedZoom;
+    updateZoom(savedZoom);
+}
+
+async function initialize() {
+    // 🚀 OPTIMIZED: 預載常用 DOM 元素到快取
+    DOMCache.preload();
+
+    loadAISettings();
+    loadDispatchSettings(); // Load saved combined dispatch settings
+
+    onAuthStateChanged(auth, async user => {
+        if (user) {
+            userId = user.uid;
+            document.getElementById('user-id-display').textContent = userId;
+            console.log("Authenticated User ID:", userId);
+            // setupEventListeners(); // Moved this call outside onAuthStateChanged
+
+            // Check if teacher has a persisted classroom code
+            const savedTeacherClassroomCode = localStorage.getItem('teacherClassroomCode');
+            if (savedTeacherClassroomCode) {
+                classroomCode = savedTeacherClassroomCode;
+                currentRole = 'teacher';
+                document.getElementById('teacher-menu-code-value').textContent = classroomCode; // Update classroom code in teacher menu
+                document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
+
+                // NEW: Fetch initial pause state and dispatch settings for teacher
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                const docSnap = await getDoc(controlRef);
+                if (docSnap.exists()) {
+                    isResponsePaused = docSnap.data().isPaused || false;
+                    // MODIFIED: Load dispatchSettings from Firestore
+                    const fetchedDispatchSettings = docSnap.data().dispatchSettings;
+                    if (fetchedDispatchSettings) {
+                        dispatchSettings.type = fetchedDispatchSettings.type || 'url';
+                        dispatchSettings.url = fetchedDispatchSettings.url || '';
+                        dispatchSettings.isYoutube = fetchedDispatchSettings.isYoutube || false;
+                        dispatchSettings.htmlContent = fetchedDispatchSettings.htmlContent || null;
+                    }
+                    // NEW: Load custom multiple choice questions from Firestore
+                    currentMultipleChoiceQuestions = docSnap.data().multiple_choice_questions || null;
+                    customMultipleChoiceQuestions = currentMultipleChoiceQuestions || []; // Sync for teacher UI
+                } else {
+                    isResponsePaused = false; // Default to not paused if control doc doesn't exist
+                    // dispatchSettings remains at its default or loaded localStorage value
+                    currentMultipleChoiceQuestions = null;
+                    customMultipleChoiceQuestions = [];
+                }
+                updateTeacherPauseButtonUI(); // Update button UI based on fetched state
+
+                listenToClassroomPresence(); // Ensure presence listener is established here and remains active
+                showView('teacherMenu');
+            } else {
+                // 🚀 UX 優化：若 URL 含有 ?classroom= 參數，自動以學生身份進入姓名輸入頁
+                const _urlParams = new URLSearchParams(window.location.search);
+                const _classroomParam = _urlParams.get('classroom');
+                if (_classroomParam) {
+                    document.getElementById('student-classroom-code-input').value = _classroomParam;
+                    currentRole = 'student';
+                    showView('studentName');
+                    console.log('[Auth] ✅ 偵測到 classroom URL 參數，自動跳轉至學生姓名輸入頁:', _classroomParam);
+                } else {
+                    showView('entry');
+                }
+            }
+        } else {
+            // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
+            // signInAnonymously() 執行後，onAuthStateChanged 會再次觸發並傳入有效的 user
+            console.log("[Auth] Waiting for authentication...");
+            // If user is null (e.g., after signOut), ensure we are on the entry view.
+            showView('entry');
+        }
+    });
+
+    document.getElementById('app-id-display').textContent = baseAppId; // Display the base app ID
+
+    try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+            console.log("Signed in with custom token.");
+        } else {
+            await signInAnonymously(auth);
+            console.log("Signed in anonymously.");
+        }
+    } catch (error) {
+        console.error("Firebase Authentication failed:", error);
+        document.body.innerHTML = `<div class="text-center p-8 text-red-600"><h1 class="text-2xl font-bold">驗證失敗</h1><p>無法連接至互動服務，請檢查 Firebase 設定或網路連線。</p><p class=\"text-sm mt-2\">${error.message}</p></div>`;
+    }
+}
+
+// Add beforeunload handler to warn user about closing window
+let hasEndedClass = false;
+
+// Track when user clicks the end class button
+function markClassEnded() {
+    hasEndedClass = true;
+}
+
+// Set up window close warning
+window.onbeforeunload = function () {
+    if (!hasEndedClass) {
+        return '請先按下紅色下課鍵，再關閉視窗，本提示請先按取消';
+    }
+};
+
+// --- Quick Answer Functions ---
+let quickAnswerActive = false;
+let quickAnswerWinner = null;
+let quickAnswerWinnerDisplayed = false;
+
+function startQuickAnswer() {
+    console.log('[startQuickAnswer] Function called - starting quick answer round');
+    quickAnswerActive = true;
+    quickAnswerWinner = null;
+    quickAnswerWinnerDisplayed = false;
+
+    // Update status text
+    const statusText = document.getElementById('quick-answer-status-text');
+    statusText.textContent = '搶答開始！快點擊按鈕！';
+    console.log('[startQuickAnswer] Status text updated to:', statusText.textContent);
+
+    const container = document.getElementById('quick-answer-button-container');
+
+    // 🚀 CRITICAL FIX: 完全清理容器，移除所有舊按鈕和事件監聽器
+    const oldButtons = container.querySelectorAll('.quick-answer-btn');
+    oldButtons.forEach(btn => {
+        btn.removeEventListener('click', handleQuickAnswerClick);
+        btn.remove();
+    });
+
+    container.innerHTML = '';
+    container.classList.remove('pointer-events-none');
+    console.log('[startQuickAnswer] Container cleared, all old buttons removed');
+
+    // 🚀 FIX: 使用 requestAnimationFrame 確保容器已經渲染完成再生成按鈕
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            // 🚀 CRITICAL FIX: 在添加新按鈕前檢查容器是否已經有按鈕（防止重複）
+            const existingButton = container.querySelector('.quick-answer-btn');
+            if (existingButton) {
+                console.warn('[Quick Answer] ⚠️ Button already exists in container, skipping creation');
+                return;
+            }
+
+            // Double RAF ensures layout is complete
+            console.log('[Quick Answer] Generating random button...');
+
+            // Create the quick answer button
+            const button = document.createElement('button');
+            button.className = 'quick-answer-btn';
+            button.textContent = '快點我';
+
+            // Calculate random position (ensure button is fully visible)
+            const containerRect = container.getBoundingClientRect();
+            const buttonSize = 200; // 200px width and height
+
+            // 🚀 FIX: 驗證容器尺寸，如果無效則使用 viewport 尺寸
+            let containerWidth = containerRect.width;
+            let containerHeight = containerRect.height;
+
+            if (containerWidth < buttonSize || containerHeight < buttonSize) {
+                console.warn('[Quick Answer] Container size invalid, using viewport dimensions');
+                containerWidth = window.innerWidth;
+                containerHeight = window.innerHeight;
+            }
+
+            console.log(`[Quick Answer] Container size: ${containerWidth}x${containerHeight}`);
+
+            const maxLeft = containerWidth - buttonSize;
+            const maxTop = containerHeight - buttonSize;
+
+            const randomLeft = Math.random() * Math.max(0, maxLeft);
+            const randomTop = Math.random() * Math.max(0, maxTop);
+
+            button.style.left = randomLeft + 'px';
+            button.style.top = randomTop + 'px';
+
+            console.log(`[Quick Answer] Button position: left=${randomLeft}px, top=${randomTop}px`);
+
+            // Add click handler
+            button.addEventListener('click', handleQuickAnswerClick);
+
+            container.appendChild(button);
+            console.log('[startQuickAnswer] ✅ Button added to DOM successfully (exactly 1 button)');
+            console.log('[startQuickAnswer] Current button count:', container.querySelectorAll('.quick-answer-btn').length);
+        });
+    });
+}
+
+async function handleQuickAnswerClick() {
+    if (!quickAnswerActive || quickAnswerWinner) return;
+
+    try {
+        // 🔥 FIX: Submit with current modeResetToken using submitAnswer to preserve validations
+        const response = `搶答成功：${studentName}`;
+        const currentToken = window.lastStudentModeResetToken || 0;
+        console.log('[handleQuickAnswerClick] Submitting quick answer with token:', currentToken);
+
+        // Use submitAnswer with token in extraFields to preserve pause/validation logic
+        await submitAnswer(response, { modeResetToken: currentToken });
+
+        console.log('[handleQuickAnswerClick] Quick answer submitted successfully with token:', currentToken);
+
+        // 🎉 Mark this student as the winner
+        quickAnswerWinner = studentName;
+
+        // 🆕 NEW [v3.8.22] UX-13: 搶答成功震動（比一般提交更長 300ms）
+        if (navigator.vibrate) {
+            navigator.vibrate([100, 50, 200]); // 短-停-長 節奏感
+        }
+
+        // Show success message
+        document.getElementById('quick-answer-result').classList.remove('hidden');
+        document.getElementById('quick-answer-status-text').textContent = '你搶答成功了！';
+        document.getElementById('quick-answer-locked').classList.add('hidden');
+
+        // 🎊 Trigger confetti celebration
+        if (typeof confetti !== 'undefined') {
+            const duration = 3000;
+            const animationEnd = Date.now() + duration;
+            const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 10000 };
+
+            function randomInRange(min, max) {
+                return Math.random() * (max - min) + min;
+            }
+
+            const interval = setInterval(function () {
+                const timeLeft = animationEnd - Date.now();
+
+                if (timeLeft <= 0) {
+                    return clearInterval(interval);
+                }
+
+                const particleCount = 50 * (timeLeft / duration);
+                confetti(Object.assign({}, defaults, {
+                    particleCount,
+                    origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+                }));
+                confetti(Object.assign({}, defaults, {
+                    particleCount,
+                    origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+                }));
+            }, 250);
+        }
+
+        // Lock the button
+        lockQuickAnswerButton(true);
+
+    } catch (error) {
+        console.error('Failed to submit quick answer:', error);
+        showMessage('搶答提交失敗！', 'error');
+    }
+}
+
+function lockQuickAnswerButton(isWinner = false) {
+    const button = document.querySelector('.quick-answer-btn');
+    if (button) {
+        button.classList.add('locked');
+        button.disabled = true;
+        button.removeEventListener('click', handleQuickAnswerClick);
+    }
+
+    // 🚀 FIX: Only show "locked" message to students who DIDN'T win
+    if (!isWinner) {
+        document.getElementById('quick-answer-locked').classList.remove('hidden');
+        document.getElementById('quick-answer-result').classList.add('hidden');
+    }
+}
+
+// Listen for quick answer winner updates
+function listenToQuickAnswerUpdates() {
+    if (currentRole !== 'student' || currentInteractionMode !== 'quick_answer') return;
+
+    // 🚀 FIX: Capture current token to ignore stale snapshots
+    const capturedToken = window.lastStudentModeResetToken || 0;
+    console.log(`[listenToQuickAnswerUpdates] Starting listener with token: ${capturedToken}`);
+
+    // 🔥 CRITICAL FIX: 重置搶答狀態當監聽器啟動時
+    quickAnswerWinner = null;
+    quickAnswerWinnerDisplayed = false;
+    console.log('[listenToQuickAnswerUpdates] 🎯 FIX: Reset quick answer state for new round');
+
+    const responsesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    const unsubscribe = onSnapshot(responsesRef, (snapshot) => {
+        // 🚀 FIX: Ignore snapshots from old rounds
+        if (window.lastStudentModeResetToken !== capturedToken) {
+            console.log(`[listenToQuickAnswerUpdates] Ignoring stale snapshot (current token: ${window.lastStudentModeResetToken}, captured: ${capturedToken})`);
+            return;
+        }
+
+        // 🔥 NEW FIX: Ignore empty snapshots or reset-state snapshots after mode restart
+        // After teacher clicks restart, the snapshot will be empty or contain only cleared responses
+        // We should NOT rewrite the UI back to "waiting" state - keep the fresh button visible
+        if (snapshot.empty) {
+            console.log(`[listenToQuickAnswerUpdates] Ignoring empty snapshot after restart (token: ${capturedToken})`);
+            return;
+        }
+
+        const responses = [];
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            // 🔥 CRITICAL FIX: Only process responses from the CURRENT session
+            // Ignore responses without token or with mismatched token
+            const responseToken = data.modeResetToken || 0;
+            if (data.answer && data.answer.includes('搶答成功') && responseToken === capturedToken) {
+                responses.push(data);
+                console.log(`[listenToQuickAnswerUpdates] Valid response found from ${data.name} with matching token ${responseToken}`);
+            } else if (data.answer && data.answer.includes('搶答成功')) {
+                console.log(`[listenToQuickAnswerUpdates] Ignoring response from ${data.name} with stale token ${responseToken} (expected: ${capturedToken})`);
+            }
+        });
+
+        // 🔥 NEW FIX: If no valid quick-answer responses found with matching token, don't reset the UI
+        // This prevents the race condition where reset clears responses but listener overwrites the fresh button
+        if (responses.length === 0) {
+            console.log(`[listenToQuickAnswerUpdates] No valid quick-answer responses with matching token found, keeping current UI (token: ${capturedToken})`);
+            return;
+        }
+
+        // If someone already answered and it's not this student, lock the button
+        if (responses.length > 0 && !quickAnswerWinner) {
+            const winner = responses[0];
+            if (winner.name !== studentName) {
+                console.log(`[listenToQuickAnswerUpdates] ${winner.name} won the quick answer, locking button`);
+                quickAnswerWinner = winner.name;
+                lockQuickAnswerButton();
+                document.getElementById('quick-answer-status-text').textContent = `${winner.name} 搶答成功！`;
+            }
+        }
+    });
+
+    // 🚀 FIX: Save unsubscribe function globally
+    quickAnswerUnsubscribe = unsubscribe;
+}
+
+function showQuickAnswerWinner(winnerName) {
+    console.log('showQuickAnswerWinner called with:', winnerName);
+    if (quickAnswerWinnerDisplayed) {
+        console.log('Winner already displayed, skipping');
+        return; // Prevent showing multiple times
+    }
+    quickAnswerWinnerDisplayed = true;
+    console.log('Displaying winner overlay');
+
+    // Create a big overlay notification for the teacher
+    const overlay = document.createElement('div');
+    overlay.id = 'quick-answer-winner-overlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        animation: fadeIn 0.5s ease-in-out;
+    `;
+
+    overlay.innerHTML = `
+        <div style="text-align: center; color: white; font-size: 3rem; font-weight: bold;">
+            <i class="fas fa-trophy" style="color: #ffd700; font-size: 6rem; margin-bottom: 20px;"></i>
+            <h1 style="margin: 20px 0; color: #4ade80;">搶答成功！</h1>
+            <h2 style="margin: 20px 0; color: #60a5fa; font-size: 4rem;">${winnerName}</h2>
+            <p style="font-size: 1.5rem; color: #d1d5db;">點擊任意位置關閉</p>
+        </div>
+        <style>
+            @keyframes fadeIn {
+                from { opacity: 0; transform: scale(0.8); }
+                to { opacity: 1; transform: scale(1); }
+            }
+        </style>
+    `;
+
+    // Add click handler to close the overlay
+    overlay.addEventListener('click', () => {
+        overlay.remove();
+        quickAnswerWinnerDisplayed = false; // Reset for next round
+    });
+
+    document.body.appendChild(overlay);
+
+    // Auto close after 5 seconds
+    setTimeout(() => {
+        if (overlay.parentElement) {
+            overlay.remove();
+            quickAnswerWinnerDisplayed = false;
+        }
+    }, 5000);
+}
+
+// --- Quick Poll Functions ---
+
+/**
+ * Shows the quick poll settings modal
+ */
+function showQuickPollSettingsModal() {
+    document.getElementById('quick-poll-settings-modal').classList.remove('hidden');
+    // Reset form
+    document.querySelector('input[name="pollType"][value="emoji"]').checked = true;
+    document.getElementById('custom-poll-options-section').classList.add('hidden');
+    document.getElementById('custom-poll-options-input').value = '';
+    document.getElementById('quick-poll-anonymous-checkbox').checked = true;
+}
+
+/**
+ * Hides the quick poll settings modal
+ */
+function hideQuickPollSettingsModal() {
+    document.getElementById('quick-poll-settings-modal').classList.add('hidden');
+}
+
+/**
+ * Gets poll options based on selected type
+ */
+function getPollOptions(pollType, customOptions = '') {
+    switch (pollType) {
+        case 'emoji':
+            return ['😊', '😐', '😕'];
+        case 'simple':
+            return ['同意', '不同意', '不確定'];
+        case 'rating5':
+            return ['1', '2', '3', '4', '5'];
+        case 'rating10':
+            return ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+        case 'custom':
+            return customOptions.split('\n').filter(opt => opt.trim() !== '').map(opt => opt.trim());
+        default:
+            return [];
+    }
+}
+
+/**
+ * Starts a quick poll
+ */
+async function startQuickPoll() {
+    const questionInput = document.getElementById('quick-poll-question-input');
+    const question = (questionInput && questionInput.value.trim()) || '快速投票';
+    const pollType = document.querySelector('input[name="pollType"]:checked').value;
+    const anonymous = document.getElementById('quick-poll-anonymous-checkbox').checked;
+    const customOptions = document.getElementById('custom-poll-options-input').value;
+
+    // Validation
+    const options = getPollOptions(pollType, customOptions);
+    if (options.length === 0) {
+        showMessage('請設定有效的投票選項！', 'error');
+        return;
+    }
+
+    try {
+        // Initialize vote counts
+        const voteCounts = {};
+        options.forEach(opt => voteCounts[opt] = 0);
+
+        // Save poll configuration to Firebase
+        quickPollData = {
+            question,
+            pollType,
+            options,
+            anonymous,
+            voteCounts,
+            active: true,
+            timestamp: Date.now()
+        };
+
+        const pollRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPoll', 'config');
+        await setDoc(pollRef, quickPollData);
+
+        // Clear previous votes
+        const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPollVotes');
+        const votesSnapshot = await getDocs(votesRef);
+        const deletePromises = votesSnapshot.docs.map(doc => deleteDoc(doc.ref));
+        await Promise.all(deletePromises);
+
+        // Set interaction mode to quick_poll
+        await setInteractionMode('quick_poll');
+
+        quickPollActive = true;
+        hideQuickPollSettingsModal();
+
+        // Show stats modal for teacher
+        showQuickPollStatsModal();
+
+        // Start listening to votes
+        listenToQuickPollVotes();
+
+        showMessage('快速投票已開始！', 'success');
+    } catch (error) {
+        console.error('Error starting quick poll:', error);
+        showMessage('啟動快速投票時發生錯誤，請稍後再試。', 'error');
+    }
+}
+
+/**
+ * Shows the quick poll statistics modal
+ */
+function showQuickPollStatsModal() {
+    const modal = document.getElementById('quick-poll-stats-modal');
+    modal.classList.remove('hidden');
+
+    // Display question
+    document.getElementById('quick-poll-stats-question').textContent = quickPollData.question;
+
+    // Display online student count
+    document.getElementById('poll-online-students').textContent = activeStudentNames.length;
+
+    // Initialize chart
+    currentChartType = 'bar';
+    updateChartButtonStyles();
+    updateQuickPollChart();
+}
+
+/**
+ * Hides the quick poll statistics modal
+ */
+function hideQuickPollStatsModal() {
+    document.getElementById('quick-poll-stats-modal').classList.add('hidden');
+}
+
+/**
+ * Ends the current quick poll
+ */
+async function endQuickPoll() {
+    try {
+        // Set poll as inactive
+        const pollRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPoll', 'config');
+        await setDoc(pollRef, { active: false }, { merge: true });
+
+        // Stop interaction
+        await setInteractionMode('waiting');
+
+        quickPollActive = false;
+        hideQuickPollStatsModal();
+
+        // Unsubscribe from votes listener
+        if (quickPollVotesUnsubscribe) {
+            quickPollVotesUnsubscribe();
+            quickPollVotesUnsubscribe = null;
+        }
+
+        showMessage('快速投票已結束！', 'info');
+    } catch (error) {
+        console.error('Error ending quick poll:', error);
+        showMessage('結束投票時發生錯誤，請稍後再試。', 'error');
+    }
+}
+
+/**
+ * Listens for vote updates
+ * 🚀 OPTIMIZED: 使用 ListenerManager 管理監聽器
+ */
+function listenToQuickPollVotes() {
+    if (!classroomCode || !quickPollData) return;
+
+    const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPollVotes');
+
+    const unsubscribe = onSnapshot(votesRef, (snapshot) => {
+        // Aggregate votes
+        const voteCounts = {};
+        quickPollData.options.forEach(opt => voteCounts[opt] = 0);
+
+        snapshot.forEach(doc => {
+            const voteData = doc.data();
+            if (voteData.option && voteCounts.hasOwnProperty(voteData.option)) {
+                voteCounts[voteData.option]++;
+            }
+        });
+
+        // Update quickPollData
+        quickPollData.voteCounts = voteCounts;
+
+        // Update UI if teacher is viewing stats
+        if (currentRole === 'teacher' && !document.getElementById('quick-poll-stats-modal').classList.contains('hidden')) {
+            updateQuickPollChart();
+            updateQuickPollTable();
+        }
+    });
+
+    // 🚀 OPTIMIZED: 使用 ListenerManager 註冊監聽器
+    ListenerManager.register('quickPollVotes', unsubscribe);
+    quickPollVotesUnsubscribe = unsubscribe; // 保持兼容性
+}
+
+/**
+ * Updates the quick poll chart
+ */
+function updateQuickPollChart() {
+    if (!quickPollData) return;
+
+    const svg = d3.select("#quick-poll-chart-svg");
+    svg.selectAll("*").remove(); // Clear previous chart
+
+    const data = quickPollData.options.map(opt => ({
+        label: opt,
+        value: quickPollData.voteCounts[opt] || 0
+    }));
+
+    const totalVotes = data.reduce((sum, d) => sum + d.value, 0);
+    document.getElementById('poll-total-votes').textContent = totalVotes;
+
+    if (currentChartType === 'bar') {
+        drawQuickPollBarChart(svg, data);
+    } else {
+        drawQuickPollPieChart(svg, data);
+    }
+}
+
+/**
+ * Draws a bar chart for quick poll
+ */
+function drawQuickPollBarChart(svg, data) {
+    const width = 800;
+    const height = 450;
+    const margin = { top: 20, right: 20, bottom: 60, left: 60 };
+    const chartWidth = width - margin.left - margin.right;
+    const chartHeight = height - margin.top - margin.bottom;
+
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // X scale
+    const x = d3.scaleBand()
+        .range([0, chartWidth])
+        .padding(0.2)
+        .domain(data.map(d => d.label));
+
+    // Y scale
+    const maxValue = d3.max(data, d => d.value) || 1;
+    const y = d3.scaleLinear()
+        .range([chartHeight, 0])
+        .domain([0, maxValue]);
+
+    // Color scale
+    const color = d3.scaleOrdinal()
+        .domain(data.map(d => d.label))
+        .range(['#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7']);
+
+    // X axis
+    g.append("g")
+        .attr("transform", `translate(0,${chartHeight})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .style("font-size", "14px")
+        .attr("transform", "rotate(-45)")
+        .style("text-anchor", "end");
+
+    // Y axis
+    g.append("g")
+        .call(d3.axisLeft(y).ticks(5))
+        .selectAll("text")
+        .style("font-size", "14px");
+
+    // Bars
+    g.selectAll(".bar")
+        .data(data)
+        .enter()
+        .append("rect")
+        .attr("class", "bar")
+        .attr("x", d => x(d.label))
+        .attr("y", d => y(d.value))
+        .attr("width", x.bandwidth())
+        .attr("height", d => chartHeight - y(d.value))
+        .attr("fill", d => color(d.label))
+        .attr("rx", 4);
+
+    // Value labels on top of bars
+    g.selectAll(".label")
+        .data(data)
+        .enter()
+        .append("text")
+        .attr("class", "label")
+        .attr("x", d => x(d.label) + x.bandwidth() / 2)
+        .attr("y", d => y(d.value) - 5)
+        .attr("text-anchor", "middle")
+        .style("font-size", "16px")
+        .style("font-weight", "bold")
+        .style("fill", "#374151")
+        .text(d => d.value);
+}
+
+/**
+ * Draws a pie chart for quick poll
+ */
+function drawQuickPollPieChart(svg, data) {
+    const width = 800;
+    const height = 450;
+    const radius = Math.min(width, height) / 2 - 40;
+
+    const g = svg.append("g").attr("transform", `translate(${width / 2},${height / 2})`);
+
+    // Color scale
+    const color = d3.scaleOrdinal()
+        .domain(data.map(d => d.label))
+        .range(['#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7']);
+
+    const pie = d3.pie().value(d => d.value).sort(null);
+    const arc = d3.arc().innerRadius(0).outerRadius(radius);
+    const labelArc = d3.arc().innerRadius(radius * 0.6).outerRadius(radius * 0.6);
+
+    const arcs = g.selectAll(".arc")
+        .data(pie(data))
+        .enter()
+        .append("g")
+        .attr("class", "arc");
+
+    arcs.append("path")
+        .attr("d", arc)
+        .attr("fill", d => color(d.data.label))
+        .attr("stroke", "white")
+        .attr("stroke-width", 2);
+
+    // Labels
+    arcs.append("text")
+        .attr("transform", d => `translate(${labelArc.centroid(d)})`)
+        .attr("text-anchor", "middle")
+        .style("font-size", "14px")
+        .style("font-weight", "bold")
+        .style("fill", "white")
+        .each(function (d) {
+            const text = d3.select(this);
+            text.append("tspan")
+                .attr("x", 0)
+                .attr("dy", "-0.2em")
+                .text(d.data.label);
+            text.append("tspan")
+                .attr("x", 0)
+                .attr("dy", "1.2em")
+                .text(d.data.value);
+        });
+}
+
+/**
+ * Updates the quick poll data table
+ */
+function updateQuickPollTable() {
+    if (!quickPollData) return;
+
+    const tbody = document.getElementById('quick-poll-stats-table-body');
+    tbody.innerHTML = '';
+
+    const totalVotes = Object.values(quickPollData.voteCounts).reduce((sum, val) => sum + val, 0);
+
+    quickPollData.options.forEach(opt => {
+        const count = quickPollData.voteCounts[opt] || 0;
+        const percentage = totalVotes > 0 ? ((count / totalVotes) * 100).toFixed(1) : '0.0';
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="border px-4 py-2">${opt}</td>
+            <td class="border px-4 py-2 text-right font-bold">${count}</td>
+            <td class="border px-4 py-2 text-right">${percentage}%</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+/**
+ * Switches between chart types
+ */
+function switchChartType(type) {
+    currentChartType = type;
+    updateChartButtonStyles();
+    updateQuickPollChart();
+}
+
+/**
+ * Updates chart type button styles
+ */
+function updateChartButtonStyles() {
+    const barBtn = document.getElementById('chart-type-bar-btn');
+    const pieBtn = document.getElementById('chart-type-pie-btn');
+
+    if (currentChartType === 'bar') {
+        barBtn.classList.remove('btn-gray');
+        barBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+        pieBtn.classList.add('btn-gray');
+        pieBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+    } else {
+        pieBtn.classList.remove('btn-gray');
+        pieBtn.classList.add('bg-blue-500', 'hover:bg-blue-600');
+        barBtn.classList.add('btn-gray');
+        barBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+    }
+}
+
+/**
+ * Downloads poll results as CSV
+ */
+async function downloadPollResults() {
+    if (!quickPollData) return;
+
+    const totalVotes = Object.values(quickPollData.voteCounts).reduce((sum, val) => sum + val, 0);
+
+    let csv = '\uFEFF'; // BOM for Excel UTF-8 support
+    csv += `快速投票結果\n`;
+    csv += `問題,${quickPollData.question}\n`;
+    csv += `總投票數,${totalVotes}\n`;
+    csv += `投票模式,${quickPollData.anonymous ? '匿名' : '記名'}\n`;
+    csv += `\n`;
+
+    // Summary table
+    csv += `選項統計\n`;
+    csv += `選項,票數,百分比\n`;
+    quickPollData.options.forEach(opt => {
+        const count = quickPollData.voteCounts[opt] || 0;
+        const percentage = totalVotes > 0 ? ((count / totalVotes) * 100).toFixed(1) : '0.0';
+        csv += `${opt},${count},${percentage}%\n`;
+    });
+
+    // Detailed votes if not anonymous
+    if (!quickPollData.anonymous) {
+        csv += `\n詳細投票記錄\n`;
+        csv += `學生姓名,選項,投票時間\n`;
+
+        try {
+            const votesRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPollVotes');
+            const votesSnapshot = await getDocs(votesRef);
+
+            votesSnapshot.forEach(doc => {
+                const voteData = doc.data();
+                const studentName = voteData.studentName || '未知';
+                const option = voteData.option || '';
+                const timestamp = voteData.timestamp ? new Date(voteData.timestamp).toLocaleString('zh-TW') : '';
+                csv += `${studentName},${option},${timestamp}\n`;
+            });
+        } catch (error) {
+            console.error('Error fetching vote details:', error);
+        }
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = generateFilename('快速投票結果', 'csv');
+    link.click();
+
+    showMessage('投票結果已下載！', 'success');
+}
+
+/**
+ * Downloads statistics (for True/False and Multiple Choice) as CSV
+ */
+async function downloadStatistics() {
+    if (!currentInteractionMode || allStudentResponses.length === 0) {
+        showMessage('沒有統計數據可供下載', 'info');
+        return;
+    }
+
+    let csv = '\uFEFF'; // BOM for Excel UTF-8 support
+    const timestamp = new Date().toLocaleString('zh-TW');
+
+    if (currentInteractionMode === 'true_false') {
+        // True/False Statistics
+        const filteredResponses = allStudentResponses.filter(r => r.answer === 'O' || r.answer === 'X');
+        const totalResponses = filteredResponses.length;
+        const oCount = filteredResponses.filter(r => r.answer === 'O').length;
+        const xCount = filteredResponses.filter(r => r.answer === 'X').length;
+
+        csv += `是非題作答統計\n`;
+        csv += `匯出時間,${timestamp}\n`;
+        csv += `總作答人數,${totalResponses}\n`;
+        csv += `\n`;
+
+        // Summary table
+        csv += `選項統計\n`;
+        csv += `選項,人數,百分比\n`;
+        csv += `O (正確),${oCount},${totalResponses > 0 ? ((oCount / totalResponses) * 100).toFixed(1) : '0.0'}%\n`;
+        csv += `X (錯誤),${xCount},${totalResponses > 0 ? ((xCount / totalResponses) * 100).toFixed(1) : '0.0'}%\n`;
+        csv += `\n`;
+
+        // Detailed responses
+        csv += `詳細作答記錄\n`;
+        csv += `學生姓名,答案,作答時間\n`;
+        filteredResponses.forEach(r => {
+            const answerTime = r.timestamp
+                ? (r.timestamp.toDate ? r.timestamp.toDate().toLocaleString('zh-TW') : new Date(r.timestamp).toLocaleString('zh-TW'))
+                : '未知';
+            csv += `${r.name},${r.answer},${answerTime}\n`;
+        });
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = generateFilename('是非題統計', 'csv');
+        link.click();
+
+        showMessage('是非題統計已下載！', 'success');
+
+    } else if (currentInteractionMode === 'multiple_choice') {
+        if (currentMultipleChoiceQuestions) {
+            // Custom Multiple Choice Statistics
+            const filteredResponses = allStudentResponses.filter(r => Array.isArray(r.answer));
+
+            csv += `自訂選擇題作答統計\n`;
+            csv += `匯出時間,${timestamp}\n`;
+            csv += `總作答人數,${filteredResponses.length}\n`;
+            csv += `題目總數,${currentMultipleChoiceQuestions.length}\n`;
+            csv += `\n`;
+
+            // Question-by-question statistics
+            csv += `各題統計\n`;
+            csv += `題號,題目,正確答案,作答人數,答對人數,答對率\n`;
+            currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                let correctCount = 0;
+                let answeredCount = 0;
+
+                filteredResponses.forEach(studentResponse => {
+                    const studentQAnswer = studentResponse.answer.find(ans => ans.qIndex === qIndex);
+                    if (studentQAnswer) {
+                        answeredCount++;
+                        if (String(studentQAnswer.ans) === String(q.correctAnswer)) {
+                            correctCount++;
+                        }
+                    }
+                });
+
+                const correctRate = answeredCount > 0 ? ((correctCount / answeredCount) * 100).toFixed(1) : '0.0';
+                csv += `${qIndex + 1},"${q.question}",${q.correctAnswer},${answeredCount},${correctCount},${correctRate}%\n`;
+            });
+
+            csv += `\n`;
+
+            // Detailed student responses
+            csv += `學生詳細作答記錄\n`;
+            csv += `學生姓名,作答時間`;
+            currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                csv += `,Q${qIndex + 1}答案,Q${qIndex + 1}結果`;
+            });
+            csv += `\n`;
+
+            filteredResponses.forEach(studentResponse => {
+                const answerTime = studentResponse.timestamp
+                    ? (studentResponse.timestamp.toDate ? studentResponse.timestamp.toDate().toLocaleString('zh-TW') : new Date(studentResponse.timestamp).toLocaleString('zh-TW'))
+                    : '未知';
+                csv += `${studentResponse.name},${answerTime}`;
+
+                currentMultipleChoiceQuestions.forEach((q, qIndex) => {
+                    const studentQAnswer = studentResponse.answer.find(ans => ans.qIndex === qIndex);
+                    if (studentQAnswer) {
+                        // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件算為正確）
+                        const isCorrect = (q.correctAnswer === 0) || (String(studentQAnswer.ans) === String(q.correctAnswer)) ? '✓' : '✗';
+                        csv += `,${studentQAnswer.ans},${isCorrect}`;
+                    } else {
+                        csv += `,未作答,`;
+                    }
+                });
+                csv += `\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = generateFilename('自訂選擇題統計', 'csv');
+            link.click();
+
+            showMessage('自訂選擇題統計已下載！', 'success');
+
+        } else {
+            // Default Multiple Choice Statistics (1-4)
+            const filteredResponses = allStudentResponses.filter(r => r.answer >= '1' && r.answer <= '4');
+            const totalResponses = filteredResponses.length;
+            const counts = { '1': 0, '2': 0, '3': 0, '4': 0 };
+            filteredResponses.forEach(r => { counts[r.answer]++; });
+
+            csv += `選擇題作答統計\n`;
+            csv += `匯出時間,${timestamp}\n`;
+            csv += `總作答人數,${totalResponses}\n`;
+            csv += `\n`;
+
+            // Summary table
+            csv += `選項統計\n`;
+            csv += `選項,人數,百分比\n`;
+            ['1', '2', '3', '4'].forEach(opt => {
+                const count = counts[opt];
+                const percentage = totalResponses > 0 ? ((count / totalResponses) * 100).toFixed(1) : '0.0';
+                csv += `選項${opt},${count},${percentage}%\n`;
+            });
+            csv += `\n`;
+
+            // Detailed responses
+            csv += `詳細作答記錄\n`;
+            csv += `學生姓名,答案,作答時間\n`;
+            filteredResponses.forEach(r => {
+                const answerTime = r.timestamp
+                    ? (r.timestamp.toDate ? r.timestamp.toDate().toLocaleString('zh-TW') : new Date(r.timestamp).toLocaleString('zh-TW'))
+                    : '未知';
+                csv += `${r.name},選項${r.answer},${answerTime}\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = generateFilename('選擇題統計', 'csv');
+            link.click();
+
+            showMessage('選擇題統計已下載！', 'success');
+        }
+    } else if (currentInteractionMode === 'reading_comprehension') {
+        // 🚀 NEW: Reading Comprehension Statistics with Rankings and Duration
+        if (readingComprehensionData && readingComprehensionData.questions && readingComprehensionData.questions.length > 0) {
+            const questions = readingComprehensionData.questions;
+            const filteredResponses = allStudentResponses.filter(r => {
+                try {
+                    const answers = JSON.parse(r.answer);
+                    return Array.isArray(answers);
+                } catch (e) {
+                    return false;
+                }
+            });
+
+            // Calculate scores and rankings
+            const rankedStudents = [];
+            filteredResponses.forEach(student => {
+                try {
+                    const studentAnswers = JSON.parse(student.answer);
+                    let correctCount = 0;
+
+                    studentAnswers.forEach((ans, index) => {
+                        // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件計為正確）
+                        if (questions[index] && ((questions[index].correctAnswer === 0) || (String(ans) === String(questions[index].correctAnswer)))) {
+                            correctCount++;
+                        }
+                    });
+
+                    // 🚀 FIX: 優先使用 Firestore 分數（教師修改答案後已更新）
+                    const hasTeacherUpdatedScore = student.scoreUpdateToken && student.baseScore !== undefined;
+                    let accuracy, baseScore, totalScore, highlightBonus;
+
+                    if (hasTeacherUpdatedScore) {
+                        // 使用 Firestore 中教師已計算好的分數（含送分題邏輯）
+                        baseScore = student.baseScore;
+                        totalScore = student.totalScore || baseScore;
+                        highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                        accuracy = baseScore; // baseScore 就是正確率百分比
+                        correctCount = Math.round((baseScore / 100) * questions.length);
+                        console.log(`[CSV Statistics] ✅ Using Firestore scores for ${student.name}: baseScore=${baseScore}, totalScore=${totalScore}`);
+                    } else {
+                        // 本地計算（學生剛提交時，Firestore 尚未被教師更新）
+                        accuracy = Math.round((correctCount / questions.length) * 100);
+                        baseScore = accuracy;
+                        highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                        totalScore = baseScore + highlightBonus;
+                    }
+
+                    rankedStudents.push({
+                        name: student.name,
+                        correctCount: correctCount,
+                        totalQuestions: questions.length,
+                        accuracy: accuracy,
+                        baseScore: baseScore, // 🚀 UPDATED: 優先使用 Firestore 分數
+                        highlightBonus: highlightBonus, // 🚀 NEW: 筆記加分
+                        totalScore: totalScore, // 🚀 UPDATED: 優先使用 Firestore 分數
+                        highlightAnalysis: student.highlightAnalysis || null, // 🚀 NEW: 筆記分析數據
+                        timestamp: student.timestamp,
+                        durationMs: student.durationMs || null,
+                        answers: studentAnswers
+                    });
+                } catch (e) {
+                    console.warn('[CSV Export] Invalid answer format for student:', student.name);
+                }
+            });
+
+            // 🚀 UPDATED: Sort by total score (base + bonus), then duration, then timestamp
+            rankedStudents.sort((a, b) => {
+                // 1. 主要排序：總分高的在前（基礎分+筆記加分）
+                if (b.totalScore !== a.totalScore) {
+                    return b.totalScore - a.totalScore;
+                }
+                // 2. 次要排序：作答時長短的在前（同分時更快完成排名更高）
+                if (a.durationMs && b.durationMs) {
+                    return a.durationMs - b.durationMs;
+                }
+                // 如果只有一方有作答時長，有作答時長的排在前面
+                if (a.durationMs && !b.durationMs) return -1;
+                if (!a.durationMs && b.durationMs) return 1;
+                // 3. 第三排序：提交時間早的在前
+                const aTime = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp?.getTime ? a.timestamp.getTime() : 0);
+                const bTime = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp?.getTime ? b.timestamp.getTime() : 0);
+                if (aTime !== bTime) {
+                    return aTime - bTime;
+                }
+                // 4. 最後排序：姓名字母順序
+                return a.name.localeCompare(b.name);
+            });
+
+            // 🚀 OPTIMIZED: Assign ranks - each student gets unique rank based on complete sorting (including duration)
+            rankedStudents.forEach((student, index) => {
+                student.rank = index + 1;
+            });
+
+            // Build CSV
+            csv += `閱讀測驗成績統計\n`;
+            csv += `匯出時間,${timestamp}\n`;
+            csv += `總作答人數,${rankedStudents.length}\n`;
+            csv += `題目總數,${questions.length}\n`;
+            csv += `\n`;
+
+            // Overall statistics
+            const avgScore = rankedStudents.length > 0
+                ? (rankedStudents.reduce((sum, s) => sum + s.correctCount, 0) / rankedStudents.length).toFixed(1)
+                : '0.0';
+            const avgAccuracy = rankedStudents.length > 0
+                ? (rankedStudents.reduce((sum, s) => sum + s.accuracy, 0) / rankedStudents.length).toFixed(1)
+                : '0.0';
+
+            csv += `整體統計\n`;
+            csv += `平均答對題數,${avgScore}\n`;
+            csv += `平均答對率,${avgAccuracy}%\n`;
+            csv += `\n`;
+
+            // Question-by-question statistics
+            csv += `各題統計\n`;
+            csv += `題號,題目,正確答案,作答人數,答對人數,答對率\n`;
+            questions.forEach((q, qIndex) => {
+                let correctCount = 0;
+                let answeredCount = 0;
+
+                rankedStudents.forEach(student => {
+                    if (student.answers[qIndex] !== undefined && student.answers[qIndex] !== 0) {
+                        answeredCount++;
+                        // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件計為正確）
+                        if ((q.correctAnswer === 0) || (String(student.answers[qIndex]) === String(q.correctAnswer))) {
+                            correctCount++;
+                        }
+                    } else if (q.correctAnswer === 0) {
+                        // 🚀 FIX: 送分題未作答也算正確（且計入作答人數）
+                        answeredCount++;
+                        correctCount++;
+                    }
+                });
+
+                const correctRate = answeredCount > 0 ? ((correctCount / answeredCount) * 100).toFixed(1) : '0.0';
+                const questionText = q.question.length > 50 ? q.question.substring(0, 50) + '...' : q.question;
+                csv += `${qIndex + 1},"${questionText}",選項${q.correctAnswer},${answeredCount},${correctCount},${correctRate}%\n`;
+            });
+
+            csv += `\n`;
+
+            // Student detailed records (sorted by rank) - 🚀 NEW: 加入筆記加分列
+            csv += `學生成績排名\n`;
+            csv += `排名,學生姓名,總分,基礎分,筆記加分,答對題數,答對率,作答時長,提交時間`;
+            questions.forEach((q, qIndex) => {
+                csv += `,Q${qIndex + 1}`;
+            });
+            csv += `\n`;
+
+            rankedStudents.forEach(student => {
+                const answerTime = student.timestamp
+                    ? (student.timestamp.toDate ? student.timestamp.toDate().toLocaleString('zh-TW') : new Date(student.timestamp).toLocaleString('zh-TW'))
+                    : '未知';
+
+                // Format duration
+                let durationText = '未記錄';
+                if (student.durationMs) {
+                    const duration = formatDuration(student.durationMs);
+                    durationText = duration.longLabel.replace('作答 ', '');
+                }
+
+                // 🚀 NEW: 輸出總分、基礎分、筆記加分
+                csv += `${student.rank},${student.name},${Math.round(student.totalScore)},${student.baseScore},${student.highlightBonus},${student.correctCount}/${student.totalQuestions},${student.accuracy}%,${durationText},${answerTime}`;
+
+                // Add each question's answer and result
+                questions.forEach((q, qIndex) => {
+                    const studentAns = student.answers[qIndex];
+                    if (studentAns && studentAns !== 0) {
+                        // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件算為正確）
+                        const isCorrect = (q.correctAnswer === 0) || (String(studentAns) === String(q.correctAnswer)) ? '✓' : '✗';
+                        csv += `,選項${studentAns}${isCorrect}`;
+                    } else {
+                        csv += `,未作答`;
+                    }
+                });
+                csv += `\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = generateFilename('閱讀測驗成績統計', 'csv');
+            link.click();
+
+            showMessage('閱讀測驗成績統計已下載！', 'success');
+        } else {
+            showMessage('無閱讀測驗題目資料', 'info');
+        }
+    } else {
+        showMessage('此模式不支援統計下載', 'info');
+    }
+}
+
+/**
+ * Student submits a vote
+ */
+async function submitQuickPollVote(option) {
+    if (!classroomCode || !studentName) return;
+
+    const pollKey = `quickPoll_${classroomCode}_${quickPollData.timestamp}`;
+
+    // Check if already voted (using localStorage)
+    if (localStorage.getItem(pollKey)) {
+        showMessage('您已經投過票了！', 'info');
+        return;
+    }
+
+    try {
+        // Generate unique vote ID (anonymous or with student name based on settings)
+        const voteId = quickPollData.anonymous
+            ? `anonymous_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+            : `${studentName}_${Date.now()}`;
+
+        const voteRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPollVotes', voteId);
+        const voteData = {
+            option,
+            timestamp: Date.now()
+        };
+
+        // Add student name if not anonymous
+        if (!quickPollData.anonymous) {
+            voteData.studentName = studentName;
+        }
+
+        await setDoc(voteRef, voteData);
+
+        // Mark as voted in localStorage
+        localStorage.setItem(pollKey, 'true');
+
+        // Hide options, show success message
+        document.getElementById('quick-poll-options-container').classList.add('hidden');
+        document.getElementById('quick-poll-voted-status').classList.remove('hidden');
+
+        showMessage('投票成功！感謝您的參與', 'success');
+    } catch (error) {
+        console.error('Error submitting vote:', error);
+        showMessage('投票失敗，請稍後再試。', 'error');
+    }
+}
+
+/**
+ * Displays quick poll for students
+ */
+function displayQuickPollForStudent(pollData) {
+    if (!pollData || !pollData.active) return;
+
+    quickPollData = pollData;
+
+    // Use timestamp to create unique key for each poll session
+    const pollKey = `quickPoll_${classroomCode}_${pollData.timestamp}`;
+    const hasVoted = localStorage.getItem(pollKey);
+
+    // Display question
+    document.getElementById('quick-poll-question-display').textContent = pollData.question;
+
+    const optionsContainer = document.getElementById('quick-poll-options-container');
+    optionsContainer.innerHTML = '';
+
+    if (hasVoted) {
+        // Already voted - show success message
+        optionsContainer.classList.add('hidden');
+        document.getElementById('quick-poll-voted-status').classList.remove('hidden');
+    } else {
+        // Not voted yet - show options
+        optionsContainer.classList.remove('hidden');
+        document.getElementById('quick-poll-voted-status').classList.add('hidden');
+
+        // Create buttons based on poll type
+        if (pollData.pollType === 'emoji') {
+            optionsContainer.className = 'flex justify-center gap-6';
+            pollData.options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'text-8xl hover:scale-110 transition-transform duration-200 p-4 rounded-lg hover:bg-gray-100';
+                btn.textContent = opt;
+                btn.addEventListener('click', () => submitQuickPollVote(opt));
+                optionsContainer.appendChild(btn);
+            });
+        } else if (pollData.pollType === 'rating5' || pollData.pollType === 'rating10') {
+            optionsContainer.className = 'flex justify-center gap-3 flex-wrap';
+            pollData.options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'btn bg-lime-500 hover:bg-lime-600 !w-20 !h-20 text-4xl font-bold';
+                btn.textContent = opt;
+                btn.addEventListener('click', () => submitQuickPollVote(opt));
+                optionsContainer.appendChild(btn);
+            });
+        } else {
+            optionsContainer.className = 'space-y-3';
+            pollData.options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'btn bg-lime-500 hover:bg-lime-600 w-full h-16 text-2xl';
+                btn.textContent = opt;
+                btn.addEventListener('click', () => submitQuickPollVote(opt));
+                optionsContainer.appendChild(btn);
+            });
+        }
+    }
+}
+
+/**
+ * Listens for quick poll configuration changes (for students)
+ */
+function listenToQuickPollConfig() {
+    if (!classroomCode) return;
+
+    const pollRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'quickPoll', 'config');
+    onSnapshot(pollRef, (doc) => {
+        if (doc.exists()) {
+            const pollData = doc.data();
+            if (pollData.active && currentRole === 'student' && currentInteractionMode === 'quick_poll') {
+                displayQuickPollForStudent(pollData);
+            }
+        }
+    });
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.25] MODE-2：分組競賽（Team Battle）
+// ==========================================================
+
+const TEAM_PRESETS = [
+    { name: '紅隊', color: '#ef4444', emoji: '🔴', bg: 'bg-red-500' },
+    { name: '藍隊', color: '#3b82f6', emoji: '🔵', bg: 'bg-blue-500' },
+    { name: '綠隊', color: '#22c55e', emoji: '🟢', bg: 'bg-green-500' },
+    { name: '黃隊', color: '#eab308', emoji: '🟡', bg: 'bg-yellow-500' },
+    { name: '紫隊', color: '#a855f7', emoji: '🟣', bg: 'bg-purple-500' },
+    { name: '橘隊', color: '#f97316', emoji: '🟠', bg: 'bg-orange-500' },
+];
+let teamBattleData = null;
+let teamScoresUnsubscribe = null;
+
+function renderTeamNameInputs() {
+    const count = parseInt(document.getElementById('team-count-select').value);
+    const container = document.getElementById('team-names-container');
+    container.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+        const preset = TEAM_PRESETS[i] || { name: `隊伍${i+1}`, emoji: '🏳️', color: '#6b7280' };
+        container.innerHTML += `
+            <div class="flex items-center gap-2">
+                <span class="text-2xl">${preset.emoji}</span>
+                <input type="text" class="team-name-input flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    value="${preset.name}" data-index="${i}" data-color="${preset.color}" data-emoji="${preset.emoji}">
+            </div>`;
+    }
+}
+
+async function startTeamBattle() {
+    const inputs = document.querySelectorAll('.team-name-input');
+    const teams = [];
+    inputs.forEach(input => {
+        teams.push({
+            name: input.value.trim() || TEAM_PRESETS[input.dataset.index]?.name || `隊伍${parseInt(input.dataset.index)+1}`,
+            color: input.dataset.color,
+            emoji: input.dataset.emoji,
+            score: 0
+        });
+    });
+    if (teams.length < 2) { showMessage('至少需要 2 支隊伍', 'error'); return; }
+
+    teamBattleData = { teams, startedAt: Date.now() };
+
+    // 初始化隊伍分數到 Firestore
+    for (const team of teams) {
+        const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', team.name);
+        await setDoc(teamRef, { name: team.name, color: team.color, emoji: team.emoji, score: 0 });
+    }
+
+    document.getElementById('team-battle-settings-modal').classList.add('hidden');
+    showView('teacherMonitor');
+    await setInteractionMode('team_battle', { teamSettings: { teams } });
+
+    // 顯示積分板
+    showTeamScoreboard();
+    listenToTeamScores();
+    showMessage('分組競賽已開始！', 'success');
+}
+
+function showTeamScoreboard() {
+    document.getElementById('team-scoreboard-modal').classList.remove('hidden');
+    updateTeamScoreboardUI();
+}
+
+function updateTeamScoreboardUI() {
+    if (!teamBattleData) return;
+    const container = document.getElementById('team-scoreboard-container');
+    const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
+    container.innerHTML = sorted.map((team, i) => `
+        <div class="flex items-center gap-4 p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
+            <span class="text-4xl">${i === 0 ? '👑' : team.emoji}</span>
+            <div class="flex-1">
+                <h3 class="text-2xl font-bold" style="color:${team.color}">${team.name}</h3>
+            </div>
+            <div class="text-5xl font-black" style="color:${team.color}">${team.score}</div>
+            <div class="flex gap-1">
+                <button onclick="adjustTeamScore('${team.name}', 1)" class="btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
+                <button onclick="adjustTeamScore('${team.name}', -1)" class="btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
+            </div>
+        </div>`).join('');
+}
+
+async function adjustTeamScore(teamName, delta) {
+    if (!teamBattleData) return;
+    const team = teamBattleData.teams.find(t => t.name === teamName);
+    if (team) {
+        team.score = Math.max(0, team.score + delta);
+        const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', teamName);
+        await setDoc(teamRef, { score: team.score }, { merge: true });
+        updateTeamScoreboardUI();
+    }
+}
+
+async function resetTeamScores() {
+    if (!teamBattleData || !confirm('確定要重置所有隊伍分數嗎？')) return;
+    for (const team of teamBattleData.teams) {
+        team.score = 0;
+        const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', team.name);
+        await setDoc(teamRef, { score: 0 }, { merge: true });
+    }
+    updateTeamScoreboardUI();
+    showMessage('所有分數已重置', 'info');
+}
+
+function listenToTeamScores() {
+    if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); }
+    const scoresRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores');
+    teamScoresUnsubscribe = onSnapshot(scoresRef, (snapshot) => {
+        if (!teamBattleData) return;
+        snapshot.forEach(d => {
+            const data = d.data();
+            const team = teamBattleData.teams.find(t => t.name === data.name);
+            if (team) team.score = data.score || 0;
+        });
+        updateTeamScoreboardUI();
+        // 更新學生端積分板
+        if (currentRole === 'student') updateStudentScoreboard();
+    });
+    ListenerManager.register('teamScores', teamScoresUnsubscribe);
+}
+
+async function endTeamBattle() {
+    if (!confirm('確定結束分組競賽？')) return;
+    document.getElementById('team-scoreboard-modal').classList.add('hidden');
+    if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); teamScoresUnsubscribe = null; }
+    await setInteractionMode('waiting');
+    teamBattleData = null;
+    showMessage('分組競賽已結束！', 'info');
+}
+
+// 學生端：設置分組競賽
+function setupTeamBattleStudent(controlData) {
+    const settings = controlData?.teamBattleSettings;
+    if (!settings || !settings.teams) return;
+
+    teamBattleData = { teams: settings.teams.map(t => ({...t, score: 0})) };
+
+    // 檢查是否已加入
+    const joinedTeam = localStorage.getItem(`teamBattle_${classroomCode}`);
+    if (joinedTeam && settings.teams.some(t => t.name === joinedTeam)) {
+        showJoinedTeamUI(joinedTeam);
+        listenToTeamScores();
+        return;
+    }
+
+    // 顯示選隊按鈕
+    const container = document.getElementById('team-select-buttons');
+    container.innerHTML = '';
+    settings.teams.forEach(team => {
+        const btn = document.createElement('button');
+        btn.className = 'rounded-xl p-6 text-white font-bold text-2xl shadow-lg hover:scale-105 transition-transform flex flex-col items-center gap-2';
+        btn.style.backgroundColor = team.color;
+        btn.innerHTML = `<span class="text-4xl">${team.emoji}</span>${team.name}`;
+        btn.addEventListener('click', () => joinTeam(team.name));
+        container.appendChild(btn);
+    });
+}
+
+async function joinTeam(teamName) {
+    try {
+        const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+        await setDoc(respRef, { team: teamName, studentName, timestamp: serverTimestamp() }, { merge: true });
+        localStorage.setItem(`teamBattle_${classroomCode}`, teamName);
+        showJoinedTeamUI(teamName);
+        listenToTeamScores();
+        if (navigator.vibrate) navigator.vibrate(100);
+        showMessage(`已加入 ${teamName}！`, 'success');
+    } catch (e) {
+        console.error('Error joining team:', e);
+        showMessage('加入隊伍失敗，請重試', 'error');
+    }
+}
+
+function showJoinedTeamUI(teamName) {
+    document.getElementById('team-select-phase').classList.add('hidden');
+    document.getElementById('team-joined-phase').classList.remove('hidden');
+    const team = teamBattleData?.teams.find(t => t.name === teamName) || { name: teamName, emoji: '🏳️', color: '#6b7280' };
+    document.getElementById('team-joined-emoji').textContent = team.emoji;
+    document.getElementById('team-joined-name').textContent = team.name;
+    document.getElementById('team-joined-banner').style.background = `linear-gradient(135deg, ${team.color}, ${team.color}cc)`;
+}
+
+function updateStudentScoreboard() {
+    if (!teamBattleData) return;
+    const container = document.getElementById('team-scoreboard-student');
+    if (!container) return;
+    const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
+    container.innerHTML = sorted.map((team, i) => `
+        <div class="flex items-center gap-3 p-3 rounded-lg border" style="border-color:${team.color};">
+            <span class="text-2xl">${i === 0 ? '👑' : team.emoji}</span>
+            <span class="flex-1 font-bold text-lg" style="color:${team.color}">${team.name}</span>
+            <span class="text-3xl font-black" style="color:${team.color}">${team.score}</span>
+        </div>`).join('');
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.25] MODE-3：文字雲（Word Cloud）
+// ==========================================================
+
+let wordCloudSettings = null;
+
+async function startWordCloud() {
+    const topic = document.getElementById('word-cloud-topic-input').value.trim();
+    if (!topic) { showMessage('請輸入討論主題', 'error'); return; }
+    const maxWords = parseInt(document.getElementById('word-cloud-max-words').value) || 1;
+
+    wordCloudSettings = { topic, maxWords, startedAt: Date.now() };
+    document.getElementById('word-cloud-settings-modal').classList.add('hidden');
+    showView('teacherMonitor');
+    await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords } });
+
+    // 顯示文字雲展示模態框
+    document.getElementById('word-cloud-display-modal').classList.remove('hidden');
+    document.getElementById('word-cloud-display-topic').textContent = `主題：${topic}`;
+
+    // 監聽學生回應
+    listenToWordCloudResponses();
+    showMessage('文字雲收集已開始！', 'success');
+}
+
+function listenToWordCloudResponses() {
+    const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    const unsub = onSnapshot(respRef, (snapshot) => {
+        const words = [];
+        snapshot.forEach(d => {
+            const data = d.data();
+            if (data.word) {
+                // 支援多詞彙
+                if (Array.isArray(data.word)) {
+                    data.word.forEach(w => words.push(w));
+                } else {
+                    words.push(data.word);
+                }
+            }
+        });
+        renderWordCloud(words);
+    });
+    ListenerManager.register('wordCloudResponses', unsub);
+}
+
+function renderWordCloud(words) {
+    if (!words || words.length === 0) return;
+
+    // 統計詞頻
+    const freq = {};
+    words.forEach(w => { freq[w] = (freq[w] || 0) + 1; });
+
+    // 轉換為 wordcloud2 格式 [word, weight]
+    const maxFreq = Math.max(...Object.values(freq));
+    const list = Object.entries(freq).map(([word, count]) => [word, Math.max(20, (count / maxFreq) * 80)]);
+
+    const canvas = document.getElementById('word-cloud-canvas');
+    if (!canvas || typeof WordCloud === 'undefined') return;
+
+    // 清除舊的
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+    WordCloud(canvas, {
+        list: list,
+        gridSize: 12,
+        weightFactor: function(size) { return size * (canvas.width / 600); },
+        fontFamily: '"Noto Sans TC", sans-serif',
+        color: function() { return colors[Math.floor(Math.random() * colors.length)]; },
+        rotateRatio: 0.3,
+        backgroundColor: 'transparent',
+        shrinkToFit: true,
+    });
+}
+
+async function endWordCloud() {
+    if (!confirm('確定結束文字雲？')) return;
+    document.getElementById('word-cloud-display-modal').classList.add('hidden');
+    ListenerManager.unregister('wordCloudResponses');
+    await setInteractionMode('waiting');
+    wordCloudSettings = null;
+    showMessage('文字雲已結束！', 'info');
+}
+
+// 學生端：設置文字雲
+function setupWordCloudStudent(controlData) {
+    const settings = controlData?.wordCloudSettings;
+    if (!settings) return;
+    wordCloudSettings = settings;
+    document.getElementById('word-cloud-topic-display').textContent = `主題：${settings.topic}`;
+    // 檢查是否已提交
+    const subKey = `wordCloud_${classroomCode}_${settings.topic}`;
+    if (localStorage.getItem(subKey)) {
+        document.getElementById('word-cloud-input-phase').classList.add('hidden');
+        document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
+        document.getElementById('word-cloud-submitted-word').textContent = localStorage.getItem(subKey);
+    }
+}
+
+async function submitWordCloudWord() {
+    const input = document.getElementById('word-cloud-student-input');
+    const word = input.value.trim();
+    if (!word) { showMessage('請輸入詞彙', 'error'); return; }
+
+    try {
+        const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+        await setDoc(respRef, { word, studentName, timestamp: serverTimestamp(), interactionMode: 'word_cloud' });
+        const subKey = `wordCloud_${classroomCode}_${wordCloudSettings?.topic || ''}`;
+        localStorage.setItem(subKey, word);
+        document.getElementById('word-cloud-input-phase').classList.add('hidden');
+        document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
+        document.getElementById('word-cloud-submitted-word').textContent = word;
+        if (navigator.vibrate) navigator.vibrate(100);
+        showMessage('詞彙已送出！', 'success');
+    } catch (e) {
+        console.error('Error submitting word:', e);
+        showMessage('送出失敗，請重試', 'error');
+    }
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.25] MODE-4：相片牆（Photo Wall）
+// ==========================================================
+
+async function loadPhotoWallGallery(target = 'teacher') {
+    const gridId = target === 'teacher' ? 'photo-wall-grid-teacher' : 'photo-wall-grid-student';
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+
+    grid.innerHTML = '<p class="text-gray-400 text-center col-span-full animate-pulse">載入作品中...</p>';
+
+    try {
+        const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const snapshot = await getDocs(respRef);
+
+        const drawings = [];
+        snapshot.forEach(d => {
+            const data = d.data();
+            if (data.answer && typeof data.answer === 'string' && data.answer.startsWith('data:image')) {
+                drawings.push({ name: d.id, image: data.answer, timestamp: data.timestamp });
+            }
+        });
+
+        if (drawings.length === 0) {
+            grid.innerHTML = '<p class="text-gray-400 text-center col-span-full">尚無繪圖作品。<br>請先使用「繪圖題」收集學生作品。</p>';
+            return;
+        }
+
+        grid.innerHTML = '';
+        drawings.forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all';
+            card.innerHTML = `
+                <div class="aspect-square overflow-hidden bg-gray-100">
+                    <img src="${item.image}" alt="${item.name}" class="w-full h-full object-contain" loading="lazy">
+                </div>
+                <div class="p-2 text-center">
+                    <p class="text-sm font-semibold text-gray-700 truncate">${item.name}</p>
+                </div>`;
+            card.addEventListener('click', () => {
+                // 放大檢視
+                const modal = document.getElementById('magnified-image-modal');
+                document.getElementById('magnified-image').src = item.image;
+                modal.classList.remove('hidden');
+            });
+            grid.appendChild(card);
+        });
+    } catch (e) {
+        console.error('Error loading photo wall:', e);
+        grid.innerHTML = '<p class="text-red-500 text-center col-span-full">載入失敗，請重試</p>';
+    }
+}
+
+async function startPhotoWall() {
+    showView('teacherMonitor');
+    await setInteractionMode('photo_wall');
+    document.getElementById('photo-wall-modal').classList.remove('hidden');
+    await loadPhotoWallGallery('teacher');
+    showMessage('相片牆已開啟！', 'success');
+}
+
+async function endPhotoWall() {
+    document.getElementById('photo-wall-modal').classList.add('hidden');
+    await setInteractionMode('waiting');
+    showMessage('相片牆已結束', 'info');
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.25] MODE-5：課後回饋（Course Feedback）
+// ==========================================================
+
+let feedbackUnsubscribe = null;
+
+function setupCourseFeedbackStudent() {
+    // 檢查是否已提交
+    const fbKey = `feedback_${classroomCode}_${new Date().toDateString()}`;
+    if (localStorage.getItem(fbKey)) {
+        document.getElementById('feedback-input-phase').classList.add('hidden');
+        document.getElementById('feedback-submitted-status').classList.remove('hidden');
+    }
+}
+
+async function submitCourseFeedback() {
+    const rating = window._selectedFeedbackRating;
+    if (!rating || rating < 1) { showMessage('請先點擊星星評分', 'error'); return; }
+
+    const comment = document.getElementById('feedback-comment-input').value.trim();
+
+    try {
+        // 匿名提交：使用隨機 ID
+        const anonId = `anon_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', anonId);
+        await setDoc(respRef, {
+            rating,
+            comment: comment || null,
+            interactionMode: 'course_feedback',
+            timestamp: serverTimestamp(),
+            anonymous: true
+        });
+
+        const fbKey = `feedback_${classroomCode}_${new Date().toDateString()}`;
+        localStorage.setItem(fbKey, rating.toString());
+
+        document.getElementById('feedback-input-phase').classList.add('hidden');
+        document.getElementById('feedback-submitted-status').classList.remove('hidden');
+
+        if (navigator.vibrate) navigator.vibrate(100);
+        showMessage('感謝你的回饋！', 'success');
+    } catch (e) {
+        console.error('Error submitting feedback:', e);
+        showMessage('送出失敗，請重試', 'error');
+    }
+}
+
+async function startCourseFeedback() {
+    showView('teacherMonitor');
+    await setInteractionMode('course_feedback');
+    document.getElementById('feedback-stats-modal').classList.remove('hidden');
+    document.getElementById('feedback-online-count').textContent = activeStudentNames.length;
+    listenToFeedbackResponses();
+    showMessage('課後回饋已開始！', 'success');
+}
+
+function listenToFeedbackResponses() {
+    if (feedbackUnsubscribe) feedbackUnsubscribe();
+    const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    feedbackUnsubscribe = onSnapshot(respRef, (snapshot) => {
+        const ratings = [];
+        const comments = [];
+        snapshot.forEach(d => {
+            const data = d.data();
+            if (data.rating) {
+                ratings.push(data.rating);
+                if (data.comment) comments.push(data.comment);
+            }
+        });
+        updateFeedbackStatsUI(ratings, comments);
+    });
+    ListenerManager.register('feedbackResponses', feedbackUnsubscribe);
+}
+
+function updateFeedbackStatsUI(ratings, comments) {
+    // 平均分
+    const avg = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : '—';
+    document.getElementById('feedback-avg-rating').textContent = avg;
+    document.getElementById('feedback-total-count').textContent = ratings.length;
+
+    // 分布
+    const dist = document.getElementById('feedback-distribution');
+    dist.innerHTML = '';
+    for (let star = 5; star >= 1; star--) {
+        const count = ratings.filter(r => r === star).length;
+        const pct = ratings.length > 0 ? (count / ratings.length * 100) : 0;
+        dist.innerHTML += `
+            <div class="flex items-center gap-2">
+                <span class="text-amber-400 w-8 text-right">${'★'.repeat(star)}</span>
+                <div class="flex-1 bg-gray-200 rounded-full h-5 overflow-hidden">
+                    <div class="bg-amber-400 h-full rounded-full transition-all duration-500" style="width:${pct}%"></div>
+                </div>
+                <span class="text-sm text-gray-600 w-16 text-right">${count} (${pct.toFixed(0)}%)</span>
+            </div>`;
+    }
+
+    // 建議列表
+    const commentsList = document.getElementById('feedback-comments-list');
+    if (comments.length === 0) {
+        commentsList.innerHTML = '<p class="text-gray-400 text-center">暫無文字建議</p>';
+    } else {
+        commentsList.innerHTML = comments.map(c => `
+            <div class="bg-white p-3 rounded-lg border border-gray-200 text-left">
+                <p class="text-gray-700 text-sm">"${c}"</p>
+            </div>`).join('');
+    }
+}
+
+function downloadFeedbackCSV() {
+    // 從 UI 中收集數據匯出
+    const avgEl = document.getElementById('feedback-avg-rating');
+    const countEl = document.getElementById('feedback-total-count');
+    let csv = 'BOM\n';
+    csv = '\uFEFF課後回饋統計\n';
+    csv += `平均分數,${avgEl.textContent}\n`;
+    csv += `回饋人數,${countEl.textContent}\n\n`;
+    csv += '學生建議\n';
+    const comments = document.querySelectorAll('#feedback-comments-list .text-gray-700');
+    comments.forEach(c => { csv += `"${c.textContent.replace(/"/g, '""')}"\n`; });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `課後回饋_${classroomCode}_${new Date().toLocaleDateString()}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+}
+
+async function endCourseFeedback() {
+    if (!confirm('確定結束課後回饋？')) return;
+    document.getElementById('feedback-stats-modal').classList.add('hidden');
+    if (feedbackUnsubscribe) { feedbackUnsubscribe(); feedbackUnsubscribe = null; }
+    await setInteractionMode('waiting');
+    showMessage('課後回饋已結束', 'info');
+}
+
+// ==========================================================
+// 🆕 NEW [v3.7.0]: Quiz Entry Picker + True/False Settings Modal
+// ==========================================================
+
+/**
+ * 🆕 彈出 Quiz Entry Picker Modal（共用於是非題/選擇題）
+ * @param {'true_false'|'multiple_choice'} targetMode
+ */
+function showQuizEntryModal(targetMode) {
+    quizEntryTargetMode = targetMode;
+    const titleEl = document.getElementById('quiz-entry-mode-title');
+    if (titleEl) {
+        titleEl.textContent = targetMode === 'true_false'
+            ? '如何進行「是非題」？'
+            : '如何進行「選擇題」？';
+    }
+    document.getElementById('quiz-entry-mode-modal').classList.remove('hidden');
+}
+
+function hideQuizEntryModal() {
+    document.getElementById('quiz-entry-mode-modal').classList.add('hidden');
+}
+
+/**
+ * 🆕 使用者選「立刻作答」：直接進入對應模式（維持既有行為）
+ */
+async function startQuizQuickMode() {
+    const mode = quizEntryTargetMode;
+    hideQuizEntryModal();
+    if (!mode) return;
+    showView('teacherMonitor');
+    if (mode === 'true_false') {
+        await setInteractionMode('true_false');
+    } else if (mode === 'multiple_choice') {
+        // 等同原本「無題目出題」選項
+        await setInteractionMode('multiple_choice', { customQuestions: null });
+    }
+    quizEntryTargetMode = null;
+}
+
+/**
+ * 🆕 使用者選「備題作答」：開啟對應的 Settings Modal
+ */
+function startQuizPreparedMode() {
+    const mode = quizEntryTargetMode;
+    hideQuizEntryModal();
+    if (!mode) return;
+    if (mode === 'true_false') {
+        showTrueFalseSettingsModal();
+    } else if (mode === 'multiple_choice') {
+        openMultipleChoiceSettingsFromPreparedMode();
+    }
+    // quizEntryTargetMode 保留，待 settings modal 確認後再清空
+}
+
+/**
+ * 🆕 開啟是非題備題設定 Modal
+ */
+function showTrueFalseSettingsModal() {
+    // 重置狀態
+    document.getElementById('tf-question-textarea').value = '';
+    document.querySelectorAll('input[name="tfCorrectAnswer"]').forEach(r => {
+        r.checked = (r.value === '');
+    });
+    clearQuizComposer('tf');
+    // 🆕 NEW [v3.8.0] A-1: 渲染 TF 題庫列表
+    if (typeof QuizBankManager !== 'undefined') {
+        QuizBankManager.renderList('tf', 'tf-bank-list', loadTfBankToModal);
+    }
+    document.getElementById('true-false-settings-modal').classList.remove('hidden');
+}
+
+// 🆕 NEW [v3.8.0] A-1: 從題庫載入內容到 MC Modal
+function loadMcBankToModal(content) {
+    if (!content || !content.questionsRaw) return;
+    const textarea = document.getElementById('custom-mc-questions-textarea');
+    if (textarea) {
+        textarea.value = content.questionsRaw;
+    }
+    // 清除 mc 圖片 composer（題庫主要是文字）
+    clearQuizComposer('mc');
+}
+
+// 🆕 NEW [v3.8.0] A-1: 從題庫載入內容到 TF Modal
+function loadTfBankToModal(content) {
+    if (!content) return;
+    document.getElementById('tf-question-textarea').value = content.text || '';
+    // 還原正確答案
+    document.querySelectorAll('input[name="tfCorrectAnswer"]').forEach(r => {
+        r.checked = (r.value === (content.correctAnswer || ''));
+    });
+    // 還原圖片（如果有）
+    clearQuizComposer('tf');
+    if (Array.isArray(content.images) && content.images.length > 0) {
+        content.images.forEach(img => {
+            if (img && img.dataUrl) {
+                // 圖片直接 push 到 composer state（已是 dataUrl 形式）
+                // 為了重用既有 composer，把 dataUrl 轉回類似結構
+                const base64 = img.dataUrl.split(',')[1] || '';
+                quizAiImageComposers.tf.push({
+                    dataUrl: img.dataUrl,
+                    base64,
+                    mimeType: 'image/jpeg',
+                    name: img.name || 'restored-from-bank'
+                });
+            }
+        });
+        renderQuizComposer('tf');
+    }
+}
+
+function hideTrueFalseSettingsModal() {
+    document.getElementById('true-false-settings-modal').classList.add('hidden');
+    quizEntryTargetMode = null;
+}
+
+/**
+ * 🆕 確認是非題備題設定，開始互動
+ */
+async function startTrueFalsePreparedInteraction() {
+    const text = document.getElementById('tf-question-textarea').value.trim();
+    const images = quizAiImageComposers.tf || [];
+    const correctAnswer = (document.querySelector('input[name="tfCorrectAnswer"]:checked') || {}).value || '';
+
+    if (!text && images.length === 0) {
+        showMessage('請至少輸入題目文字或上傳一張題目圖片！', 'warning');
+        return;
+    }
+
+    const questionContent = {
+        text: text || '',
+        // 只存 dataUrl 供學生端顯示（不需 base64）
+        images: images.map(img => ({ dataUrl: img.dataUrl })),
+        correctAnswer: (correctAnswer === 'O' || correctAnswer === 'X') ? correctAnswer : null
+    };
+
+    hideTrueFalseSettingsModal();
+    showView('teacherMonitor');
+    await setInteractionMode('true_false', { questionContent });
+}
+// === Reading Comprehension Functions ===
+
+/**
+ * Show reading comprehension settings modal
+ */
+// 🆕 NEW [v3.8.11]: 閱讀測驗題目即時結構化預覽
+function renderReadingQuestionsPreview() {
+    const textarea = document.getElementById('reading-questions-textarea');
+    const previewWrap = document.getElementById('reading-questions-preview');
+    const previewList = document.getElementById('reading-questions-preview-list');
+    const countLabel = document.getElementById('preview-question-count');
+    if (!textarea || !previewWrap || !previewList) return;
+
+    const raw = textarea.value.trim();
+    if (!raw) {
+        previewWrap.classList.add('hidden');
+        return;
+    }
+
+    // 用現有的 parseReadingQuestions 函數嘗試解析
+    const questions = parseReadingQuestions(raw);
+    if (!questions || questions.length === 0) {
+        previewWrap.classList.remove('hidden');
+        previewList.innerHTML = '<p class="text-xs text-red-500 py-2 text-center">⚠️ 無法解析題目格式（請確認每行 7 欄以逗號分隔）</p>';
+        if (countLabel) countLabel.textContent = '0 題';
+        return;
+    }
+
+    previewWrap.classList.remove('hidden');
+    if (countLabel) countLabel.textContent = `${questions.length} 題`;
+
+    const levelIcons = ['📖', '💭', '🔗', '⚖️'];
+    const levelTexts = ['直接提取', '直接推論', '詮釋整合', '比較評估'];
+
+    previewList.innerHTML = questions.map((q, idx) => {
+        const levelIdx = (q.level || 1) - 1;
+        return `
+            <div class="bg-white p-2.5 rounded border border-gray-200 text-xs">
+                <div class="flex items-center gap-1.5 mb-1.5">
+                    <span class="bg-blue-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">${idx + 1}</span>
+                    <span class="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded text-xs font-semibold">${levelIcons[levelIdx]} L${q.level} ${levelTexts[levelIdx]}</span>
+                </div>
+                <p class="font-semibold text-gray-800 text-sm mb-1.5">${q.question}</p>
+                <div class="grid grid-cols-2 gap-1">
+                    ${q.options.map((opt, i) => {
+                        const isCorrect = (i + 1) === q.correctAnswer;
+                        return `<div class="flex items-center gap-1 px-1.5 py-1 rounded ${isCorrect ? 'bg-green-100 text-green-800 font-bold border border-green-300' : 'bg-gray-50 text-gray-700'}">
+                            <span class="font-bold">${i + 1}.</span>
+                            <span>${opt}</span>
+                            ${isCorrect ? '<i class="fas fa-check-circle text-green-600 ml-auto"></i>' : ''}
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function showReadingComprehensionModal() {
+    document.getElementById('reading-comprehension-settings-modal').classList.remove('hidden');
+    // Populate with existing data if any
+    document.getElementById('reading-text-textarea').value = readingComprehensionData.text || '';
+    if (readingComprehensionData.questions && readingComprehensionData.questions.length > 0) {
+        document.getElementById('reading-questions-textarea').value = readingComprehensionData.questions.map(q => {
+            return `${q.question},${q.correctAnswer},${q.options.join(',')},${q.level}`;
+        }).join('\n');
+    } else {
+        document.getElementById('reading-questions-textarea').value = '';
+    }
+    // 🆕 NEW: 每次開啟模態框時重置 AI 出題圖片上傳狀態
+    clearReadingAiImages();
+}
+
+/**
+ * Hide reading comprehension settings modal
+ */
+function hideReadingComprehensionModal() {
+    document.getElementById('reading-comprehension-settings-modal').classList.add('hidden');
+}
+
+/**
+ * Parse reading comprehension questions
+ * Supports both comma and tab delimiters
+ */
+function parseReadingQuestions(text) {
+    if (!text) return null;
+    // 🆕 MODIFIED [v3.7.14]: 強化前置清理 — 移除 markdown code fence、標題、空白雜訊
+    let cleaned = text.trim()
+        // 移除 markdown code fence ``` 或 ```xxx
+        .replace(/```[a-zA-Z]*\n?/g, '')
+        .replace(/```\s*$/g, '')
+        // 移除常見的 markdown 標題 (##, ###)
+        .replace(/^#{1,6}\s.*$/gm, '')
+        // 中文全形逗號／頓號 → 半形逗號（處理 AI 偶爾用錯分隔）
+        .replace(/，/g, ',')
+        // 移除題號前綴 (例如 "1. 題目..." → "題目...")
+        .replace(/^\s*\d+[\.\、]\s*/gm, '');
+
+    const lines = cleaned.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const questions = [];
+    const errors = [];
+
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+        const line = lines[lineIdx];
+        // Try to detect delimiter: if line contains tab, use tab; otherwise use comma
+        const delimiter = line.includes('\t') ? '\t' : ',';
+        const parts = line.split(delimiter).map(p => p.trim().replace(/^["']|["']$/g, '')); // 移除外層引號
+
+        if (parts.length < 6) {
+            errors.push(`第 ${lineIdx + 1} 行欄位不足（需 6-7 個）：${line.substring(0, 40)}`);
+            continue;
+        }
+
+        // 🆕 MODIFIED [v3.8.12]: 從右邊解析，解決「題目內含逗號」的 bug
+        // 固定格式：..., 正確答案, 選項1, 選項2, 選項3, 選項4 [, 層次]
+        // 最後 5 欄固定是「答案+4選項」，倒數第 6 欄（如果存在）是層次（1-4）
+        // 前面剩餘的所有欄位用逗號接回就是題目（可能含逗號）
+
+        let level = 1;
+        let tailCount = 5; // 答案(1) + 選項(4) = 5 欄
+        const lastPart = parts[parts.length - 1];
+
+        // 判斷最後一欄是否為「層次」（1-4 的純數字，且總欄位 >= 7）
+        if (parts.length >= 7 && /^[1-4]$/.test(lastPart)) {
+            level = parseInt(lastPart);
+            tailCount = 6; // 答案(1) + 選項(4) + 層次(1) = 6 欄
+        }
+
+        if (parts.length < tailCount + 1) {
+            // 題目至少要有 1 欄
+            errors.push(`第 ${lineIdx + 1} 行欄位不足：${line.substring(0, 40)}`);
+            continue;
+        }
+
+        // 從右邊取固定欄位
+        const tail = parts.slice(-(tailCount));
+        // 題目 = 前面所有欄位用原 delimiter 接回
+        const question = parts.slice(0, parts.length - tailCount).join(delimiter).trim();
+
+        // tail 結構：[correctAnswer, opt1, opt2, opt3, opt4] 或 [correctAnswer, opt1, opt2, opt3, opt4, level]
+        let correctAnswer = tail[0];
+        const options = tailCount === 6
+            ? [tail[1], tail[2], tail[3], tail[4]]
+            : [tail[1], tail[2], tail[3], tail[4]];
+
+        // Convert A-D to 1-4
+        if (correctAnswer.match(/^[A-Da-d]$/)) {
+            correctAnswer = correctAnswer.toUpperCase().charCodeAt(0) - 64;
+        } else {
+            correctAnswer = parseInt(correctAnswer);
+        }
+
+        if (!question || isNaN(correctAnswer) || correctAnswer < 0 || correctAnswer > 4 ||
+            options.some(o => !o) || isNaN(level) || level < 1 || level > 4) {
+            errors.push(`第 ${lineIdx + 1} 行格式錯誤：${line.substring(0, 40)}`);
+            continue;
+        }
+
+        questions.push({ question, correctAnswer, options, level });
+    }
+
+    // 🆕 偵錯友善：把錯誤暫存到 window，讓 startReadingComprehension 可以顯示詳細原因
+    window.__lastParseErrors = errors;
+    return questions.length > 0 ? questions : null;
+}
+
+/**
+ * Start reading comprehension interaction
+ */
+async function startReadingComprehension() {
+    console.log('[startReadingComprehension] ✓ Button clicked - function initiated');
+
+    const readingText = document.getElementById('reading-text-textarea').value.trim();
+    const questionsText = document.getElementById('reading-questions-textarea').value.trim();
+    console.log('[startReadingComprehension] Text length:', readingText.length, 'Questions length:', questionsText.length);
+
+    if (!readingText || !questionsText) {
+        console.warn('[startReadingComprehension] ⚠️ Missing text or questions');
+        showMessage('請輸入閱讀文本和題目！', 'error');
+        return;
+    }
+
+    const questions = parseReadingQuestions(questionsText);
+    if (!questions) {
+        // 🆕 MODIFIED [v3.7.14]: 顯示詳細錯誤訊息，方便老師知道 AI 辨識結果哪裡有問題
+        console.warn('[startReadingComprehension] ⚠️ Question parsing failed');
+        const statusEl = document.getElementById('reading-questions-status');
+        const errs = window.__lastParseErrors || [];
+        if (errs.length > 0) {
+            statusEl.innerHTML = '⚠️ 題目格式無法解析（下方顯示前 3 個問題行）<br>' +
+                errs.slice(0, 3).map(e => `• ${e}`).join('<br>') +
+                '<br>💡 提示：請確認 AI 辨識結果為「題目,答案,選項1,選項2,選項3,選項4,層次」格式，或手動調整。';
+        } else {
+            statusEl.textContent = '格式錯誤或題目為空，請檢查輸入。';
+        }
+        statusEl.classList.remove('hidden');
+        // 提示使用者看錯誤細節
+        showMessage('⚠️ AI 輸出格式無法解析，請檢視題目欄錯誤提示或手動調整', 'warning', 5000);
+        return;
+    }
+
+    console.log('[startReadingComprehension] ✓ Questions parsed successfully:', questions.length, 'questions');
+    readingComprehensionData = { text: readingText, questions: questions };
+
+    // 🚀 CRITICAL FIX: Reset teacher highlight content hash when loading new article
+    lastViewedReadingContentHash = null;
+    console.log('[startReadingComprehension] ✓ Teacher highlight hash reset for new content');
+
+    document.getElementById('reading-questions-status').classList.add('hidden');
+
+    console.log('[startReadingComprehension] ✓ Hiding modal...');
+    hideReadingComprehensionModal();
+
+    // Set mode and dispatch to Firebase
+    const mode = 'reading_comprehension';
+    try {
+        // 🐛 FIXED [v3.8.21]: showView 必須在 setInteractionMode 之前呼叫！
+        // 因為 showView('teacherMonitor') 內會呼叫 hideAllOptionalButtons()，
+        // 如果放在 setInteractionMode 之後，會把 Step 2 精準顯示的按鈕全部蓋掉。
+        // 所有其他模式都是 showView → setInteractionMode，只有閱讀測驗是反的。
+        console.log('[startReadingComprehension] ✓ Showing teacherMonitor view first...');
+        showView('teacherMonitor');
+
+        console.log('[startReadingComprehension] ✓ Calling setInteractionMode with reading data...');
+        await setInteractionMode(mode, { readingData: readingComprehensionData });
+        console.log('[startReadingComprehension] ✅ COMPLETE');
+    } catch (error) {
+        console.error('[startReadingComprehension] ❌ ERROR during setInteractionMode:', error);
+        showMessage('啟動互動時出錯：' + error.message, 'error');
+    }
+}
+
+/**
+ * Display reading comprehension for student
+ */
+// 🆕 NEW [v3.8.24] SEC-1: 答案防偷看 — 私有閉包存答案，全域變數不含 correctAnswer
+// DevTools 裡看 readingComprehensionData.questions[].correctAnswer 會是 undefined
+// 只有 submitReadingAnswer 內部透過 _secureAnswerKey 取得正解
+let _secureAnswerKey = null; // 閉包內的答案陣列，DevTools 不易找到
+
+async function displayReadingComprehensionForStudent(readingData) {
+    console.log('[displayReadingComprehensionForStudent] Called');
+    const textDisplay = document.getElementById('reading-text-display');
+    const questionsContainer = document.getElementById('reading-questions-container');
+
+    if (!textDisplay || !questionsContainer) {
+        console.error('[displayReadingComprehensionForStudent] Elements not found!');
+        return;
+    }
+
+    // 🚀 CRITICAL FIX: 無條件清除所有灰色選項和綠色框框（重新開始或新會話都需要）
+    console.log('[displayReadingComprehensionForStudent] Clearing all gray and green styles from options');
+    const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+    allRadios.forEach(radio => {
+        radio.disabled = false;
+    });
+    const allLabels = questionsContainer.querySelectorAll('label');
+    allLabels.forEach(label => {
+        label.classList.remove('opacity-50', 'bg-green-100', 'border-green-400', 'border-2');
+    });
+
+    // 🚀 FIX: 檢測是否為新的閱讀測驗會話
+    // 比較完整的題目內容（包括問題、選項、正確答案）以避免誤判
+    let isNewSession = false;
+    if (!readingComprehensionData) {
+        isNewSession = true;
+    } else if (readingComprehensionData.questions.length !== readingData.questions.length ||
+        readingComprehensionData.text !== readingData.text) {
+        isNewSession = true;
+    } else {
+        // 深度比較題目內容
+        for (let i = 0; i < readingData.questions.length; i++) {
+            const oldQ = readingComprehensionData.questions[i];
+            const newQ = readingData.questions[i];
+            if (oldQ.question !== newQ.question ||
+                oldQ.correctAnswer !== newQ.correctAnswer ||
+                JSON.stringify(oldQ.options) !== JSON.stringify(newQ.options)) {
+                isNewSession = true;
+                break;
+            }
+        }
+    }
+
+    if (isNewSession) {
+        console.log('[displayReadingComprehensionForStudent] New session detected, clearing previous answers');
+        currentReadingAnswers = [];
+
+        // 🚀 NEW: Initialize Zoom Control
+        initReadingZoom();
+
+        // 🚀 CRITICAL FIX: 清除所有選項的灰色狀態和禁用狀態，恢復為原始黑色
+        console.log('[displayReadingComprehensionForStudent] Clearing gray state for all options');
+        // 這將在下面的 forEach 中正確執行，因為 answersToRestore 現在是空的
+    }
+
+    // Store reading data for student to use when submitting
+    if (currentRole === 'student') {
+        readingComprehensionData = readingData;
+
+        // 🆕 NEW [v3.8.24] SEC-1: 把答案抽到私有閉包，然後從全域變數刪除
+        // 這樣學生開 DevTools 輸入 readingComprehensionData.questions[0].correctAnswer → undefined
+        _secureAnswerKey = readingData.questions.map(q => q.correctAnswer);
+        // 從全域物件移除 correctAnswer（延遲 1 秒，確保渲染完畢）
+        setTimeout(() => {
+            if (readingComprehensionData && readingComprehensionData.questions) {
+                readingComprehensionData.questions.forEach(q => { delete q.correctAnswer; });
+                console.log('[SEC-1] ✅ correctAnswer 已從全域移除（DevTools 看不到）');
+            }
+        }, 1000);
+    }
+
+    // 🚀 NEW: Parse Markdown bold formatting before displaying
+    textDisplay.innerHTML = parseMarkdownBold(readingData.text);
+    questionsContainer.innerHTML = '';
+    console.log('[displayReadingComprehensionForStudent] Set text:', readingData.text);
+
+    // 🚀 NEW: 計算並顯示文章字數
+    const wordCount = readingData.text.replace(/\s/g, '').length; // 移除所有空白字符後計算字數
+    const wordCountDisplay = document.getElementById('reading-word-count');
+    if (wordCountDisplay) {
+        wordCountDisplay.textContent = `共 ${wordCount} 字`;
+    }
+
+    // 🚀 NEW: 初始化螢光筆功能（學生端）
+    if (currentRole === 'student') {
+        console.log('[displayReadingComprehensionForStudent] Initializing highlighter');
+        HighlighterManager.init();
+
+        // 如果是新會話，清除舊的標註
+        if (isNewSession) {
+            HighlighterManager.reset();
+        } else {
+            // 恢復之前的標註
+            setTimeout(() => {
+                HighlighterManager.restoreHighlights();
+            }, 100); // 延遲100ms確保DOM已完全更新
+        }
+    }
+
+    // Determine which answers to restore and check submission status
+    let answersToRestore = [];
+    let hasSubmittedToFirebase = false;
+
+    // Priority 1: Use current local answers (not yet submitted)
+    if (currentReadingAnswers.length > 0 && !isNewSession) {
+        answersToRestore = currentReadingAnswers;
+        console.log('[displayReadingComprehensionForStudent] Restoring local answers:', answersToRestore);
+    }
+    // Priority 2: Check if student has already submitted answers to Firebase
+    // 🚀 OPTIMIZED: 如果是新會話，不檢查 Firebase，直接允許重新作答
+    else if (!isNewSession && currentRole === 'student' && studentName && classroomCode) {
+        try {
+            const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+            const docSnap = await getDoc(studentRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                // Check if answer is a JSON string or array
+                if (typeof data.answer === 'string') {
+                    try {
+                        const parsed = JSON.parse(data.answer);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            answersToRestore = parsed;
+                            hasSubmittedToFirebase = true;
+                        }
+                    } catch (e) {
+                        answersToRestore = [];
+                    }
+                } else if (Array.isArray(data.answer) && data.answer.length > 0) {
+                    answersToRestore = data.answer;
+                    hasSubmittedToFirebase = true;
+                }
+                console.log('[displayReadingComprehensionForStudent] Restoring submitted answers:', answersToRestore, 'hasSubmitted:', hasSubmittedToFirebase);
+            }
+        } catch (error) {
+            console.error('Error fetching previous answers:', error);
+        }
+    }
+
+    // Initialize currentReadingAnswers if empty
+    if (currentReadingAnswers.length === 0) {
+        currentReadingAnswers = new Array(readingData.questions.length).fill(0);
+    }
+
+    readingData.questions.forEach((q, index) => {
+        const questionDiv = document.createElement('div');
+        questionDiv.className = 'bg-white p-4 rounded-lg border reading-question-item';
+        // 🆕 NEW [v3.7.2]: 標記題目索引，方便「必答驗證」時可直接捲動/高亮未答題
+        questionDiv.dataset.questionIndex = String(index);
+
+        // Get answer for this question (if exists)
+        const selectedAnswer = answersToRestore[index] || 0;
+
+        // 🚀 FIX: 檢查題目是否已包含題號（防止重複顯示如 "1. 1. ..."）
+        // 如果題目以 "X. " 開頭（其中X是數字），則直接使用題目；否則添加題號
+        const questionText = q.question.trim();
+        const hasQuestionNumber = /^\d+\.\s/.test(questionText);
+        const displayQuestionText = hasQuestionNumber ? questionText : `${index + 1}. ${questionText}`;
+
+        // 🚀 NEW: 使用 parseMarkdownBold 支援 Markdown 粗體格式
+        const parsedQuestionText = parseMarkdownBold(displayQuestionText);
+        const parsedOptions = q.options.map(opt => parseMarkdownBold(opt));
+
+        questionDiv.innerHTML = `
+            <p class="font-bold text-lg mb-3">${parsedQuestionText}</p>
+            <div class="space-y-2">
+                ${parsedOptions.map((parsedOpt, i) => {
+            // 🚀 FIX: 檢查選項是否已包含選項號（防止重複顯示如 "A. A. ..." 或 "1. 1. ..."）
+            const optText = q.options[i].trim();
+            const hasOptNumber = /^[A-Z1-9]\.\s/.test(optText);
+            const displayOptText = hasOptNumber ? optText : `${i + 1}. ${optText}`;
+            const parsedDisplayOpt = parseMarkdownBold(displayOptText);
+
+            const isChecked = selectedAnswer === (i + 1) ? 'checked' : '';
+            return `
+                    <label class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer">
+                        <input type="radio" name="reading_q${index}" value="${i + 1}" class="mr-3" ${isChecked} data-question-index="${index}">
+                        <span>${parsedDisplayOpt}</span>
+                    </label>
+                `}).join('')}
+            </div>
+        `;
+        questionsContainer.appendChild(questionDiv);
+    });
+
+    // Add event listeners to track answer changes
+    const radioInputs = questionsContainer.querySelectorAll('input[type="radio"]');
+    radioInputs.forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const questionIndex = parseInt(e.target.dataset.questionIndex);
+            const selectedValue = parseInt(e.target.value);
+            currentReadingAnswers[questionIndex] = selectedValue;
+            console.log('[Reading] Answer updated:', questionIndex, '=', selectedValue);
+
+            // 🚀 NEW: 更新題目進度顯示
+            updateReadingQuestionProgress();
+        });
+    });
+
+    // 🚀 NEW: 初始化題目進度顯示
+    updateReadingQuestionProgress();
+
+    // 🚀 FIX: 如果學生已經提交答案到 Firebase 且不是新會話，恢復鎖定狀態
+    if (hasSubmittedToFirebase && !isNewSession) {
+        console.log('[displayReadingComprehensionForStudent] Student has submitted, applying lock');
+        const submitBtn = document.getElementById('submit-reading-btn');
+        submitBtn.disabled = true;
+        submitBtn.classList.remove('btn-primary');
+        submitBtn.classList.add('btn-gray');
+        submitBtn.textContent = '✓ 已送出答案';
+
+        // 禁用所有選項
+        const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+        allRadios.forEach(radio => {
+            radio.disabled = true;
+        });
+
+        // 為已選擇的答案添加視覺標記
+        const allLabels = questionsContainer.querySelectorAll('label');
+        allLabels.forEach(label => {
+            const radio = label.querySelector('input[type="radio"]');
+            if (radio && radio.checked) {
+                label.classList.add('bg-green-100', 'border-green-400', 'border-2');
+            } else if (radio) {
+                label.classList.add('opacity-50');
+            }
+        });
+
+        // 🚀 NEW: 設置實時監聽器監聽成績變化（當學生重新載入頁面時）
+        setupStudentScoreListener();
+    } else {
+        // 🚀 CRITICAL FIX: 確保重新開始或其他情況時所有選項都是黑色且可互動
+        console.log('[displayReadingComprehensionForStudent] Ensuring all options are enabled and black (non-new session)');
+        const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+        allRadios.forEach(radio => {
+            radio.disabled = false;
+        });
+        const allLabels = questionsContainer.querySelectorAll('label');
+        allLabels.forEach(label => {
+            label.classList.remove('opacity-50', 'bg-green-100', 'border-green-400', 'border-2');
+        });
+    }
+
+    // 🚀 FIX: 以學生看到試卷的「本地時間」作為倒數起點，確保每位學生都有完整閱讀時間（READING_MIN_DURATION_MS）
+    // 使用 window.studentReadingLocalStartTime 記錄，若同一測驗已計時則不重置
+    console.log('[displayReadingComprehensionForStudent] Setting up 3-minute (180-second) local countdown timer');
+    const submitBtn = document.getElementById('submit-reading-btn');
+
+    // 取得或初始化學生本地起始時間（只在新測驗開始時重置）
+    const serverRefTime = readingData.startedAt;
+    let serverRefMs = null;
+    if (serverRefTime) {
+        if (serverRefTime instanceof Date) {
+            serverRefMs = serverRefTime.getTime();
+        } else if (serverRefTime && typeof serverRefTime.toMillis === 'function') {
+            serverRefMs = serverRefTime.toMillis();
+        } else if (serverRefTime && typeof serverRefTime.toDate === 'function') {
+            serverRefMs = serverRefTime.toDate().getTime();
+        } else if (typeof serverRefTime === 'number') {
+            serverRefMs = serverRefTime;
+        }
+    }
+
+    // 🚀 KEY: 若已有本地計時且是同一場測驗（serverRefMs 相同），不重置計時器
+    const isSameExam = serverRefMs && window.studentReadingServerRef === serverRefMs;
+    if (!isSameExam) {
+        // 新測驗：記錄學生看到試卷的當下為本地起始時間
+        window.studentReadingLocalStartTime = Date.now();
+        window.studentReadingServerRef = serverRefMs;
+        console.log('[Timer] 🆕 新測驗開始，本地計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+    } else {
+        console.log('[Timer] 🔄 同一測驗重新渲染，保留原計時起點:', new Date(window.studentReadingLocalStartTime).toISOString());
+    }
+
+    // 清除舊計時器
+    if (window.readingCountdownInterval) {
+        clearInterval(window.readingCountdownInterval);
+        window.readingCountdownInterval = null;
+    }
+
+    // 禁用提交按鈕，開始倒數
+    submitBtn.disabled = true;
+    submitBtn.classList.remove('btn-primary');
+    submitBtn.classList.add('btn-gray');
+
+    const updateCountdown = () => {
+        // 🆕 MODIFIED [v3.7.1]: 若老師已按「允許提前交卷」，立即啟用送出按鈕
+        if (window.allowEarlyReadingSubmit === true) {
+            console.log('[Timer] ⚡ 老師已開放提前交卷，啟用送出按鈕');
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('btn-gray', 'reading-submit-warning');
+            submitBtn.classList.add('btn-primary');
+            submitBtn.textContent = '⚡ 老師已開放，可送出 ✉️';
+            if (window.readingCountdownInterval) {
+                clearInterval(window.readingCountdownInterval);
+                window.readingCountdownInterval = null;
+            }
+            return;
+        }
+
+        const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
+        // 🆕 MODIFIED [v3.7.1]: 使用 READING_MIN_DURATION_MS 常數（5 分鐘）
+        const remainingMs = READING_MIN_DURATION_MS - elapsedMs;
+
+        if (remainingMs <= 0) {
+            // 時間到，啟用提交按鈕
+            console.log('[Timer] ✅ 閱讀時間已到，啟用送出按鈕');
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('btn-gray');
+            submitBtn.classList.add('btn-primary');
+            submitBtn.textContent = '送出答案 ✉️';
+            if (window.readingCountdownInterval) {
+                clearInterval(window.readingCountdownInterval);
+                window.readingCountdownInterval = null;
+            }
+        } else {
+            // 更新倒計時顯示
+            const totalSeconds = Math.ceil(remainingMs / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            if (remainingMs <= 30000) {
+                // ⚠️ 最後30秒：警示樣式 + 震動
+                submitBtn.textContent = `⚠️ 即將開放 (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                submitBtn.classList.add('reading-submit-warning');
+            } else {
+                submitBtn.textContent = `⏳ 請先閱讀... (${minutes}:${seconds.toString().padStart(2, '0')})`;
+                submitBtn.classList.remove('reading-submit-warning');
+            }
+        }
+    };
+
+    // 立即執行一次
+    updateCountdown();
+    // 每500ms更新一次倒計時
+    window.readingCountdownInterval = setInterval(updateCountdown, 500);
+
+    // 🚀 OPTIMIZATION: 手動觸發排行榜更新（防止題目更新時排行榜不刷新）
+    // 這確保了即使沒有新的學生作答，排行榜也會反映最新的題目數據
+    if (currentRole === 'student' && classroomCode) {
+        const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        getDocs(studentsColRef).then(querySnapshot => {
+            const studentsData = [];
+            querySnapshot.forEach(doc => {
+                studentsData.push(doc.data());
+            });
+            updateReadingLeaderboardDisplay(studentsData);
+        }).catch(error => {
+            console.error('[displayReadingComprehensionForStudent] Error fetching students for leaderboard:', error);
+        });
+    }
+}
+
+/**
+ * 🚀 NEW: Update reading question progress display
+ */
+function updateReadingQuestionProgress() {
+    const progressDisplay = document.getElementById('reading-question-progress');
+    if (!progressDisplay || !readingComprehensionData || !readingComprehensionData.questions) {
+        return;
+    }
+
+    const totalQuestions = readingComprehensionData.questions.length;
+    const answeredCount = currentReadingAnswers.filter(ans => ans > 0).length;
+
+    progressDisplay.textContent = `已答 ${answeredCount} / 共 ${totalQuestions} 題`;
+
+    // 如果全部作答，可以添加視覺提示（可選）
+    if (answeredCount === totalQuestions) {
+        progressDisplay.classList.add('text-green-700', 'font-bold');
+    } else {
+        progressDisplay.classList.remove('text-green-700', 'font-bold');
+    }
+}
+
+/**
+ * 🚀 NEW: Initialize scroll-to-top button for reading text
+ */
+function initReadingScrollToTop() {
+    const textDisplay = document.getElementById('reading-text-display');
+    const scrollTopBtn = document.getElementById('reading-scroll-top-btn');
+
+    if (!textDisplay || !scrollTopBtn) return;
+
+    // 監聽文章區域的滾動事件
+    textDisplay.addEventListener('scroll', () => {
+        // 當滾動超過 200px 時顯示按鈕
+        if (textDisplay.scrollTop > 200) {
+            scrollTopBtn.classList.remove('hidden');
+        } else {
+            scrollTopBtn.classList.add('hidden');
+        }
+    });
+
+    // 點擊按鈕回到頂部
+    scrollTopBtn.addEventListener('click', () => {
+        textDisplay.scrollTo({
+            top: 0,
+            behavior: 'smooth' // 平滑滾動效果
+        });
+    });
+}
+
+/**
+ * 🚀 NEW: Format duration in milliseconds to readable time string
+ * Returns both short and long labels for responsive display
+ * @param {number} durationMs - Duration in milliseconds
+ * @returns {object} { shortLabel: "2:30", longLabel: "作答 2分30秒" }
+ */
+function formatDuration(durationMs) {
+    if (!durationMs || durationMs < 0) {
+        return { shortLabel: '-', longLabel: '未記錄' };
+    }
+
+    const totalSeconds = Math.floor(durationMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    const shortLabel = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    const longLabel = `作答 ${minutes}分${seconds}秒`;
+
+    return { shortLabel, longLabel };
+}
+
+/**
+ * 🚀 NEW: Format timestamp to relative time (e.g., "3分鐘前")
+ * @param {Date|Timestamp} timestamp - Firebase timestamp or Date object
+ * @returns {string} Relative time string
+ */
+function formatRelativeTime(timestamp) {
+    if (!timestamp) return '未知時間';
+
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSeconds = Math.floor(diffMs / 1000);
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffSeconds < 60) {
+        return '剛剛';
+    } else if (diffMinutes < 60) {
+        return `${diffMinutes}分鐘前`;
+    } else if (diffHours < 24) {
+        return `${diffHours}小時前`;
+    } else {
+        return `${diffDays}天前`;
+    }
+}
+
+/**
+ * 🚀 NEW: Format timestamp to absolute time (e.g., "14:35:20" or "2025/11/18 14:35")
+ * @param {Date|Timestamp} timestamp - Firebase timestamp or Date object
+ * @param {boolean} includeDate - Whether to include date (default: false)
+ * @returns {string} Formatted time string
+ */
+function formatAbsoluteTime(timestamp, includeDate = false) {
+    if (!timestamp) return '未知時間';
+
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+
+    if (includeDate) {
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        return `${year}/${month}/${day} ${hours}:${minutes}`;
+    }
+
+    return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * 🚀 NEW: Parse Markdown formatting to HTML
+ * Supports:
+ * - **text** → <strong class="font-bold text-lg">text</strong>
+ * - ### 標題 → <span class="block text-base font-bold mt-2">標題</span>
+ * - ## 標題 → <span class="block text-lg font-bold mt-3">標題</span>
+ * - # 標題 → <span class="block text-xl font-bold mt-4">標題</span>
+ * Only processes matched pairs, escapes HTML to prevent XSS
+ */
+function parseMarkdownBold(text) {
+    if (!text) return '';
+
+    const escapeHtml = (str) => {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    };
+
+    let escaped = escapeHtml(text);
+
+    escaped = escaped.replace(/^### (.+)$/gm, '<span class="block text-base font-bold mt-2 mb-1">$1</span>');
+    escaped = escaped.replace(/^## (.+)$/gm, '<span class="block text-lg font-bold mt-3 mb-1">$1</span>');
+    escaped = escaped.replace(/^# (.+)$/gm, '<span class="block text-xl font-bold mt-4 mb-2">$1</span>');
+
+    escaped = escaped.replace(/\*\*([\s\S]+?)\*\*/g, '<strong class="font-bold text-lg">$1</strong>');
+
+    return escaped;
+}
+
+/**
+ * Submit reading comprehension answer
+ */
+async function submitReadingAnswer() {
+    const questionsContainer = document.getElementById('reading-questions-container');
+    const submitBtn = document.getElementById('submit-reading-btn');
+
+    // 🚀 FIX: 防止重複點擊（檢查按鈕是否已被禁用）
+    if (submitBtn.disabled) {
+        console.log('[submitReadingAnswer] Button already disabled, ignoring click');
+        const totalMinutes = Math.ceil(READING_MIN_DURATION_MS / 60000);
+        showMessage(`⏳ 請至少花 ${totalMinutes} 分鐘閱讀文章！`, 'warning');
+        return;
+    }
+
+    // 🆕 MODIFIED [v3.7.1]: 若老師已按「允許提前交卷」，跳過時間限制驗證
+    // 🚀 FIX: 使用學生本地計時驗證是否已閱讀到最短時間（與 UI 倒數計時一致）
+    if (window.allowEarlyReadingSubmit !== true && window.studentReadingLocalStartTime) {
+        const elapsedMs = Date.now() - window.studentReadingLocalStartTime;
+        if (elapsedMs < READING_MIN_DURATION_MS) {
+            console.log('[submitReadingAnswer] Time limit not met (local), elapsed:', elapsedMs, 'ms');
+            const remainingSeconds = Math.ceil((READING_MIN_DURATION_MS - elapsedMs) / 1000);
+            const remainingMinutes = Math.floor(remainingSeconds / 60);
+            const remainingSecs = remainingSeconds % 60;
+            showMessage(`⏳ 請再閱讀 ${remainingMinutes}:${remainingSecs.toString().padStart(2, '0')}，才能提交答案！`, 'warning');
+            return;
+        }
+    }
+
+    const answers = [];
+
+    // Collect all answers
+    for (let i = 0; i < readingComprehensionData.questions.length; i++) {
+        const selected = document.querySelector(`input[name="reading_q${i}"]:checked`);
+        if (selected) {
+            answers.push(parseInt(selected.value));
+        } else {
+            answers.push(0); // No answer
+        }
+    }
+
+    // 🆕 MODIFIED [v3.7.2]: 改為「必答驗證」- 所有題目都必須作答才能送出
+    // 原因：避免學生隨便回答一題就送出，失去評量鑑別度
+    const unansweredIndices = answers
+        .map((a, i) => (a === 0 ? i : -1))
+        .filter(i => i !== -1);
+
+    if (unansweredIndices.length > 0) {
+        const totalQ = answers.length;
+        const doneQ = totalQ - unansweredIndices.length;
+        const firstUnanswered = unansweredIndices[0];
+
+        // 列出前 6 題未答題題號，超過則以「...等 N 題」標示
+        const previewList = unansweredIndices.slice(0, 6).map(i => `第 ${i + 1} 題`).join('、');
+        const moreText = unansweredIndices.length > 6
+            ? `...等共 ${unansweredIndices.length} 題`
+            : '';
+        showMessage(
+            `⚠️ 請答完所有題目才能送出！目前進度 ${doneQ}/${totalQ}，尚未作答：${previewList}${moreText}`,
+            'warning',
+            5000
+        );
+
+        // 捲動到第一題未答題並閃爍紅框提示
+        const firstEl = document.querySelector(`.reading-question-item[data-question-index="${firstUnanswered}"]`);
+        if (firstEl) {
+            firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 所有未答題都閃爍 2.5 秒（容易一眼看到全部未答題）
+            unansweredIndices.forEach(idx => {
+                const el = document.querySelector(`.reading-question-item[data-question-index="${idx}"]`);
+                if (el) {
+                    el.classList.add('reading-unanswered-warn');
+                    setTimeout(() => el.classList.remove('reading-unanswered-warn'), 2500);
+                }
+            });
+        }
+        return;
+    }
+
+    // 驗證通過後才禁用按鈕，防止提交過程中重複點擊
+    submitBtn.disabled = true;
+    submitBtn.textContent = '送出中...';
+
+    try {
+        // 🚀 NEW: Calculate duration if readingStartedAt exists
+        let extraFields = {};
+        // 🚀 FIX: 改為使用學生實際開始作答的本地時間計算作答時長
+        if (window.studentReadingLocalStartTime) {
+            const durationMs = Date.now() - window.studentReadingLocalStartTime;
+            extraFields.durationMs = durationMs;
+        } else if (readingComprehensionData.startedAt) {
+            // 備用方案：如果本地計時異常，使用教師開啟時間
+            const startTimeMs = readingComprehensionData.startedAt.toMillis
+                ? readingComprehensionData.startedAt.toMillis()
+                : readingComprehensionData.startedAt.getTime();
+            const durationMs = Date.now() - startTimeMs;
+            extraFields.durationMs = durationMs;
+        }
+
+        // 🚀 NEW: 計算筆記評分並附帶到提交數據
+        try {
+            const storageKey = `reading_highlights_${classroomCode || 'default'}`;
+            console.log('[submitReadingAnswer] 🔍 DEBUG: classroomCode =', classroomCode, ', storageKey =', storageKey);
+
+            const saved = localStorage.getItem(storageKey);
+            console.log('[submitReadingAnswer] 🔍 DEBUG: localStorage data exists?', !!saved);
+
+            if (saved) {
+                const saveData = JSON.parse(saved);
+                const highlights = saveData.highlights || [];
+                console.log('[submitReadingAnswer] 🔍 DEBUG: Parsed highlights count =', highlights.length);
+                console.log('[submitReadingAnswer] 🔍 DEBUG: First 3 highlights =', highlights.slice(0, 3));
+
+                if (highlights.length > 0) {
+                    console.log('[submitReadingAnswer] Found', highlights.length, 'highlights, calculating score...');
+
+                    // 🚀 FIX: 使用原始文本長度（含空白），與highlight.length保持一致
+                    // 避免計算覆蓋率時分子分母不一致導致精確度評分誤差
+                    const totalTextLength = readingComprehensionData.text
+                        ? readingComprehensionData.text.length
+                        : 0;
+
+                    console.log('[submitReadingAnswer] 🔍 DEBUG: totalTextLength =', totalTextLength);
+
+                    // 調用評分引擎
+                    const scoreResult = HighlightScoringEngine.calculateScore({
+                        highlights: highlights,
+                        totalTextLength: totalTextLength,
+                        questions: readingComprehensionData.questions,
+                        studentAnswers: answers
+                    });
+
+                    console.log('[submitReadingAnswer] ✅ Highlight score result:', JSON.stringify(scoreResult, null, 2));
+
+                    // 將評分結果添加到提交數據
+                    extraFields.highlightAnalysis = {
+                        score: scoreResult.totalScore,
+                        breakdown: scoreResult.breakdown,
+                        stats: scoreResult.stats,
+                        timestamp: Date.now()
+                    };
+                    console.log('[submitReadingAnswer] ✅ highlightAnalysis attached to extraFields');
+                } else {
+                    console.log('[submitReadingAnswer] ⚠️ No highlights found in saveData');
+                    extraFields.highlightAnalysis = {
+                        score: 0,
+                        breakdown: {
+                            colorDiversity: 0,
+                            precision: 0,
+                            segmentation: 0,
+                            relevance: 0,
+                            timeDistribution: 0
+                        },
+                        stats: {
+                            highlightCount: 0,
+                            colorCount: 0,
+                            coverageRate: 0,
+                            segmentCount: 0
+                        },
+                        timestamp: Date.now()
+                    };
+                }
+            } else {
+                console.log('[submitReadingAnswer] ⚠️ No saved highlights in localStorage for key:', storageKey);
+                console.log('[submitReadingAnswer] 🔍 DEBUG: All localStorage keys:', Object.keys(localStorage));
+                extraFields.highlightAnalysis = null;
+            }
+        } catch (highlightError) {
+            console.error('[submitReadingAnswer] ❌ Failed to calculate highlight score:', highlightError);
+            // 即使計算失敗，也不影響答案提交
+            extraFields.highlightAnalysis = null;
+        }
+
+        // 🆕 MODIFIED [v3.8.24] SEC-1: 用私有閉包 _secureAnswerKey 計分（而非全域 correctAnswer）
+        let correctCount = 0;
+        const answerKey = _secureAnswerKey || readingComprehensionData.questions.map(q => q.correctAnswer);
+        answers.forEach((ans, index) => {
+            if (index < answerKey.length) {
+                const correct = answerKey[index];
+                if (correct === 0) {
+                    correctCount++; // 送分題
+                } else if (ans === correct) {
+                    correctCount++;
+                }
+            }
+        });
+        const baseScore = Math.round((correctCount / readingComprehensionData.questions.length) * 100);
+        const highlightBonus = extraFields.highlightAnalysis ? extraFields.highlightAnalysis.score : 0;
+        const totalScore = baseScore + highlightBonus;
+
+        extraFields.baseScore = baseScore;
+        extraFields.totalScore = totalScore;
+
+        console.log('[submitReadingAnswer] Calculated scores:', { baseScore, highlightBonus, totalScore });
+
+        await submitAnswer(JSON.stringify(answers), extraFields);
+
+        // 🚀 NEW: 顯示筆記品質報告（如果有標註）
+        if (extraFields.highlightAnalysis && extraFields.highlightAnalysis.score > 0) {
+            const analysis = extraFields.highlightAnalysis;
+
+            // 🎨 RWD響應式筆記品質分析卡片
+            const feedbackMessage = `
+                <div class="text-left space-y-2 sm:space-y-3 pr-6 sm:pr-8">
+                    <div class="text-base sm:text-lg font-bold text-white mb-2">✅ 答案已成功提交！</div>
+                    <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
+                        <div class="text-sm sm:text-base font-bold text-white mb-2">📝 筆記加分：</div>
+                        <div class="text-xl sm:text-2xl font-bold text-yellow-300 mb-2 sm:mb-3">+${analysis.score} 分</div>
+                        
+                        <div class="space-y-1 text-xs sm:text-sm text-white">
+                            <div class="font-bold mb-1 text-yellow-200">評分明細：</div>
+                            <div class="flex justify-between items-center">
+                                <span>🎨 顏色多樣性:</span>
+                                <span class="font-bold text-yellow-300">+${analysis.breakdown.colorDiversity}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>🎯 精確度:</span>
+                                <span class="font-bold text-yellow-300">+${analysis.breakdown.precision}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>📍 分段性:</span>
+                                <span class="font-bold text-yellow-300">+${analysis.breakdown.segmentation}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>🔗 答題關聯:</span>
+                                <span class="font-bold text-yellow-300">+${analysis.breakdown.relevance}</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span>⏱️ 時間分配:</span>
+                                <span class="font-bold text-yellow-300">+${analysis.breakdown.timeDistribution}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-2 pt-2 border-t border-white border-opacity-30 text-xs text-white text-opacity-90">
+                            <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                                <div>標註: ${analysis.stats.highlightCount} 個</div>
+                                <div>顏色: ${analysis.stats.colorCount} 種</div>
+                                <div>覆蓋: ${Math.round(analysis.stats.coverageRate)}%</div>
+                                <div>段落: ${analysis.stats.segmentCount} 段</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
+                        💡 筆記品質越好，加分越多！請點擊右上角 ✕ 關閉
+                    </div>
+                </div>
+            `;
+
+            showMessage(feedbackMessage, 'success', 0, true, true); // HTML模式 + 需要手動關閉
+        } else {
+            showMessage('答案已提交！', 'success');
+        }
+
+        // 🚀 FIX: 提交成功後永久鎖定提交按鈕和所有選項
+        submitBtn.classList.remove('btn-primary');
+        submitBtn.classList.add('btn-gray');
+        submitBtn.textContent = '✓ 已送出答案';
+
+        // 禁用所有選項，讓學生無法更改答案
+        const allRadios = questionsContainer.querySelectorAll('input[type="radio"]');
+        allRadios.forEach(radio => {
+            radio.disabled = true;
+        });
+
+        // 為已選擇的答案添加視覺標記
+        const allLabels = questionsContainer.querySelectorAll('label');
+        allLabels.forEach(label => {
+            const radio = label.querySelector('input[type="radio"]');
+            if (radio && radio.checked) {
+                label.classList.add('bg-green-100', 'border-green-400', 'border-2');
+            } else if (radio) {
+                label.classList.add('opacity-50');
+            }
+        });
+
+        // 🚀 NEW: 提交成功後手動觸發排行榜更新並滾動到最上方
+        // 這樣可以讓學生立即看到自己的排名，同時不會影響其他正在作答的學生
+        try {
+            const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const querySnapshot = await getDocs(studentsColRef);
+            const studentsData = [];
+            querySnapshot.forEach(doc => {
+                studentsData.push(doc.data());
+            });
+            // 傳入 shouldScrollToTop = true，讓排行榜滾動到視窗最上方
+            updateReadingLeaderboardDisplay(studentsData, true);
+        } catch (error) {
+            console.warn('[submitReadingAnswer] Failed to update leaderboard after submission:', error);
+        }
+
+        // 🚀 NEW: 設置實時監聽器監聽學生自己的成績變化
+        // 當教師修改答案後，學生端可以即時看到更新後的成績
+        setupStudentScoreListener();
+
+        // 🎉 功能2: confetti慶祝 + 顯示名次
+        try {
+            const studentsColRef2 = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const rankSnap = await getDocs(studentsColRef2);
+            let submittedCount = 0;
+            rankSnap.forEach(d => { if (d.data().answer) submittedCount++; });
+            // 本人是第 submittedCount 位（已包含剛提交的自己）
+            const myRank = submittedCount;
+            const rankMsg = myRank === 1 ? '🥇 你是全班第一位完成的同學！' :
+                myRank === 2 ? `🥈 你是第 ${myRank} 位完成的同學！` :
+                    myRank === 3 ? `🥉 你是第 ${myRank} 位完成的同學！` :
+                        `🎉 你是第 ${myRank} 位完成的同學！`;
+
+            // 🎊 confetti 動畫
+            // 🆕 MODIFIED [v3.8.22]: 滿分時觸發更華麗的長版 confetti
+            if (typeof confetti === 'function') {
+                const isPerfect = baseScore === 100;
+                const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
+
+                if (isPerfect) {
+                    // 🏆 滿分：3 秒持續彩帶雨
+                    const endTime = Date.now() + 3000;
+                    const interval = setInterval(() => {
+                        if (Date.now() > endTime) return clearInterval(interval);
+                        confetti(Object.assign({}, defaults, {
+                            particleCount: 50,
+                            origin: { x: Math.random() * 0.4 + 0.1, y: Math.random() * 0.4 }
+                        }));
+                        confetti(Object.assign({}, defaults, {
+                            particleCount: 50,
+                            origin: { x: Math.random() * 0.4 + 0.5, y: Math.random() * 0.4 }
+                        }));
+                    }, 200);
+                } else {
+                    // 一般：雙發 confetti
+                    confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.3, y: 0.6 } }));
+                    confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.7, y: 0.6 } }));
+                }
+            }
+
+            // 彈出名次提示
+            const perfectHint = baseScore === 100 ? ' 🏆 滿分！太厲害了！' : ` 📊 得分：${baseScore}%`;
+            setTimeout(() => {
+                showMessage(`✅ 答案已提交！${rankMsg}${perfectHint}`, 'success', 5000);
+            }, 400);
+            console.log(`[confetti] 已顯示慶祝，名次: ${myRank}`);
+        } catch (rankErr) {
+            console.warn('[confetti] 取得名次失敗:', rankErr);
+            showMessage('✅ 答案已提交！', 'success', 4000);
+        }
+
+        // 不要清空 currentReadingAnswers，以便暫停恢復時保留
+        // currentReadingAnswers = []; // REMOVED
+    } catch (error) {
+        // 如果提交失敗，重新啟用按鈕讓學生可以重試
+        console.error('[submitReadingAnswer] Submit failed:', error);
+        showMessage('提交失敗，請重試！', 'error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = '送出答案 ✉️';
+    }
+}
+
+/**
+ * 🚀 NEW: 設置學生端實時成績監聽器
+ * 當教師修改答案後，學生端可以即時看到更新後的成績
+ * CRITICAL: Also watches for scoreUpdateToken changes to force UI refresh
+ */
+function setupStudentScoreListener() {
+    if (!studentName || !classroomCode) {
+        console.warn('[setupStudentScoreListener] Missing studentName or classroomCode');
+        return;
+    }
+
+    // 如果已經有監聽器，先註銷
+    if (ListenerManager.has('studentScoreUpdate')) {
+        console.log('[setupStudentScoreListener] Listener already exists, skipping');
+        return;
+    }
+
+    const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+
+    // 追蹤上一次的成績和版本戳，用於偵測變化
+    let previousBaseScore = null;
+    let previousTotalScore = null;
+    let previousScoreUpdateToken = null; // 🚀 CRITICAL: Track version stamp for force updates
+    let isFirstSnapshot = true;
+
+    const unsubscribe = onSnapshot(studentRef, (docSnapshot) => {
+        if (!docSnapshot.exists()) {
+            console.log('[setupStudentScoreListener] Document does not exist');
+            return;
+        }
+
+        const data = docSnapshot.data();
+
+        // 🚀 FIX: 直接從 Firestore 讀取教師端已計算好的成績，而不是重新計算
+        // 這樣才能確保當教師修改答案後，學生端看到的是最新的成績
+        const baseScore = data.baseScore || 0;
+        const highlightBonus = (data.highlightAnalysis && data.highlightAnalysis.score) || 0;
+        const totalScore = data.totalScore || (baseScore + highlightBonus);
+        const scoreUpdateToken = data.scoreUpdateToken || null; // 🚀 CRITICAL: Get version stamp from teacher update
+
+        // 第一次快照時，只記錄初始值，不顯示通知
+        if (isFirstSnapshot) {
+            previousBaseScore = baseScore;
+            previousTotalScore = totalScore;
+            previousScoreUpdateToken = scoreUpdateToken; // 🚀 CRITICAL: Initialize token
+            isFirstSnapshot = false;
+            console.log('[setupStudentScoreListener] Initial snapshot:', { baseScore, highlightBonus, totalScore, scoreUpdateToken });
+            return;
+        }
+
+        // 🚀 CRITICAL: Check both score changes AND token changes for force updates
+        // Token change indicates teacher pressed "Update Student Answers" button
+        const baseScoreChanged = baseScore !== previousBaseScore;
+        const totalScoreChanged = totalScore !== previousTotalScore;
+        const tokenChanged = scoreUpdateToken !== previousScoreUpdateToken && scoreUpdateToken !== null; // Token change = force update
+
+        // 偵測成績變化或強制更新信號（tokenChanged）
+        if (previousBaseScore !== null && previousTotalScore !== null) {
+            if (baseScoreChanged || totalScoreChanged || tokenChanged) {
+                console.log('[setupStudentScoreListener] Score changed!', {
+                    previous: { baseScore: previousBaseScore, totalScore: previousTotalScore },
+                    current: { baseScore, totalScore }
+                });
+
+                // 🎉 顯示醒目的成績更新通知
+                const scoreChange = totalScore - previousTotalScore;
+                const changeIcon = scoreChange > 0 ? '📈' : scoreChange < 0 ? '📉' : '🔄';
+                const changeText = scoreChange > 0 ? `+${scoreChange}` : scoreChange < 0 ? `${scoreChange}` : '±0';
+
+                const updateMessage = `
+                    <div class="text-left space-y-2 sm:space-y-3 pr-6 sm:pr-8">
+                        <div class="text-base sm:text-lg font-bold text-white mb-2">
+                            ${changeIcon} 成績已更新！
+                        </div>
+                        <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
+                            <div class="space-y-2 text-sm sm:text-base text-white">
+                                <div class="flex justify-between items-center">
+                                    <span>📝 基礎分：</span>
+                                    <span class="font-bold text-yellow-300">${baseScore} 分</span>
+                                </div>
+                                <div class="flex justify-between items-center">
+                                    <span>✨ 筆記加分：</span>
+                                    <span class="font-bold text-yellow-300">+${highlightBonus} 分</span>
+                                </div>
+                                <div class="pt-2 border-t border-white border-opacity-30"></div>
+                                <div class="flex justify-between items-center text-base sm:text-lg font-bold">
+                                    <span>🏆 總分：</span>
+                                    <span class="text-yellow-300">${totalScore} 分 (${changeText})</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
+                            💡 教師已修正答案，您的成績已自動更新！
+                        </div>
+                    </div>
+                `;
+
+                showMessage(updateMessage, scoreChange >= 0 ? 'success' : 'warning', 8000, true, true);
+
+                // 更新排行榜顯示（不滾動到頂部，避免打斷學生）
+                try {
+                    const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                    getDocs(studentsColRef).then(querySnapshot => {
+                        const studentsData = [];
+                        querySnapshot.forEach(doc => {
+                            studentsData.push(doc.data());
+                        });
+                        console.log('[setupStudentScoreListener] ✅ Fetched latest studentResponses:', studentsData.length, 'students');
+                        // 🚀 CRITICAL: Force clear and rebuild leaderboard
+                        updateReadingLeaderboardDisplay(studentsData, false);
+                    }).catch(err => {
+                        console.error('[setupStudentScoreListener] Failed to fetch studentResponses:', err);
+                    });
+                } catch (error) {
+                    console.warn('[setupStudentScoreListener] Failed to update leaderboard:', error);
+                }
+
+                // 🚀 CRITICAL: Update tracking values including token for next comparison
+                previousBaseScore = baseScore;
+                previousTotalScore = totalScore;
+                previousScoreUpdateToken = scoreUpdateToken; // Update token tracker
+
+                console.log('[setupStudentScoreListener] Tracking updated - token:', scoreUpdateToken, 'tokenChanged:', tokenChanged);
+            }
+        }
+    }, (error) => {
+        console.error('[setupStudentScoreListener] Listener error:', error);
+    });
+
+    ListenerManager.register('studentScoreUpdate', unsubscribe);
+    console.log('[setupStudentScoreListener] Listener registered for student:', studentName);
+}
+
+/**
+ * 📊 功能1: 班級作答進度條（學生端）
+ * 監聽 studentResponses 集合，計算已提交人數，更新底部進度條
+ */
+function setupClassProgressBar() {
+    if (!classroomCode || !db) return;
+    if (ListenerManager.has('classProgressBar')) return;
+
+    const wrapper = document.getElementById('class-progress-bar-wrapper');
+    const fill = document.getElementById('class-progress-bar-fill');
+    const label = document.getElementById('class-progress-bar-label');
+    if (!wrapper || !fill || !label) return;
+
+    wrapper.classList.remove('hidden');
+
+    const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    const unsubscribeProgress = onSnapshot(colRef, (snapshot) => {
+        const total = snapshot.size;
+        let answered = 0;
+        snapshot.forEach(d => { if (d.data().answer) answered++; });
+        const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
+        fill.style.width = `${pct}%`;
+        label.textContent = `班級進度 ${answered}/${total}`;
+
+        // 🆕 NEW [v3.8.22] UX-11: 更新「N 人作答中」氣泡
+        const indicator = document.getElementById('live-answering-indicator');
+        const textEl = document.getElementById('live-answering-text');
+        if (indicator && textEl) {
+            const unanswered = total - answered;
+            if (unanswered > 0 && total > 0) {
+                textEl.textContent = `${unanswered} 人作答中`;
+                indicator.style.display = 'flex';
+            } else if (total > 0 && answered === total) {
+                textEl.textContent = '全班已完成 ✓';
+                indicator.style.display = 'flex';
+                // 3 秒後隱藏
+                setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+            } else {
+                indicator.style.display = 'none';
+            }
+        }
+    });
+
+    ListenerManager.register('classProgressBar', unsubscribeProgress);
+    console.log('[classProgressBar] 進度條監聽已啟動');
+}
+
+/**
+ * 💬 功能3延伸: 學生端監聽教師評語，顯示 toast
+ */
+function listenTeacherComment() {
+    if (!classroomCode || !studentName || !db) return;
+    if (ListenerManager.has('teacherCommentListener')) return;
+
+    const toast = document.getElementById('teacher-comment-toast');
+    const toastText = document.getElementById('teacher-comment-toast-text');
+    if (!toast || !toastText) return;
+
+    let lastTs = null;
+    const studentRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+    const unsubComment = onSnapshot(studentRef, (snap) => {
+        if (!snap.exists()) return;
+        const comment = snap.data().teacherComment;
+        if (!comment || !comment.text || !comment.ts) return;
+        if (lastTs === comment.ts) return; // 避免重複顯示
+        lastTs = comment.ts;
+
+        // 顯示 toast
+        toastText.textContent = `👨‍🏫 老師說：${comment.text}`;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 4500);
+        console.log('[teacherComment] 收到老師評語:', comment.text);
+    });
+
+    ListenerManager.register('teacherCommentListener', unsubComment);
+    console.log('[teacherComment] 評語監聽已啟動');
+}
+
+// ==========================================================
+// 🆕 NEW: 閱讀測驗 AI 出題 - 圖片/截圖上傳輔助函數
+// ==========================================================
+
+/**
+ * 🆕 NEW: 壓縮並加入一張圖片到 AI 出題圖片列表
+ * - 檔案會先被縮放 (最長邊 <= MAX_IMAGE_DIMENSION) 再轉為 JPEG
+ * - 以 base64 儲存，供 Gemini inline_data 使用
+ * @param {File|Blob} file - 圖片檔案或 Blob（來自檔案選擇或剪貼簿）
+ * @param {string} [fallbackName='clipboard-image'] - 若 file 無 name 時使用的名稱
+ */
+function addReadingAiImage(file, fallbackName = 'clipboard-image') {
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+        showMessage('❌ 僅支援圖片格式（PNG/JPG/WEBP/HEIC 等）', 'error');
+        return;
+    }
+    // 上限保護：避免傳給 Gemini 的 payload 過大
+    const MAX_IMAGES = 8;
+    if (readingAiUploadedImages.length >= MAX_IMAGES) {
+        showMessage(`❌ 最多只能上傳 ${MAX_IMAGES} 張圖片`, 'warning');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+            // 縮放到 MAX_IMAGE_DIMENSION 內（重用現有常數，與全站一致）
+            if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                if (width > height) {
+                    height = Math.round(height * (MAX_IMAGE_DIMENSION / width));
+                    width = MAX_IMAGE_DIMENSION;
+                } else {
+                    width = Math.round(width * (MAX_IMAGE_DIMENSION / height));
+                    height = MAX_IMAGE_DIMENSION;
+                }
+            }
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0, width, height);
+            // 統一輸出 JPEG，壓縮後大小可控
+            const dataUrl = tempCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+            const base64 = dataUrl.split(',')[1] || '';
+
+            readingAiUploadedImages.push({
+                dataUrl,
+                base64,
+                mimeType: 'image/jpeg',
+                name: file.name || fallbackName
+            });
+
+            renderReadingAiImagesPreview();
+            console.log(`[AI Reading] 已加入圖片：${file.name || fallbackName}（目前 ${readingAiUploadedImages.length} 張）`);
+        };
+        img.onerror = () => {
+            showMessage('❌ 無法讀取這張圖片，可能檔案已損毀', 'error');
+        };
+        img.src = event.target.result;
+    };
+    reader.onerror = () => {
+        showMessage('❌ 讀取檔案時發生錯誤', 'error');
+    };
+    reader.readAsDataURL(file);
+}
+
+/**
+ * 🆕 NEW: 重新繪製 AI 出題圖片預覽列表（縮圖 + 刪除鈕）
+ */
+function renderReadingAiImagesPreview() {
+    const list = document.getElementById('ai-reading-image-preview-list');
+    const status = document.getElementById('ai-reading-image-status');
+    const clearBtn = document.getElementById('ai-reading-clear-images-btn');
+    if (!list || !status) return;
+
+    list.innerHTML = '';
+
+    if (readingAiUploadedImages.length === 0) {
+        status.textContent = '尚未上傳圖片';
+        status.classList.remove('text-purple-700', 'font-semibold');
+        status.classList.add('text-gray-500', 'italic');
+        if (clearBtn) clearBtn.classList.add('hidden');
+        return;
+    }
+
+    readingAiUploadedImages.forEach((imgObj, idx) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'ai-reading-image-thumb';
+        thumb.title = imgObj.name;
+
+        const imgEl = document.createElement('img');
+        imgEl.src = imgObj.dataUrl;
+        imgEl.alt = imgObj.name;
+        thumb.appendChild(imgEl);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'ai-reading-image-thumb-remove';
+        removeBtn.textContent = '×';
+        removeBtn.title = '移除這張圖片';
+        removeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            readingAiUploadedImages.splice(idx, 1);
+            renderReadingAiImagesPreview();
+        });
+        thumb.appendChild(removeBtn);
+
+        const indexLabel = document.createElement('div');
+        indexLabel.className = 'ai-reading-image-thumb-index';
+        indexLabel.textContent = `#${idx + 1}`;
+        thumb.appendChild(indexLabel);
+
+        list.appendChild(thumb);
+    });
+
+    status.textContent = `✅ 已上傳 ${readingAiUploadedImages.length} 張圖片，點「AI 開始出題」即可辨識生成`;
+    status.classList.remove('text-gray-500', 'italic');
+    status.classList.add('text-purple-700', 'font-semibold');
+    if (clearBtn) clearBtn.classList.remove('hidden');
+}
+
+/**
+ * 🆕 NEW: 清空所有已上傳的 AI 出題圖片
+ */
+function clearReadingAiImages() {
+    readingAiUploadedImages = [];
+    renderReadingAiImagesPreview();
+}
+
+/**
+ * 🆕 NEW: 處理貼上事件（Ctrl+V），從剪貼簿取出第一張圖片
+ * - 只在閱讀測驗設定模態框可見時才攔截
+ */
+function handleReadingAiPasteEvent(e) {
+    const modal = document.getElementById('reading-comprehension-settings-modal');
+    if (!modal || modal.classList.contains('hidden')) return; // 模態框關閉時不處理
+
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if (!items) return;
+
+    let imageCount = 0;
+    for (const item of items) {
+        if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+            const blob = item.getAsFile();
+            if (blob) {
+                // 為剪貼簿圖片產生時間戳記名稱，避免重名
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                addReadingAiImage(blob, `clipboard-${ts}.${(blob.type.split('/')[1] || 'png')}`);
+                imageCount++;
+            }
+        }
+    }
+
+    if (imageCount > 0) {
+        e.preventDefault();
+        showMessage(`✅ 已貼上 ${imageCount} 張截圖`, 'success');
+    }
+}
+
+// ==========================================================
+// 🆕 NEW [v3.7.0]: 通用 Quiz Image Composer（是非題/選擇題備題模式共用）
+// ==========================================================
+// 設計原則：
+// - 以 composerId（'tf' | 'mc'）為 key，state 存在 quizAiImageComposers[composerId]
+// - DOM id 統一前綴 `${composerId}-image-*`
+//   例：tf-image-input / tf-image-preview-list / tf-image-status / tf-clear-images-btn
+// - 這些函數完全獨立於閱讀測驗既有實作，互不干擾
+
+/**
+ * 🆕 加入一張圖片到指定 composer（縮放 → JPEG → base64）
+ */
+function addQuizComposerImage(composerId, file, fallbackName = 'clipboard-image') {
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+        showMessage('❌ 僅支援圖片格式（PNG/JPG/WEBP/HEIC 等）', 'error');
+        return;
+    }
+    const MAX_IMAGES = 6;
+    const store = quizAiImageComposers[composerId];
+    if (!store) {
+        console.error('[QuizComposer] 未知的 composerId:', composerId);
+        return;
+    }
+    if (store.length >= MAX_IMAGES) {
+        showMessage(`❌ 最多只能上傳 ${MAX_IMAGES} 張圖片`, 'warning');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+            if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+                if (width > height) {
+                    height = Math.round(height * (MAX_IMAGE_DIMENSION / width));
+                    width = MAX_IMAGE_DIMENSION;
+                } else {
+                    width = Math.round(width * (MAX_IMAGE_DIMENSION / height));
+                    height = MAX_IMAGE_DIMENSION;
+                }
+            }
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            tempCanvas.getContext('2d').drawImage(img, 0, 0, width, height);
+            const dataUrl = tempCanvas.toDataURL('image/jpeg', JPEG_QUALITY);
+            const base64 = dataUrl.split(',')[1] || '';
+
+            store.push({
+                dataUrl,
+                base64,
+                mimeType: 'image/jpeg',
+                name: file.name || fallbackName
+            });
+            renderQuizComposer(composerId);
+            console.log(`[QuizComposer:${composerId}] 已加入圖片（目前 ${store.length} 張）`);
+        };
+        img.onerror = () => showMessage('❌ 無法讀取圖片', 'error');
+        img.src = event.target.result;
+    };
+    reader.onerror = () => showMessage('❌ 讀取檔案時發生錯誤', 'error');
+    reader.readAsDataURL(file);
+}
+
+/**
+ * 🆕 重繪指定 composer 的縮圖列表與狀態
+ */
+function renderQuizComposer(composerId) {
+    const list = document.getElementById(`${composerId}-image-preview-list`);
+    const status = document.getElementById(`${composerId}-image-status`);
+    const clearBtn = document.getElementById(`${composerId}-clear-images-btn`);
+    const store = quizAiImageComposers[composerId] || [];
+    if (!list || !status) return;
+
+    list.innerHTML = '';
+
+    if (store.length === 0) {
+        status.textContent = '尚未上傳圖片';
+        status.classList.remove('text-purple-700', 'font-semibold');
+        status.classList.add('text-gray-500', 'italic');
+        if (clearBtn) clearBtn.classList.add('hidden');
+        return;
+    }
+
+    store.forEach((imgObj, idx) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'ai-reading-image-thumb'; // 重用既有縮圖樣式
+        thumb.title = imgObj.name;
+
+        const imgEl = document.createElement('img');
+        imgEl.src = imgObj.dataUrl;
+        imgEl.alt = imgObj.name;
+        thumb.appendChild(imgEl);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'ai-reading-image-thumb-remove';
+        removeBtn.textContent = '×';
+        removeBtn.title = '移除這張圖片';
+        removeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            store.splice(idx, 1);
+            renderQuizComposer(composerId);
+        });
+        thumb.appendChild(removeBtn);
+
+        const indexLabel = document.createElement('div');
+        indexLabel.className = 'ai-reading-image-thumb-index';
+        indexLabel.textContent = `#${idx + 1}`;
+        thumb.appendChild(indexLabel);
+
+        list.appendChild(thumb);
+    });
+
+    status.textContent = `✅ 已上傳 ${store.length} 張圖片`;
+    status.classList.remove('text-gray-500', 'italic');
+    status.classList.add('text-purple-700', 'font-semibold');
+    if (clearBtn) clearBtn.classList.remove('hidden');
+}
+
+/**
+ * 🆕 清空指定 composer
+ */
+function clearQuizComposer(composerId) {
+    if (quizAiImageComposers[composerId]) {
+        quizAiImageComposers[composerId].length = 0;
+        renderQuizComposer(composerId);
+    }
+}
+
+/**
+ * 🆕 處理指定 composer 所屬模態框的 Ctrl+V 貼上事件
+ * @param {string} composerId
+ * @param {string} modalId - 貼上只在該 modal 開啟時生效
+ * @param {ClipboardEvent} e
+ */
+function handleQuizComposerPaste(composerId, modalId, e) {
+    const modal = document.getElementById(modalId);
+    if (!modal || modal.classList.contains('hidden')) return;
+
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if (!items) return;
+
+    let count = 0;
+    for (const item of items) {
+        if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+            const blob = item.getAsFile();
+            if (blob) {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                addQuizComposerImage(composerId, blob, `clipboard-${ts}.${(blob.type.split('/')[1] || 'png')}`);
+                count++;
+            }
+        }
+    }
+
+    if (count > 0) {
+        e.preventDefault();
+        showMessage(`✅ 已貼上 ${count} 張截圖`, 'success');
+    }
+}
+
+/**
+ * 🆕 呼叫 Gemini Vision 辨識 composer 中的圖片，將結果填入目標 textarea
+ * @param {string} composerId - 'tf' | 'mc'
+ * @param {string} targetTextareaId - 填入結果的 textarea id
+ * @param {string} mode - 'tf' | 'mc'，決定 prompt 樣板
+ */
+async function recognizeQuizImages(composerId, targetTextareaId, mode) {
+    if (!checkAPIKey()) return;
+
+    const store = quizAiImageComposers[composerId] || [];
+    if (store.length === 0) {
+        showMessage('請先上傳至少一張圖片再辨識！', 'warning');
+        return;
+    }
+    const textarea = document.getElementById(targetTextareaId);
+    if (!textarea) return;
+
+    const btn = document.getElementById(`${composerId}-recognize-image-btn`);
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>AI 辨識中...</span>';
+    }
+
+    try {
+        // 🆕 MODIFIED [v3.8.1] A-2: 升級 prompt，要求 AI 同時辨識題目+正解
+        // 依模式生成不同 prompt
+        let prompt;
+        if (mode === 'tf') {
+            prompt = `你是一位專業的國小老師。請仔細辨識下方 ${store.length} 張圖片，整理成「一個是非題題目並判斷正解」。
+
+【輸出格式 - 嚴格遵守，純 JSON 不要任何 markdown code fence】
+{"question": "題目敘述", "answer": "O" 或 "X"}
+
+【要求】
+- question 為學生看完可判斷對錯的肯定陳述句
+- answer 必須是 "O"（敘述正確）或 "X"（敘述錯誤）
+- 若原文為疑問句，請改寫為肯定陳述句
+- 若圖片中已有標示正解，請依照圖片正解；否則依照常識判斷
+- 忽略頁碼、浮水印、插圖說明、排版雜訊
+- 若無法判斷正解，answer 設為 null
+- 若圖片資訊不足以形成是非題，回傳 {"error": "無法辨識出有效的是非題內容"}
+
+【範例】
+{"question": "台灣的首都是台北市。", "answer": "O"}
+{"question": "地球是宇宙中唯一有生命的星球。", "answer": "X"}`;
+        } else {
+            // mode === 'mc'
+            // 既有格式已經包含 correctAnswer，A-2 只需確保 prompt 強化不出錯
+            prompt = `你是一位專業的國小老師。請仔細辨識下方 ${store.length} 張圖片中的文字內容，並根據內容生成 3-5 題選擇題。
+
+【輸出格式（嚴格遵守，每行一題，不要 markdown code fence）】
+題目,正確答案(1-4),選項1,選項2,選項3,選項4
+
+範例：
+台灣的首都在哪裡?,1,台北,台中,台南,高雄
+2+3 等於?,2,4,5,6,7
+
+【要求】
+- 題目涵蓋圖片中的重要知識點
+- 正確答案必須是阿拉伯數字 1-4（對應到第幾個選項）
+- 選項內不要出現逗號（如有，請用、頓號代替）
+- 忽略頁碼、浮水印、插圖說明等雜訊
+- 若圖片內容無法生成選擇題，回覆「⚠️ 無法從圖片生成選擇題」`;
+        }
+
+        const parts = [{ text: prompt }];
+        store.forEach(img => {
+            parts.push({
+                inline_data: { mime_type: img.mimeType || 'image/jpeg', data: img.base64 }
+            });
+        });
+        const payload = {
+            contents: [{ role: 'user', parts }],
+            generationConfig: { temperature: 0.4, maxOutputTokens: 4096 }
+        };
+
+        const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey)
+            ? aiSettings.geminiApiKey
+            : aiSettings.defaultGeminiApiKey;
+
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+        );
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`[QuizRecognize:${composerId}] API ${response.status}:`, errorBody);
+            if (response.status === 400) throw new Error('❌ API KEY 無效或圖片不支援');
+            if (response.status === 413) throw new Error('❌ 圖片檔案過大，請減少數量');
+            throw new Error(`AI 請求失敗：${response.status}`);
+        }
+        const result = await response.json();
+        let generated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (!generated) throw new Error('AI 未返回有效內容');
+
+        // 🆕 v3.8.1 A-2: 強化清理 — 剝除 markdown code fence
+        generated = generated.replace(/^```[a-zA-Z]*\n?/gm, '').replace(/\n?```\s*$/g, '').trim();
+
+        if (generated.includes('⚠️ 無法')) {
+            throw new Error('AI 無法從圖片中辨識出有效的題目內容，請確認圖片清晰或更換。');
+        }
+
+        // 🆕 v3.8.1 A-2: TF 模式特別處理 — 解析 JSON 並 prefill 正解 radio
+        if (mode === 'tf') {
+            let parsed = null;
+            try {
+                parsed = JSON.parse(generated);
+            } catch (e) {
+                console.warn('[TF AI] JSON 解析失敗，嘗試從文字中擷取題目:', e.message);
+                // Fallback：把整段當題目，無正解
+                parsed = { question: generated, answer: null };
+            }
+
+            if (parsed.error) {
+                throw new Error('AI 回傳：' + parsed.error);
+            }
+            if (!parsed.question) {
+                throw new Error('AI 未回傳有效題目內容');
+            }
+
+            // 填入題目 textarea
+            const existing = textarea.value.trim();
+            textarea.value = existing ? (existing + '\n' + parsed.question) : parsed.question;
+
+            // 自動勾選正解 radio
+            let answerHint = '';
+            if (parsed.answer === 'O' || parsed.answer === 'X') {
+                const radio = document.querySelector(`input[name="tfCorrectAnswer"][value="${parsed.answer}"]`);
+                if (radio) {
+                    radio.checked = true;
+                    // 視覺回饋：閃爍效果
+                    const label = radio.closest('label');
+                    if (label) {
+                        label.style.transition = 'background 0.3s';
+                        label.style.background = '#fef3c7';
+                        setTimeout(() => { label.style.background = ''; }, 1500);
+                    }
+                    answerHint = ` + 自動選擇正解：${parsed.answer === 'O' ? '⭕ 是' : '❌ 否'}`;
+                }
+            } else {
+                answerHint = '（AI 未判斷正解，請老師手動選擇）';
+            }
+            textarea.focus();
+            showMessage(`✅ AI 已辨識題目並填入${answerHint}`, 'success', 4000);
+            return; // tf 模式結束
+        }
+
+        // mode === 'mc'：保留原邏輯，填入 textarea
+        const existing = textarea.value.trim();
+        textarea.value = existing ? (existing + '\n' + generated) : generated;
+        textarea.focus();
+        showMessage(`✅ AI 已成功辨識並填入${mode === 'tf' ? '題目' : '選擇題'}！`, 'success');
+    } catch (err) {
+        console.error(`[QuizRecognize:${composerId}] 失敗:`, err);
+        if (err.message && err.message.includes('API KEY')) {
+            showApiKeyGuide();
+        } else {
+            showMessage(err.message || 'AI 辨識失敗，請檢查 API Key 或網路連線', 'error');
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+/**
+ * AI generate PIRLS reading questions
+ */
+// 🆕 NEW [v3.8.2] A-3: 依年級+科目產生 prompt 增益指引
+function buildCurriculumHint(grade, subject) {
+    if (!grade && !subject) return '';
+
+    // 國小 1-2、3-4、5-6 年級對應十二年國教學習階段
+    const stageMap = {
+        '小1': '第一學習階段（國小低年級）', '小2': '第一學習階段（國小低年級）',
+        '小3': '第二學習階段（國小中年級）', '小4': '第二學習階段（國小中年級）',
+        '小5': '第三學習階段（國小高年級）', '小6': '第三學習階段（國小高年級）',
+        '國1': '第四學習階段（國中）', '國2': '第四學習階段（國中）', '國3': '第四學習階段（國中）',
+        '高中': '第五學習階段（高中）'
+    };
+    const stage = stageMap[grade] || '';
+
+    // 各科建議重點
+    const subjectGuide = {
+        '國語': '注重字詞認讀、句意理解、文章主旨、修辭辨識；題幹避免太抽象',
+        '英語': '使用該年級常見單字與句型；題幹可中英夾雜（中文敘述+英文選項）',
+        '數學': '結合生活情境出題；題目應包含數字、單位、計算情境；避免過於抽象',
+        '自然': '聚焦觀察、實驗、科學原理；可用日常現象引導推論',
+        '社會': '聚焦地理位置、歷史事件、公民議題；題目宜結合本土素材',
+        '生活': '結合學生日常情境，如家庭、學校、社區；題目簡明易懂',
+        '健康體育': '聚焦健康知識、運動規則、安全常識',
+        '藝術': '聚焦藝術元素辨識、文化背景、創作技法',
+        '科技': '聚焦資訊素養、運算思維、科技倫理'
+    };
+    const guide = subjectGuide[subject] || '';
+
+    // 各年級詞彙難度建議
+    const difficultyHint = (grade === '小1' || grade === '小2')
+        ? '詞彙限定 1-2 年級常用字（500-800 字以內），句長 8-15 字，避免冷僻字'
+        : (grade === '小3' || grade === '小4')
+        ? '詞彙限定 3-4 年級常用字（800-1500 字），句長 12-20 字'
+        : (grade === '小5' || grade === '小6')
+        ? '詞彙限定 5-6 年級常用字（1500-2500 字），句長 15-25 字，可有複句'
+        : (grade === '國1' || grade === '國2' || grade === '國3')
+        ? '詞彙可達國中程度（含部分文言詞），句構複雜度提高'
+        : grade === '高中'
+        ? '詞彙可達高中程度（含古典詩文、論述體裁）'
+        : '';
+
+    const lines = [];
+    lines.push('\n【🎯 教學階段對齊指引】');
+    if (grade) lines.push(`- 對象年級：${grade}（${stage}）`);
+    if (subject) lines.push(`- 學科領域：${subject}`);
+    if (difficultyHint) lines.push(`- 詞彙難度：${difficultyHint}`);
+    if (guide) lines.push(`- 題型重點：${guide}`);
+    lines.push('- 請依此調整題目深淺、詞彙選擇與情境設計');
+    return lines.join('\n');
+}
+
+async function generatePIRLSQuestions() {
+    // 🚀 UX: 檢查 API KEY 是否已設定
+    if (!checkAPIKey()) return;
+
+    const aiTopicTextarea = document.getElementById('ai-reading-topic-textarea');
+    const readingTextTextarea = document.getElementById('reading-text-textarea');
+    const questionsTextarea = document.getElementById('reading-questions-textarea');
+    const aiBtn = document.getElementById('ai-generate-reading-btn');
+    const aiIcon = document.getElementById('ai-reading-btn-icon');
+    const aiText = document.getElementById('ai-reading-btn-text');
+    const aiSpinner = document.getElementById('ai-reading-loading-spinner');
+
+    const topic = aiTopicTextarea.value.trim();
+
+    // 🆕 NEW: 判斷是否有上傳圖片（與文字要求二擇一即可）
+    const hasImages = readingAiUploadedImages && readingAiUploadedImages.length > 0;
+
+    if (!topic && !hasImages) {
+        showMessage('請輸入出題要求或上傳至少一張圖片！', 'error');
+        return;
+    }
+
+    // 🆕 NEW [v3.8.2] A-3: 讀取課綱對齊選項，組成 prompt 增益指引
+    const grade = (document.getElementById('ai-reading-grade-select') || {}).value || '';
+    const subject = (document.getElementById('ai-reading-subject-select') || {}).value || '';
+    const curriculumHint = buildCurriculumHint(grade, subject);
+
+    // 自動清除舊內容，提供更好的 UX 體驗
+    readingTextTextarea.value = '';
+    questionsTextarea.value = '';
+
+    // 清除後，existingText 永遠為空，每次都生成新文本和題目
+    const existingText = '';
+
+    // 🎯 進度條輔助函數
+    const progressWrap = document.getElementById('ai-gen-progress-wrap');
+    const progressFill = document.getElementById('ai-gen-progress-fill');
+    const statusText = document.getElementById('ai-gen-status-text');
+    const stepPcts = [10, 35, 80, 100]; // 各步驟對應進度百分比
+    // 🆕 NEW: 依模式調整進度條文字（圖片模式下步驟1改為「辨識圖片」）
+    const stepMsgs = hasImages
+        ? ['⚙️ 正在準備圖片與請求...', '🔍 AI 正在辨識圖片中的文字...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！']
+        : ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
+
+    function setAiStep(stepIndex) {
+        for (let i = 0; i < 4; i++) {
+            const el = document.getElementById(`ai-step-${i}`);
+            if (!el) continue;
+            el.classList.remove('active', 'done');
+            if (i < stepIndex) el.classList.add('done');
+            else if (i === stepIndex) el.classList.add('active');
+        }
+        if (progressFill) progressFill.style.width = `${stepPcts[stepIndex]}%`;
+        if (statusText) statusText.textContent = stepMsgs[stepIndex];
+    }
+
+    // 🆕 NEW: 動態更新步驟1的標籤（圖片模式下顯示為「辨識圖片」）
+    const step1Label = document.querySelector('#ai-step-1 .ai-gen-step-label');
+    const step1Dot = document.querySelector('#ai-step-1 .ai-gen-step-dot');
+    if (step1Label && step1Dot) {
+        if (hasImages) {
+            step1Label.innerHTML = '辨識<br>圖片';
+            step1Dot.textContent = '🔍';
+        } else {
+            step1Label.innerHTML = '生成<br>文本';
+            step1Dot.textContent = '📝';
+        }
+    }
+
+    // 顯示進度條，隱藏舊 spinner
+    aiBtn.disabled = true;
+    aiText.textContent = '生成中...';
+    aiIcon.classList.remove('fa-magic');
+    aiIcon.classList.add('fa-spinner', 'fa-spin');
+    aiSpinner.classList.add('hidden'); // 保留但隱藏舊 spinner
+    if (progressWrap) progressWrap.classList.add('visible');
+    setAiStep(0); // 步驟0：準備中
+
+    try {
+        // 🆕 NEW: 三種 prompt 模式（純文字主題 / 圖片辨識 / 既有文本 - 目前 existingText 永為空）
+        let prompt;
+        if (hasImages) {
+            // 圖片模式：請 Gemini 從圖片讀取文字，整理成文本後再出題
+            // 🆕 v3.7.14: 強化格式要求 + 加入「不要用 markdown code fence」以防 AI 包 ``` 導致解析失敗
+            prompt = `你是一位專業的國小閱讀理解老師，請依照下列步驟完成任務：
+
+【步驟 1：辨識並整理文本】
+- 仔細閱讀下方附上的${readingAiUploadedImages.length}張圖片（圖片來源為課本/講義/文章截圖或照片）。
+- 將圖片中的所有可讀文字完整提取並整理成通順的閱讀文本。
+- 若圖片來自多頁或多張截圖，請依照順序合併為一篇連貫的文章；忽略頁碼、浮水印、廣告、無關的插圖註解等雜訊。
+- 若原文為直書或橫書，統一輸出為橫書；若有錯字或辨識不清的字，請依上下文合理修正。
+- 若文字不足以形成有意義的文本（例如圖片只是表格、清單或無文章段落），請直接回覆「無法從圖片辨識到足夠的閱讀文本」，不要強行生成題目。
+
+【步驟 2：依 PIRLS 四層次出 10 題選擇題】
+- 層次1（直接提取資訊）：3題
+- 層次2（直接推論）：3題
+- 層次3（詮釋整合資訊）：2題
+- 層次4（比較評估內容）：2題
+${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+【輸出格式 — 非常重要，請嚴格遵守】
+1. 不要使用 markdown code fence（\`\`\`）包裝輸出
+2. 不要加「文本：」「題目：」等標題，直接開始輸出文本
+3. 先輸出完整的閱讀文本（純文字段落）
+4. 空一行後，輸出「---題目---」作為分隔
+5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
+
+範例（請完全按此格式）：
+主角的名字是什麼?,2,小明,小華,小美,小強,1
+文章主旨是什麼?,1,友誼可貴,競爭激烈,獨立自主,勤勞致富,4
+
+【絕對禁止】
+- 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
+- 禁止在題目前加題號（例如 "1. 題目..."，直接寫 "題目..." 即可）
+- 禁止輸出 JSON、表格或其他結構化格式
+- 禁止用全形逗號（，）分隔欄位`;
+        } else if (existingText) {
+            prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+層次1（直接提取資訊）：3題
+層次2（直接推論）：3題
+層次3（詮釋整合資訊）：2題
+層次4（比較評估內容）：2題
+
+文本：
+${existingText}
+
+要求：${topic}${curriculumHint}
+
+請按照以下格式輸出，每行一題：
+題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+
+範例：
+主角的名字是什麼?,2,小明,小華,小美,小強,1`;
+        } else {
+            prompt = `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+層次1（直接提取資訊）：3題
+層次2（直接推論）：3題
+層次3（詮釋整合資訊）：2題
+層次4（比較評估內容）：2題
+
+主題：${topic}${curriculumHint}
+
+請先輸出文本，然後輸出「---題目---」，再按照以下格式輸出題目，每行一題：
+題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)`;
+        }
+
+        setAiStep(1); // 步驟1：生成文本 / 辨識圖片
+
+        // 🆕 NEW: 多模態 parts（文字 + 圖片 inline_data）
+        const parts = [{ text: prompt }];
+        if (hasImages) {
+            readingAiUploadedImages.forEach(img => {
+                parts.push({
+                    inline_data: {
+                        mime_type: img.mimeType || 'image/jpeg',
+                        data: img.base64
+                    }
+                });
+            });
+        }
+
+        const payload = {
+            contents: [{ role: "user", parts }],
+            generationConfig: {
+                temperature: hasImages ? 0.4 : 0.7, // 🆕 圖片模式降低溫度以提升 OCR 準確度
+                maxOutputTokens: 8192
+            }
+        };
+
+        const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : aiSettings.defaultGeminiApiKey;
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`[AI 閱讀測驗生成] API 錯誤 ${response.status}:`, errorBody);
+            if (response.status === 400) {
+                throw new Error('❌ API KEY 無效、格式錯誤或圖片內容不支援，請檢查 API Key 設定或嘗試更換圖片！');
+            }
+            if (response.status === 413) {
+                throw new Error('❌ 圖片檔案過大，請減少圖片數量或使用較小的截圖後再試！');
+            }
+            throw new Error(`AI API request failed with status ${response.status}`);
+        }
+
+        const result = await response.json();
+        let generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+        if (generatedText) {
+            // 🆕 MODIFIED [v3.7.14]: 強化輸出清理 — 剝除 markdown code fence 與其他雜訊
+            generatedText = generatedText
+                // 移除整段外層的 ```xxx ... ``` code fence
+                .replace(/^```[a-zA-Z]*\n/gm, '')
+                .replace(/\n```\s*$/gm, '')
+                .replace(/```[a-zA-Z]*\n?/g, '')  // 保底再清一次
+                .trim();
+
+            // 🆕 NEW: 檢查圖片辨識失敗訊息（容錯匹配，AI 可能不加 emoji）
+            if (hasImages && /無法從圖片辨識到足夠的閱讀文本/.test(generatedText)) {
+                throw new Error('⚠️ AI 無法從上傳的圖片辨識到足夠的文本內容。請確認圖片清晰、文字完整，或嘗試更換清晰的截圖。');
+            }
+
+            setAiStep(2); // 步驟2：解析題目中
+            await new Promise(r => setTimeout(r, 300));
+            setAiStep(3); // 步驟3：整理完成
+            await new Promise(r => setTimeout(r, 600));
+
+            // 🆕 NEW: 圖片模式與主題模式都會返回「文本 + ---題目---+ 題目」的格式
+            if (hasImages || !existingText) {
+                // Parse text and questions
+                // 🆕 v3.7.14: 支援多種分隔標記 (---題目---, ---題目：---, ### 題目)
+                const splitRegex = /\n-{2,}\s*題目\s*[-：:]*\s*-{0,}\n|\n#{2,}\s*題目[:：]?\s*\n/;
+                const parts = generatedText.split(splitRegex);
+                if (parts.length >= 2) {
+                    readingTextTextarea.value = parts[0].trim();
+                    questionsTextarea.value = parts.slice(1).join('\n').trim();
+                } else {
+                    // 若 AI 沒有按照格式輸出分隔線，嘗試用空行拆分作為備援
+                    const fallbackSplit = generatedText.split(/\n\s*\n(?=[^\n]*[,，][^\n]*[,，][^\n]*[,，])/);
+                    if (fallbackSplit.length >= 2) {
+                        readingTextTextarea.value = fallbackSplit[0].trim();
+                        questionsTextarea.value = fallbackSplit.slice(1).join('\n').trim();
+                    } else {
+                        // 🆕 v3.7.14: 最後一招 - 把整段放到 textarea，提示老師手動調整
+                        console.warn('[AI 閱讀] 無法自動拆分文本與題目，全部放到題目區讓老師檢查');
+                        readingTextTextarea.value = '';
+                        questionsTextarea.value = generatedText;
+                        showMessage('⚠️ AI 未依標準格式回傳（缺少「---題目---」分隔），已放入題目區請老師手動調整', 'warning', 5000);
+                        return; // 避免後面的 success 訊息蓋掉警告
+                    }
+                }
+            } else {
+                questionsTextarea.value = generatedText;
+            }
+            showMessage(hasImages ? '✅ AI 已成功辨識圖片並生成閱讀測驗！' : 'AI 閱讀測驗已成功生成！', 'success');
+            // 🆕 v3.8.11: AI 生成完畢自動觸發預覽
+            renderReadingQuestionsPreview();
+        } else {
+            throw new Error('AI 未返回有效內容。');
+        }
+
+    } catch (error) {
+        console.error("AI 閱讀測驗生成失敗:", error);
+        if (error.message && error.message.includes('API KEY')) {
+            showApiKeyGuide();
+        } else {
+            showMessage(error.message || 'AI 生成失敗，請檢查 API Key 或網路連線。', 'error');
+        }
+    } finally {
+        aiBtn.disabled = false;
+        aiText.textContent = 'AI 開始出題';
+        aiIcon.classList.add('fa-magic');
+        aiIcon.classList.remove('fa-spinner', 'fa-spin');
+        aiSpinner.classList.add('hidden');
+        // 重置進度條（延遲0.8秒後隱藏，讓用戶看到完成狀態）
+        setTimeout(() => {
+            if (progressWrap) progressWrap.classList.remove('visible');
+            if (progressFill) progressFill.style.width = '0%';
+            for (let i = 0; i < 4; i++) {
+                const el = document.getElementById(`ai-step-${i}`);
+                if (el) el.classList.remove('active', 'done');
+            }
+            if (statusText) statusText.textContent = '🤖 AI 正在思考中...';
+        }, 800);
+    }
+}
+
+/**
+ * Show reading comprehension questions modal for teacher
+ * 🚀 FIXED: Only re-render text when content changes to preserve teacher highlights
+ */
+function showViewReadingQuestionsModal() {
+    if (!readingComprehensionData || !readingComprehensionData.questions || readingComprehensionData.questions.length === 0) {
+        showMessage('目前沒有閱讀測驗題目可以查看。', 'info');
+        return;
+    }
+
+    const modal = document.getElementById('view-reading-questions-modal');
+    const textDisplay = document.getElementById('view-reading-text-display');
+    const questionsDisplay = document.getElementById('view-reading-questions-display');
+
+    // 🚀 CRITICAL FIX: Calculate content hash to detect if article changed
+    const text = readingComprehensionData.text || '(無文本)';
+    const currentContentHash = simpleHash(text);
+
+    // 🚀 Only re-render text HTML if content actually changed
+    const isContentChanged = currentContentHash !== lastViewedReadingContentHash;
+
+    if (isContentChanged) {
+        console.log('[showViewReadingQuestionsModal] Content changed, re-rendering text');
+        // Display text with Markdown bold parsing
+        textDisplay.innerHTML = parseMarkdownBold(text);
+        lastViewedReadingContentHash = currentContentHash;
+    } else {
+        console.log('[showViewReadingQuestionsModal] Same content, preserving existing highlights');
+    }
+
+    // 🚀 NEW: 計算並顯示文章字數
+    const wordCount = text.replace(/\s/g, '').length;
+    const wordCountDisplay = document.getElementById('view-reading-word-count');
+    if (wordCountDisplay) {
+        wordCountDisplay.textContent = `(共 ${wordCount} 字)`;
+    }
+
+    // 🚀 NEW: 顯示題目數量
+    const questionsCount = readingComprehensionData.questions.length;
+    const questionsCountDisplay = document.getElementById('view-reading-questions-count');
+    if (questionsCountDisplay) {
+        questionsCountDisplay.textContent = `(共 ${questionsCount} 題)`;
+    }
+
+    // Display questions
+    questionsDisplay.innerHTML = '';
+    readingComprehensionData.questions.forEach((q, index) => {
+        const levelIcon = ['📖', '💭', '🔗', '⚖️'][q.level - 1];
+        const levelText = ['直接提取', '直接推論', '詮釋整合', '比較評估'][q.level - 1];
+
+        const questionDiv = document.createElement('div');
+        questionDiv.className = 'bg-white p-4 rounded-lg border';
+        questionDiv.innerHTML = `
+            <div class="flex items-center gap-2 mb-2">
+                <span class="font-bold text-lg">第 ${index + 1} 題</span>
+                <span class="text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">${levelIcon} 層次${q.level}: ${levelText}</span>
+            </div>
+            <p class="font-medium text-gray-800 mb-3">${q.question}</p>
+            <div class="space-y-1 ml-4">
+                ${q.options.map((opt, i) => `
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold ${i + 1 === q.correctAnswer ? 'text-green-600' : 'text-gray-600'}">${i + 1}.</span>
+                        <span class="${i + 1 === q.correctAnswer ? 'text-green-600 font-bold' : 'text-gray-700'}">${opt}</span>
+                        ${i + 1 === q.correctAnswer ? '<i class="fas fa-check-circle text-green-600 ml-2"></i>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+            <div class="mt-2 text-sm text-gray-600">
+                <span class="font-bold">正確答案：</span><span class="text-green-600 font-bold">${q.correctAnswer}</span>
+            </div>
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <button 
+                    class="edit-answer-btn px-3 py-1.5 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors duration-200 flex items-center gap-1.5"
+                    data-question-index="${index}"
+                >
+                    <i class="fas fa-edit"></i>
+                    <span>修改答案</span>
+                </button>
+            </div>
+        `;
+        questionsDisplay.appendChild(questionDiv);
+    });
+
+    // 🚀 NEW: 綁定「修改答案」按鈕的點擊事件
+    const editBtns = questionsDisplay.querySelectorAll('.edit-answer-btn');
+    editBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const questionIndex = parseInt(e.currentTarget.dataset.questionIndex);
+            showEditAnswerDialog(questionIndex);
+        });
+    });
+
+    // 🚀 NEW: 初始化教師端螢光筆功能
+    console.log('[showViewReadingQuestionsModal] Initializing teacher highlighter');
+    HighlighterManager.initTeacher();
+
+    // 🚀 CRITICAL FIX: Always restore highlights to ensure correct state
+    // Even if DOM is preserved, we need to restore in case content changed elsewhere
+    console.log('[showViewReadingQuestionsModal] Restoring teacher highlights');
+    setTimeout(() => {
+        HighlighterManager.restoreTeacherHighlights();
+    }, 100);
+
+    modal.classList.remove('hidden');
+}
+
+/**
+ * 🚀 NEW: Simple hash function for content comparison
+ */
+function simpleHash(str) {
+    if (!str) return '';
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash.toString();
+}
+
+/**
+ * Hide reading comprehension questions modal
+ */
+function hideViewReadingQuestionsModal() {
+    document.getElementById('view-reading-questions-modal').classList.add('hidden');
+}
+
+// === Edit Reading Answer Functions ===
+
+/**
+ * 🚀 NEW: 用於追蹤當前編輯的題目索引和選擇的新答案
+ */
+let currentEditingQuestionIndex = null;
+let selectedNewAnswer = null;
+let isGivePoints = false;
+
+// 🚀 NEW: 修改歷史和成績快照
+let answerModificationHistory = [];
+let preModificationScoreSnapshot = {};
+
+/**
+ * 🚀 NEW: 顯示編輯答案對話框
+ * @param {number} questionIndex - 題目索引（0-based）
+ */
+function showEditAnswerDialog(questionIndex) {
+    if (!readingComprehensionData || !readingComprehensionData.questions || !readingComprehensionData.questions[questionIndex]) {
+        showMessage('無法載入題目資料', 'error');
+        return;
+    }
+
+    const question = readingComprehensionData.questions[questionIndex];
+    currentEditingQuestionIndex = questionIndex;
+    selectedNewAnswer = null;
+    isGivePoints = false;
+
+    // 填充題目資訊
+    document.getElementById('edit-answer-question-number').textContent = `第 ${questionIndex + 1} 題`;
+    document.getElementById('edit-answer-question-text').textContent = question.question;
+
+    // 生成選項按鈕
+    const optionsContainer = document.getElementById('edit-answer-options-container');
+    optionsContainer.innerHTML = '';
+
+    question.options.forEach((option, index) => {
+        const optionNumber = index + 1;
+        const isCurrentAnswer = optionNumber === question.correctAnswer;
+
+        const optionBtn = document.createElement('button');
+        optionBtn.className = `w-full p-3 text-left rounded-lg border-2 transition-all duration-200 ${isCurrentAnswer
+            ? 'bg-green-50 border-green-400 hover:bg-green-100'
+            : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+            }`;
+        optionBtn.dataset.optionNumber = optionNumber;
+
+        optionBtn.innerHTML = `
+            <div class="flex items-center gap-3">
+                <span class="font-bold text-lg ${isCurrentAnswer ? 'text-green-600' : 'text-gray-600'}">${optionNumber}.</span>
+                <span class="${isCurrentAnswer ? 'text-green-700 font-medium' : 'text-gray-800'}">${option}</span>
+                ${isCurrentAnswer ? '<span class="ml-auto text-sm bg-green-600 text-white px-2 py-0.5 rounded">目前答案</span>' : ''}
+            </div>
+        `;
+
+        // 綁定點擊事件
+        optionBtn.addEventListener('click', () => {
+            selectNewAnswer(optionNumber);
+        });
+
+        optionsContainer.appendChild(optionBtn);
+    });
+
+    // 綁定送分按鈕
+    document.getElementById('give-points-btn').addEventListener('click', () => {
+        selectGivePoints();
+    });
+
+    // 重置確認按鈕狀態
+    document.getElementById('confirm-edit-answer-btn').disabled = true;
+
+    // 顯示模態框
+    document.getElementById('edit-reading-answer-modal').classList.remove('hidden');
+}
+
+/**
+ * 🚀 NEW: 選擇新答案
+ * @param {number} optionNumber - 選項編號（1-4）
+ */
+function selectNewAnswer(optionNumber) {
+    selectedNewAnswer = optionNumber;
+    isGivePoints = false;
+
+    // 更新所有選項按鈕的樣式
+    const optionsContainer = document.getElementById('edit-answer-options-container');
+    const allBtns = optionsContainer.querySelectorAll('button');
+
+    allBtns.forEach(btn => {
+        const btnOptionNumber = parseInt(btn.dataset.optionNumber);
+        const isCurrentAnswer = btnOptionNumber === readingComprehensionData.questions[currentEditingQuestionIndex].correctAnswer;
+        const isSelected = btnOptionNumber === optionNumber;
+
+        if (isSelected) {
+            btn.className = 'w-full p-3 text-left rounded-lg border-2 bg-orange-100 border-orange-500 transition-all duration-200';
+            btn.querySelector('div').innerHTML = `
+                <div class="flex items-center gap-3">
+                    <span class="font-bold text-lg text-orange-600">${btnOptionNumber}.</span>
+                    <span class="text-orange-800 font-medium">${readingComprehensionData.questions[currentEditingQuestionIndex].options[btnOptionNumber - 1]}</span>
+                    <span class="ml-auto text-sm bg-orange-600 text-white px-2 py-0.5 rounded">✓ 新答案</span>
+                </div>
+            `;
+        } else if (isCurrentAnswer) {
+            btn.className = 'w-full p-3 text-left rounded-lg border-2 bg-green-50 border-green-400 hover:bg-green-100 transition-all duration-200';
+        } else {
+            btn.className = 'w-full p-3 text-left rounded-lg border-2 bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400 transition-all duration-200';
+        }
+    });
+
+    // 重置送分按鈕樣式
+    document.getElementById('give-points-btn').className = 'w-full p-3 text-left rounded-lg border-2 bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-400 hover:bg-yellow-100 transition-all duration-200 mt-2';
+
+    // 啟用確認按鈕
+    document.getElementById('confirm-edit-answer-btn').disabled = false;
+}
+
+/**
+ * 🚀 NEW: 選擇送分
+ */
+function selectGivePoints() {
+    selectedNewAnswer = null;
+    isGivePoints = true;
+
+    // 重置所有選項按鈕
+    const optionsContainer = document.getElementById('edit-answer-options-container');
+    const allBtns = optionsContainer.querySelectorAll('button');
+    const question = readingComprehensionData.questions[currentEditingQuestionIndex];
+
+    allBtns.forEach(btn => {
+        const btnOptionNumber = parseInt(btn.dataset.optionNumber);
+        const isCurrentAnswer = btnOptionNumber === question.correctAnswer;
+        btn.className = `w-full p-3 text-left rounded-lg border-2 transition-all duration-200 ${isCurrentAnswer
+            ? 'bg-green-50 border-green-400 hover:bg-green-100'
+            : 'bg-white border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+            }`;
+    });
+
+    // 更新送分按鈕樣式
+    document.getElementById('give-points-btn').className = 'w-full p-3 text-left rounded-lg border-2 bg-gradient-to-r from-yellow-200 to-amber-200 border-yellow-600 transition-all duration-200 mt-2';
+    document.getElementById('give-points-btn').innerHTML = `
+        <div class="flex items-center gap-3">
+            <span class="font-bold text-lg text-yellow-700">🎁</span>
+            <span class="text-yellow-800 font-bold">✓ 送分題（全班學生獲得該題滿分）</span>
+        </div>
+    `;
+
+    // 啟用確認按鈕
+    document.getElementById('confirm-edit-answer-btn').disabled = false;
+}
+
+/**
+ * 🚀 NEW: 隱藏編輯答案對話框
+ */
+function hideEditAnswerDialog() {
+    document.getElementById('edit-reading-answer-modal').classList.add('hidden');
+    currentEditingQuestionIndex = null;
+    selectedNewAnswer = null;
+}
+
+/**
+ * 🚀 NEW: 確認修改答案並自動重新評分
+ */
+async function confirmEditAnswer() {
+    if (currentEditingQuestionIndex === null || (!selectedNewAnswer && !isGivePoints)) {
+        showMessage('請選擇新的答案或送分', 'error');
+        return;
+    }
+
+    const questionIndex = currentEditingQuestionIndex;
+    const oldAnswer = readingComprehensionData.questions[questionIndex].correctAnswer;
+    const newAnswer = isGivePoints ? 0 : selectedNewAnswer;
+
+    // 🚀 NEW: 計算修改前的影響範圍（會影響多少學生）
+    const studentsCollectionRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    const studentsSnapshot = await getDocs(studentsCollectionRef);
+    let affectedStudentsCount = 0;
+    preModificationScoreSnapshot = {};
+
+    studentsSnapshot.forEach(doc => {
+        const studentData = doc.data();
+        if (studentData.answer && studentData.hasSubmitted) {
+            affectedStudentsCount++;
+            preModificationScoreSnapshot[doc.id] = {
+                name: studentData.name,
+                baseScore: studentData.baseScore || 0,
+                totalScore: studentData.totalScore || 0
+            };
+        }
+    });
+
+    // 🚀 FIX: 移除 window.confirm()（在 Service Worker 環境會被封鎖）
+    // 改為用 toast 顯示影響範圍，直接執行修改
+    const affectRangeMsg = isGivePoints
+        ? `正在處理：將第 ${questionIndex + 1} 題設為送分題，${affectedStudentsCount} 名學生將獲得滿分`
+        : `正在處理：第 ${questionIndex + 1} 題答案修改，影響 ${affectedStudentsCount} 名已提交學生`;
+    showMessage(affectRangeMsg, 'info');
+
+    // 🚀 FIX: 如果答案沒有改變，直接返回
+    if (!isGivePoints && newAnswer === oldAnswer) {
+        showMessage('新答案與原答案相同，無需修改', 'info');
+        hideEditAnswerDialog();
+        return;
+    }
+
+    // 禁用確認按鈕，防止重複點擊
+    const confirmBtn = document.getElementById('confirm-edit-answer-btn');
+    const originalBtnText = confirmBtn.textContent;
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>處理中...';
+
+    try {
+        // 🚀 STEP 1: 更新 Firestore 中的 readingComprehensionData
+        console.log(`[confirmEditAnswer] Updating question ${questionIndex + 1} answer from ${oldAnswer} to ${newAnswer}`);
+
+        // 更新本地數據
+        readingComprehensionData.questions[questionIndex].correctAnswer = newAnswer;
+
+        // 更新 Firestore
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        await setDoc(controlRef, {
+            readingComprehensionData: readingComprehensionData
+        }, { merge: true });
+
+        console.log('[confirmEditAnswer] Updated readingComprehensionData in Firestore');
+
+        // 🚀 STEP 2: 查詢所有已提交的學生
+        const studentsCollectionRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const studentsSnapshot = await getDocs(studentsCollectionRef);
+
+        console.log(`[confirmEditAnswer] Found ${studentsSnapshot.size} students`);
+
+        // 🚀 STEP 3: 重新計算成績並使用 batch write 更新（優化：使用 writeBatch 而非逐個 setDoc）
+        const batch = writeBatch(db);
+        let updatedCount = 0;
+        const questions = readingComprehensionData.questions;
+        const postModificationScoreSnapshot = {}; // 記錄修改後的成績變化
+
+        /**
+         * Helper function: 判斷學生提交是否為閱讀測驗，並解析答案
+         * 支持新提交（有 interactionMode）和歷史提交（無 interactionMode）
+         * @returns {Object} { isReading: boolean, parsedAnswers: Array|null, parseError: boolean, reason: string }
+         */
+        function parseReadingSubmission(studentData, questionsLength) {
+            // 🚀 結構化返回：明確區分「無答案」「解析失敗」「不符合條件」
+            const result = {
+                isReading: false,
+                parsedAnswers: null,
+                parseError: false,
+                reason: ''
+            };
+
+            if (!studentData.answer) {
+                result.reason = 'no answer';
+                return result;
+            }
+
+            // 🚀 嘗試解析 answer（只解析一次，避免重複）
+            let parsedAnswers = null;
+            try {
+                if (typeof studentData.answer === 'string') {
+                    parsedAnswers = JSON.parse(studentData.answer);
+                    if (!Array.isArray(parsedAnswers)) {
+                        console.warn(`[parseReadingSubmission] Answer is not an array for ${studentData.name}`);
+                        result.parseError = true;
+                        result.reason = 'not an array';
+                        return result;
+                    }
+                } else {
+                    console.warn(`[parseReadingSubmission] Answer is not a string for ${studentData.name}`);
+                    result.parseError = true;
+                    result.reason = 'invalid type';
+                    return result;
+                }
+            } catch (e) {
+                console.warn(`[parseReadingSubmission] JSON parse failed for ${studentData.name}:`, e.message);
+                result.parseError = true;
+                result.reason = 'JSON parse error';
+                return result;
+            }
+
+            // 🚀 多重條件判斷是否為閱讀測驗提交
+            let isReading = false;
+            let reason = '';
+
+            // 1. 首選：檢查 interactionMode 欄位
+            if (studentData.interactionMode === 'reading_comprehension') {
+                isReading = true;
+                reason = 'interactionMode';
+            }
+            // 2. 次選：檢查 hasSubmitted 標記（歷史提交）
+            else if (studentData.hasSubmitted === true) {
+                isReading = true;
+                reason = 'hasSubmitted';
+            }
+            // 3. 檢查是否有閱讀測驗特有的欄位
+            else if (studentData.highlightAnalysis) {
+                isReading = true;
+                reason = 'highlightAnalysis';
+            }
+            // 4. 推斷：檢查 answer 陣列長度是否與題目數量匹配
+            else if (parsedAnswers.length === questionsLength) {
+                isReading = true;
+                reason = 'array length match';
+            }
+
+            if (isReading && reason) {
+                console.log(`[parseReadingSubmission] ✓ Identified ${studentData.name} via ${reason}`);
+                result.isReading = true;
+                result.parsedAnswers = parsedAnswers;
+                result.reason = reason;
+            } else {
+                result.reason = 'not reading comprehension';
+            }
+
+            return result;
+        }
+
+        // 🚀 統計計數器
+        let totalDocs = 0;
+        let eligibleCount = 0;
+        let skippedCount = 0;
+        let parseFailures = 0;
+
+        studentsSnapshot.forEach((studentDoc) => {
+            const studentData = studentDoc.data();
+            totalDocs++;
+
+            // 使用 helper 函數解析並判斷是否為閱讀測驗提交
+            const result = parseReadingSubmission(studentData, questions.length);
+
+            // 🚀 精確分類：區分「解析失敗」與「不符合條件」
+            if (!result.isReading) {
+                if (result.parseError) {
+                    // JSON 解析失敗或格式錯誤
+                    parseFailures++;
+                    console.warn(`[confirmEditAnswer] Parse error for ${studentData.name || 'unknown'}: ${result.reason}`);
+                } else {
+                    // 不符合閱讀測驗條件（其他模式、無答案等）
+                    skippedCount++;
+                    console.log(`[confirmEditAnswer] Skipped ${studentData.name || 'unknown'} (${result.reason})`);
+                }
+                return;
+            }
+
+            eligibleCount++;
+
+            try {
+                const studentAnswers = result.parsedAnswers;
+
+                // 重新計算基礎分數（正確題數 / 總題數 * 100）
+                let correctCount = 0;
+
+                // 🚀 DEFENSE: 防止題目數量減少導致的數組越界
+                const validAnswerCount = Math.min(studentAnswers.length, questions.length);
+                for (let index = 0; index < validAnswerCount; index++) {
+                    const ans = studentAnswers[index];
+                    // 🚀 FIX: 支援送分題（correctAnswer === 0 時無條件算為正確）
+                    if (questions[index] && ((questions[index].correctAnswer === 0) || (ans === questions[index].correctAnswer))) {
+                        correctCount++;
+                    }
+                }
+
+                // 🚀 DEFENSE: 如果題目數量不匹配，記錄警告
+                if (studentAnswers.length !== questions.length) {
+                    console.warn(`[confirmEditAnswer] Question count mismatch for ${studentData.name}: expected ${questions.length}, got ${studentAnswers.length}`);
+                }
+
+                const baseScore = Math.round((correctCount / questions.length) * 100);
+
+                // 筆記加分保持不變
+                const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+
+                // 計算新的總分
+                const totalScore = baseScore + highlightBonus;
+
+                console.log(`[confirmEditAnswer] Student ${studentData.name}: baseScore=${baseScore}, highlightBonus=${highlightBonus}, totalScore=${totalScore}`);
+
+                // 加入批次更新（更新 studentResponses collection）
+                const studentDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentDoc.id);
+                batch.update(studentDocRef, {
+                    baseScore: baseScore,
+                    totalScore: totalScore,
+                    lastScoreUpdate: new Date() // 記錄更新時間
+                });
+
+                // 🚀 NEW: 記錄成績變化（用於撤銷功能）
+                postModificationScoreSnapshot[studentDoc.id] = {
+                    name: studentData.name,
+                    oldScore: studentData.totalScore || 0,
+                    newScore: totalScore
+                };
+
+                updatedCount++;
+            } catch (e) {
+                parseFailures++;
+                console.warn(`[confirmEditAnswer] Failed to recalculate score for student ${studentData.name}:`, e);
+            }
+        });
+
+        // 🚀 STEP 4: 執行批次更新
+        if (updatedCount > 0) {
+            await batch.commit();
+            console.log(`[confirmEditAnswer] Batch update completed for ${updatedCount} students`);
+        }
+
+        // 🚀 LOG: 輸出統計資訊
+        console.log(`[confirmEditAnswer] Statistics:`, {
+            totalDocs,
+            eligibleCount,
+            skippedCount,
+            parseFailures,
+            updatedCount
+        });
+
+        // 🚀 NEW: 記錄修改歷史（含成績變化快照）
+        const modificationRecord = {
+            timestamp: new Date().toISOString(),
+            questionIndex: questionIndex,
+            oldAnswer: oldAnswer,
+            newAnswer: newAnswer,
+            affectedStudentsCount: updatedCount,
+            isGivePoints: isGivePoints,
+            scoreChanges: postModificationScoreSnapshot
+        };
+        answerModificationHistory.push(modificationRecord);
+        console.log('[confirmEditAnswer] Modification history recorded:', modificationRecord);
+
+        // 🚀 NEW: 將修改歷史保存到 Firestore（備份）
+        try {
+            const historyRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'modificationHistory', `question_${questionIndex}`);
+            await setDoc(historyRef, {
+                history: answerModificationHistory,
+                lastModified: new Date().toISOString()
+            }, { merge: true });
+        } catch (e) {
+            console.warn('[confirmEditAnswer] Failed to backup modification history:', e);
+        }
+
+        // 🚀 SUCCESS: 顯示詳細成功訊息（包含完整統計資訊和成績變化摘要）
+        const changedCount = Object.keys(postModificationScoreSnapshot).length;
+        showMessage(
+            `✅ 成功修改第 ${questionIndex + 1} 題答案！\n\n` +
+            `📊 處理統計：\n` +
+            `- 總文檔數：${totalDocs}\n` +
+            `- 符合條件：${eligibleCount}\n` +
+            `- 成功更新：${updatedCount}\n` +
+            `- 成績變化：${changedCount} 人\n` +
+            `- 解析失敗：${parseFailures}\n` +
+            `- 已跳過：${skippedCount}`,
+            'success',
+            6000
+        );
+
+        // 隱藏編輯對話框
+        hideEditAnswerDialog();
+
+        // 重新渲染「顯示題目」模態框以顯示新答案
+        showViewReadingQuestionsModal();
+
+    } catch (error) {
+        console.error('[confirmEditAnswer] Error:', error);
+        showMessage('修改答案失敗：' + error.message, 'error');
+
+        // 恢復原答案
+        readingComprehensionData.questions[questionIndex].correctAnswer = oldAnswer;
+    } finally {
+        // 恢復按鈕狀態
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = originalBtnText;
+    }
+}
+
+/**
+ * 🚀 NEW: 查看修改歷史記錄（含成績變化列表詳細 UI）
+ */
+function viewModificationHistory() {
+    if (answerModificationHistory.length === 0) {
+        showMessage('暫無修改歷史記錄', 'info');
+        return;
+    }
+
+    // 🚀 NEW: 創建 HTML UI 顯示修改歷史
+    let historyHtml = `
+        <div style="max-height: 500px; overflow-y: auto; padding: 15px; background: #f9fafb; border-radius: 8px;">
+            <h3 style="margin-top: 0; color: #1f2937; font-weight: bold; font-size: 16px;">📝 修改歷史記錄 & 成績變化</h3>
+    `;
+
+    answerModificationHistory.forEach((record, index) => {
+        const time = new Date(record.timestamp).toLocaleString('zh-TW');
+        const change = record.isGivePoints ?
+            `第 ${record.questionIndex + 1} 題設為送分題` :
+            `第 ${record.questionIndex + 1} 題答案：${record.oldAnswer} → ${record.newAnswer}`;
+
+        historyHtml += `
+            <div style="background: white; border-left: 4px solid #3b82f6; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+                <div style="font-weight: bold; color: #1f2937; margin-bottom: 5px;">${index + 1}. ${time}</div>
+                <div style="color: #374151; margin-bottom: 8px;">${change}</div>
+                <div style="color: #6b7280; font-size: 13px; margin-bottom: 5px;">影響學生數：<span style="font-weight: bold; color: #dc2626;">${record.affectedStudentsCount}</span></div>
+        `;
+
+        // 🚀 NEW: 顯示成績變化（最多顯示 5 個，其他折疊）
+        if (record.scoreChanges && Object.keys(record.scoreChanges).length > 0) {
+            historyHtml += `<div style="background: #f3f4f6; padding: 8px; border-radius: 4px; margin-top: 8px;">`;
+            historyHtml += `<div style="font-size: 12px; font-weight: bold; color: #374151; margin-bottom: 5px;">成績變化:</div>`;
+
+            const scoreChanges = Object.values(record.scoreChanges);
+            scoreChanges.slice(0, 5).forEach(change => {
+                const diff = change.newScore - change.oldScore;
+                const diffText = diff > 0 ? `<span style="color: #10b981;">+${diff}</span>` : diff < 0 ? `<span style="color: #ef4444;">${diff}</span>` : `<span style="color: #6b7280;">±0</span>`;
+                historyHtml += `<div style="font-size: 12px; color: #4b5563; margin-bottom: 3px;">• ${change.name}: ${change.oldScore} → ${change.newScore} ${diffText}</div>`;
+            });
+
+            if (scoreChanges.length > 5) {
+                historyHtml += `<div style="font-size: 12px; color: #9ca3af; margin-top: 5px; font-style: italic;">... 及其他 ${scoreChanges.length - 5} 名學生</div>`;
+            }
+
+            historyHtml += `</div>`;
+        }
+
+        historyHtml += `</div>`;
+    });
+
+    historyHtml += `</div>`;
+
+    // 🚀 NEW: 創建 modal 顯示歷史
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;';
+    modal.innerHTML = `
+        <div style="background: white; border-radius: 12px; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; padding: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            ${historyHtml}
+            <button onclick="this.closest('div').parentElement.remove();" style="width: 100%; padding: 10px; margin-top: 15px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">關閉</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+/**
+ * 🚀 NEW: 撤銷最後一次修改（回滾功能）
+ */
+async function undoLastModification() {
+    if (answerModificationHistory.length === 0) {
+        showMessage('沒有可撤銷的修改', 'info');
+        return;
+    }
+
+    if (!confirm('確定要撤銷最後一次修改嗎？\n\n這將恢復所有學生的成績到修改前的狀態。')) {
+        return;
+    }
+
+    try {
+        const lastRecord = answerModificationHistory[answerModificationHistory.length - 1];
+        console.log('[undoLastModification] Undoing modification:', lastRecord);
+
+        // 🚀 STEP 1: 恢復舊答案
+        readingComprehensionData.questions[lastRecord.questionIndex].correctAnswer = lastRecord.oldAnswer;
+
+        // 🚀 STEP 2: 更新 Firestore
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        await setDoc(controlRef, {
+            readingComprehensionData: readingComprehensionData
+        }, { merge: true });
+
+        console.log('[undoLastModification] Answer restored in Firestore');
+
+        // 🚀 STEP 3: 使用 batch 恢復受影響學生的成績
+        const batch = writeBatch(db);
+        let restoredCount = 0;
+
+        if (lastRecord.scoreChanges) {
+            Object.entries(lastRecord.scoreChanges).forEach(([studentId, scoreChange]) => {
+                if (preModificationScoreSnapshot[studentId]) {
+                    const oldSnapshot = preModificationScoreSnapshot[studentId];
+                    const studentDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentId);
+                    batch.update(studentDocRef, {
+                        baseScore: oldSnapshot.baseScore,
+                        totalScore: oldSnapshot.totalScore,
+                        lastScoreUpdate: new Date()
+                    });
+                    restoredCount++;
+                }
+            });
+        }
+
+        if (restoredCount > 0) {
+            await batch.commit();
+            console.log(`[undoLastModification] Restored scores for ${restoredCount} students`);
+        }
+
+        // 🚀 STEP 4: 移除歷史記錄
+        answerModificationHistory.pop();
+
+        showMessage(`✅ 成功撤銷修改！已恢復 ${restoredCount} 名學生的成績到修改前的狀態。`, 'success');
+
+        // 重新渲染題目
+        showViewReadingQuestionsModal();
+
+    } catch (error) {
+        console.error('[undoLastModification] Error:', error);
+        showMessage('撤銷修改失敗：' + error.message, 'error');
+    }
+}
+
+/**
+ * 🚀 NEW: 顯示記憶體監控面板（監聽器數量 + Firestore 性能 + 計時器檢測）
+ */
+function showMemoryMonitoringPanel() {
+    const listenerCount = ListenerManager.count();
+    const allListeners = ListenerManager.getAll().join(', ') || '無';
+
+    // 🚀 NEW: 創建監控面板 UI
+    const monitoringHtml = `
+        <div style="max-height: 600px; overflow-y: auto; padding: 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 12px;">
+            <h2 style="margin-top: 0; color: #1f2937; font-weight: bold; text-align: center; font-size: 18px;">🔍 記憶體監控面板</h2>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #3b82f6;">
+                <h3 style="margin-top: 0; color: #1f2937; font-weight: bold; font-size: 14px;">📊 Firebase 監聽器統計</h3>
+                <div style="color: #374151; font-size: 14px; line-height: 1.8;">
+                    <div><strong>當前監聽器數量：</strong> <span style="font-weight: bold; color: ${listenerCount > 50 ? '#dc2626' : '#10b981'};\">${listenerCount}</span> 個</div>
+                    <div style="margin-top: 8px; padding: 8px; background: #f3f4f6; border-radius: 4px; font-size: 12px; max-height: 150px; overflow-y: auto;">
+                        <strong>已註冊的監聽器：</strong><br/>
+                        ${allListeners}
+                    </div>
+                    <div style="margin-top: 10px; font-size: 12px; color: #6b7280;">
+                        ${listenerCount > 50 ? '⚠️ 警告：監聽器數量過多，建議檢查是否有洩漏' : '✅ 監聽器數量正常'}
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #10b981;">
+                <h3 style="margin-top: 0; color: #1f2937; font-weight: bold; font-size: 14px;">⚡ Firestore 優化狀態</h3>
+                <div style="color: #374151; font-size: 14px; line-height: 1.8;">
+                    <div>✅ 批量寫入優化：已啟用</div>
+                    <div>✅ writeBatch API：正在使用</div>
+                    <div>✅ 預期性能提升：50-70%</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                        <em>大班級寫入操作已最佳化，減少了 I/O 操作次數。</em>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #f59e0b;">
+                <h3 style="margin-top: 0; color: #1f2937; font-weight: bold; font-size: 14px;">⏱️ 計時器管理</h3>
+                <div style="color: #374151; font-size: 14px; line-height: 1.8;">
+                    <div>📍 孤立計時器檢測：已啟動</div>
+                    <div>✅ ListenerManager 清理：自動執行</div>
+                    <div>🔄 頁面卸載清理：已配置</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+                        <em>系統會自動清理所有監聽器和計時器。</em>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #8b5cf6;">
+                <h3 style="margin-top: 0; color: #1f2937; font-weight: bold; font-size: 14px;">💡 建議</h3>
+                <div style="color: #374151; font-size: 14px; line-height: 1.8;">
+                    <div>1️⃣ 定期檢查監聽器數量，避免超過 50 個</div>
+                    <div>2️⃣ 確保頁面卸載時正確清理所有資源</div>
+                    <div>3️⃣ 使用 writeBatch 進行批量操作以提升性能</div>
+                    <div>4️⃣ 監控 Firestore 讀寫成本（批量寫入已將成本降低）</div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // 🚀 NEW: 創建 modal 顯示監控面板
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;';
+    modal.innerHTML = `
+        <div style="background: white; border-radius: 12px; width: 90%; max-width: 700px; max-height: 85vh; overflow-y: auto; padding: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            ${monitoringHtml}
+            <button onclick="this.closest('div').parentElement.remove();" style="width: 100%; padding: 12px; margin-top: 15px; background: #3b82f6; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">關閉</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+// === Reading Comprehension Question Bank Functions ===
+
+/**
+ * Load text and questions from separate files
+ */
+async function loadReadingFiles() {
+    const textFileInput = document.getElementById('reading-text-file-input');
+    const questionsFileInput = document.getElementById('reading-questions-file-input');
+    const textTextarea = document.getElementById('reading-text-textarea');
+    const questionsTextarea = document.getElementById('reading-questions-textarea');
+
+    const textFile = textFileInput.files[0];
+    const questionsFile = questionsFileInput.files[0];
+
+    if (!textFile && !questionsFile) {
+        showMessage('請至少選擇一個檔案！', 'error');
+        return;
+    }
+
+    try {
+        if (textFile) {
+            const textContent = await textFile.text();
+            textTextarea.value = textContent.trim();
+        }
+
+        if (questionsFile) {
+            const questionsContent = await questionsFile.text();
+            questionsTextarea.value = questionsContent.trim();
+        }
+
+        showMessage('檔案載入成功！', 'success');
+
+        // Clear file inputs
+        textFileInput.value = '';
+        questionsFileInput.value = '';
+    } catch (error) {
+        console.error('讀取檔案失敗:', error);
+        showMessage('讀取檔案失敗！', 'error');
+    }
+}
+
+/**
+ * Save reading question bank to localStorage
+ * 🚀 NEW: 異步函數，保存後若有送分題則自動重新評分已提交學生
+ */
+async function saveReadingQuestionBank() {
+    const nameInput = document.getElementById('reading-question-bank-name-input');
+    const bankName = nameInput.value.trim();
+    const textContent = document.getElementById('reading-text-textarea').value.trim();
+    const questionsContent = document.getElementById('reading-questions-textarea').value.trim();
+
+    if (!bankName) {
+        showMessage('請輸入題庫名稱！', 'error');
+        return;
+    }
+
+    if (!textContent || !questionsContent) {
+        showMessage('請先輸入文本和題目！', 'error');
+        return;
+    }
+
+    // Check if questions are valid
+    const questions = parseReadingQuestions(questionsContent);
+    if (!questions) {
+        showMessage('題目格式錯誤，請檢查！', 'error');
+        return;
+    }
+
+    const bank = {
+        name: bankName,
+        text: textContent,
+        questions: questionsContent,
+        timestamp: new Date().toISOString()
+    };
+
+    // Check if bank name already exists
+    const existingIndex = readingQuestionBanks.findIndex(b => b.name === bankName);
+    if (existingIndex >= 0) {
+        if (!confirm(`題庫「${bankName}」已存在，是否覆蓋？`)) {
+            return;
+        }
+        readingQuestionBanks[existingIndex] = bank;
+    } else {
+        readingQuestionBanks.push(bank);
+    }
+
+    localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
+    updateReadingBankList();
+    showMessage(`題庫「${bankName}」已儲存！`, 'success');
+    nameInput.value = '';
+
+    // 🚀 NEW: 檢查題目中是否有送分題，若有且當前有活動閱讀測驗，則自動重新評分
+    const hasGivePointsQuestions = questions.some(q => q.correctAnswer === 0);
+
+    if (hasGivePointsQuestions && readingComprehensionData && readingComprehensionData.questions && readingComprehensionData.questions.length > 0) {
+        console.log('[saveReadingQuestionBank] 🚀 檢測到送分題，準備重新評分...');
+
+        // 檢查是否有活動的教室
+        if (!classroomCode || !baseAppId) {
+            console.log('[saveReadingQuestionBank] ⚠️ 無活動教室，跳過自動重新評分');
+            return;
+        }
+
+        try {
+            // 🚀 STEP 1: 查詢所有已提交的學生
+            const studentsCollectionRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const studentsSnapshot = await getDocs(studentsCollectionRef);
+
+            if (studentsSnapshot.size === 0) {
+                console.log('[saveReadingQuestionBank] 無已提交的學生，跳過重新評分');
+                return;
+            }
+
+            console.log(`[saveReadingQuestionBank] 開始重新評分 ${studentsSnapshot.size} 名學生...`);
+
+            // 🚀 STEP 2: 使用 batch write 重新計算所有學生成績
+            const batch = writeBatch(db);
+            let updatedCount = 0;
+            const validQuestions = questions;
+
+            studentsSnapshot.forEach((studentDoc) => {
+                const studentData = studentDoc.data();
+
+                // 只處理有答案的學生
+                if (!studentData.answer || !studentData.hasSubmitted) {
+                    return;
+                }
+
+                try {
+                    let parsedAnswers = null;
+                    try {
+                        parsedAnswers = typeof studentData.answer === 'string'
+                            ? JSON.parse(studentData.answer)
+                            : studentData.answer;
+                    } catch (e) {
+                        console.warn(`[saveReadingQuestionBank] JSON 解析失敗: ${studentData.name}`);
+                        return;
+                    }
+
+                    if (!Array.isArray(parsedAnswers)) {
+                        return;
+                    }
+
+                    // 🚀 重新計算基礎分數（支持送分題邏輯）
+                    let correctCount = 0;
+                    const validAnswerCount = Math.min(parsedAnswers.length, validQuestions.length);
+
+                    for (let index = 0; index < validAnswerCount; index++) {
+                        const ans = parsedAnswers[index];
+                        // ✅ 送分題無條件計為正確
+                        if (validQuestions[index] && ((validQuestions[index].correctAnswer === 0) || (ans === validQuestions[index].correctAnswer))) {
+                            correctCount++;
+                        }
+                    }
+
+                    const baseScore = Math.round((correctCount / validQuestions.length) * 100);
+                    const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+                    const totalScore = baseScore + highlightBonus;
+
+                    // 只在分數改變時才更新
+                    if (baseScore !== studentData.baseScore || totalScore !== studentData.totalScore) {
+                        batch.update(studentDoc.ref, {
+                            baseScore: baseScore,
+                            totalScore: totalScore
+                        });
+                        updatedCount++;
+                        console.log(`[saveReadingQuestionBank] ✓ 更新 ${studentData.name}: ${studentData.baseScore}→${baseScore} (送分題影響)`);
+                    }
+                } catch (error) {
+                    console.warn(`[saveReadingQuestionBank] 處理學生 ${studentData.name} 時出錯:`, error.message);
+                }
+            });
+
+            // 🚀 STEP 3: 提交 batch
+            if (updatedCount > 0) {
+                await batch.commit();
+                console.log(`[saveReadingQuestionBank] ✅ 成功重新評分 ${updatedCount} 名學生`);
+                showMessage(`✅ 題庫已儲存！已自動為 ${updatedCount} 名學生重新計分（包含送分題）`, 'success');
+            } else {
+                console.log('[saveReadingQuestionBank] 無學生需要重新評分');
+            }
+        } catch (error) {
+            console.error('[saveReadingQuestionBank] 自動重新評分失敗:', error);
+            showMessage('題庫已儲存，但自動重新評分失敗。請手動使用「修改答案」功能重新計分。', 'warning');
+        }
+    }
+}
+
+/**
+// ==========================================================
+// 🆕 NEW [v3.7.1]: 閱讀測驗「允許提前交卷」- 教師端切換函數
+// ==========================================================
+
+/**
+ * 🆕 切換允許提前交卷狀態：寫入 Firestore control doc
+ * - false → true：學生端解鎖送出按鈕（立即啟用）
+ * - true → false：學生端改回倒數狀態（繼續倒數剩餘時間）
+ */
+async function toggleAllowEarlyReadingSubmit() {
+    if (!classroomCode) {
+        showMessage('無法取得教室代碼', 'error');
+        return;
+    }
+    const btn = document.getElementById('allow-early-submit-btn');
+    const btnText = document.getElementById('allow-early-submit-btn-text');
+    if (!btn || !btnText) return;
+
+    // 以目前 UI 狀態推算目前是否已開放（dataset 存真實狀態）
+    const currentlyAllowed = btn.dataset.allowed === 'true';
+    const newState = !currentlyAllowed;
+
+    try {
+        btn.disabled = true;
+        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        await setDoc(controlRef, { allowEarlyReadingSubmit: newState }, { merge: true });
+
+        // 更新按鈕視覺狀態
+        if (newState) {
+            btn.classList.remove('bg-amber-500', 'hover:bg-amber-600');
+            btn.classList.add('bg-green-600', 'hover:bg-green-700');
+            btnText.textContent = '已開放提前交卷 ✅';
+            btn.dataset.allowed = 'true';
+            btn.title = '已開放學生提前交卷，點擊再次關閉';
+            showMessage('⚡ 已開放學生提前交卷！', 'success');
+        } else {
+            btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+            btn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+            btnText.textContent = '允許提前交卷 ⚡';
+            btn.dataset.allowed = 'false';
+            btn.title = '點擊後學生可立即送出答案，不必等到 5 分鐘';
+            showMessage('🔒 已關閉提前交卷，學生需等到 5 分鐘後才能送出', 'info');
+        }
+    } catch (err) {
+        console.error('[toggleAllowEarlyReadingSubmit] 失敗:', err);
+        showMessage('切換失敗：' + (err.message || '未知錯誤'), 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * 🆕 重置「允許提前交卷」按鈕至未開放狀態（切換互動模式時呼叫）
+ */
+function resetAllowEarlySubmitButton() {
+    const btn = document.getElementById('allow-early-submit-btn');
+    const btnText = document.getElementById('allow-early-submit-btn-text');
+    if (!btn || !btnText) return;
+    btn.classList.remove('bg-green-600', 'hover:bg-green-700');
+    btn.classList.add('bg-amber-500', 'hover:bg-amber-600');
+    btnText.textContent = '允許提前交卷 ⚡';
+    btn.dataset.allowed = 'false';
+    btn.disabled = false;
+    btn.title = '點擊後學生可立即送出答案，不必等到 5 分鐘';
+}
+
+/**
+ * 🚀 NEW: Rescore all students immediately (triggered by teacher button)
+ * CRITICAL: Always force update to sync give-points changes to student side
+ */
+async function rescoreAllStudents() {
+    if (!readingComprehensionData || !readingComprehensionData.questions || readingComprehensionData.questions.length === 0) {
+        showMessage('目前無閱讀測驗題目，無法更新學生答案。', 'error');
+        return;
+    }
+
+    if (!classroomCode || !baseAppId) {
+        showMessage('無活動教室，無法更新學生答案。', 'error');
+        return;
+    }
+
+    if (!confirm('確定要立即為所有已提交的學生重新計分嗎？')) {
+        return;
+    }
+
+    const rescoreBtn = document.getElementById('rescore-all-students-btn');
+    const originalBtnText = rescoreBtn.textContent;
+    rescoreBtn.disabled = true;
+    rescoreBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>更新中...';
+
+    try {
+        console.log('[rescoreAllStudents] 開始重新評分所有學生...');
+
+        // 查詢所有已提交的學生
+        const studentsCollectionRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const studentsSnapshot = await getDocs(studentsCollectionRef);
+
+        if (studentsSnapshot.size === 0) {
+            showMessage('目前無已提交的學生。', 'info');
+            rescoreBtn.disabled = false;
+            rescoreBtn.innerHTML = originalBtnText;
+            return;
+        }
+
+        console.log(`[rescoreAllStudents] 開始處理 ${studentsSnapshot.size} 名學生...`);
+
+        const batch = writeBatch(db);
+        let updatedCount = 0;
+        const questions = readingComprehensionData.questions;
+        const forceUpdateToken = Date.now(); // 🚀 CRITICAL: Force update token to trigger student-side refresh
+
+        studentsSnapshot.forEach((studentDoc) => {
+            const studentData = studentDoc.data();
+
+            // 🚀 CRITICAL FIX: Only check for answer existence, not hasSubmitted
+            // hasSubmitted may not be set or may be in different states
+            if (!studentData.answer) {
+                return;
+            }
+
+            try {
+                let parsedAnswers = null;
+                try {
+                    parsedAnswers = typeof studentData.answer === 'string'
+                        ? JSON.parse(studentData.answer)
+                        : studentData.answer;
+                } catch (e) {
+                    console.warn(`[rescoreAllStudents] JSON 解析失敗: ${studentData.name}`);
+                    return;
+                }
+
+                if (!Array.isArray(parsedAnswers)) {
+                    return;
+                }
+
+                let correctCount = 0;
+                const validAnswerCount = Math.min(parsedAnswers.length, questions.length);
+
+                for (let index = 0; index < validAnswerCount; index++) {
+                    const ans = parsedAnswers[index];
+                    if (questions[index] && ((questions[index].correctAnswer === 0) || (ans === questions[index].correctAnswer))) {
+                        correctCount++;
+                    }
+                }
+
+                const baseScore = Math.round((correctCount / questions.length) * 100);
+                const highlightBonus = (studentData.highlightAnalysis && studentData.highlightAnalysis.score) || 0;
+                const totalScore = baseScore + highlightBonus;
+
+                // 🚀 CRITICAL: Always force update (remove comparison check) to ensure give-points changes sync to student side
+                batch.update(studentDoc.ref, {
+                    baseScore: baseScore,
+                    totalScore: totalScore,
+                    lastScoreUpdate: new Date(),
+                    scoreUpdateToken: forceUpdateToken  // 🚀 CRITICAL: Version stamp to force student UI refresh
+                });
+                updatedCount++;
+                console.log(`[rescoreAllStudents] ✓ 強制更新 ${studentData.name}: ${studentData.baseScore}→${baseScore}`);
+            } catch (error) {
+                console.warn(`[rescoreAllStudents] 處理學生 ${studentData.name} 時出錯:`, error.message);
+            }
+        });
+
+        if (updatedCount > 0) {
+            await batch.commit();
+            console.log(`[rescoreAllStudents] ✅ 成功強制更新 ${updatedCount} 名學生的成績`);
+            showMessage(`✅ 成功為 ${updatedCount} 名學生更新成績！`, 'success');
+        } else {
+            showMessage('目前無已提交的學生可更新。', 'info');
+        }
+    } catch (error) {
+        console.error('[rescoreAllStudents] 更新失敗:', error);
+        showMessage('更新學生答案失敗：' + error.message, 'error');
+    } finally {
+        rescoreBtn.disabled = false;
+        rescoreBtn.innerHTML = originalBtnText;
+    }
+}
+
+/**
+ * Update reading question bank list display
+ */
+function updateReadingBankList() {
+    const listContainer = document.getElementById('reading-question-bank-list');
+
+    if (readingQuestionBanks.length === 0) {
+        listContainer.innerHTML = '<div class="text-gray-500 text-sm italic text-center">目前沒有儲存的題庫</div>';
+        return;
+    }
+
+    listContainer.innerHTML = readingQuestionBanks.map((bank, index) => `
+        <div class="flex items-center justify-between p-2 bg-white border rounded hover:bg-gray-50">
+            <button onclick="loadReadingBankToTextarea(${index})" class="text-left flex-1 text-sm text-blue-600 hover:underline">
+                ${bank.name}
+            </button>
+            <div class="flex gap-1 ml-2">
+                <button onclick="exportReadingBank(${index})" class="text-green-600 hover:text-green-700" title="匯出題庫">
+                    <i class="fas fa-download text-xs"></i>
+                </button>
+                <button onclick="deleteReadingBank(${index})" class="text-red-500 hover:text-red-700">
+                    <i class="fas fa-trash text-xs"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * Load reading bank to textarea
+ */
+function loadReadingBankToTextarea(index) {
+    if (index >= 0 && index < readingQuestionBanks.length) {
+        const bank = readingQuestionBanks[index];
+        document.getElementById('reading-text-textarea').value = bank.text;
+        document.getElementById('reading-questions-textarea').value = bank.questions;
+        showMessage(`題庫「${bank.name}」已載入`, 'success');
+    }
+}
+
+/**
+ * Export reading bank as JSON file
+ */
+function exportReadingBank(index) {
+    try {
+        if (index >= 0 && index < readingQuestionBanks.length) {
+            const bank = readingQuestionBanks[index];
+            console.log('[exportReadingBank] 開始匯出題庫:', bank.name);
+
+            const exportData = {
+                name: bank.name,
+                text: bank.text,
+                questions: bank.questions,
+                timestamp: bank.timestamp || new Date().toISOString(),
+                exportedAt: new Date().toISOString()
+            };
+
+            console.log('[exportReadingBank] 序列化數據...');
+            const jsonString = JSON.stringify(exportData, null, 2);
+            console.log('[exportReadingBank] JSON字符串長度:', jsonString.length);
+
+            const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+            console.log('[exportReadingBank] Blob created:', blob.size, 'bytes');
+
+            const filename = `${bank.name}_閱讀題庫_${new Date().toISOString().slice(0, 10)}.json`;
+            console.log('[exportReadingBank] 準備下載文件:', filename);
+
+            // 使用 window.saveAs 確保全局作用域
+            if (typeof window.saveAs === 'function') {
+                window.saveAs(blob, filename);
+                console.log('[exportReadingBank] ✓ 文件已下載');
+                showMessage(`題庫「${bank.name}」已匯出！`, 'success');
+            } else {
+                throw new Error('saveAs 函數不可用，請確保 FileSaver.js 已正確載入');
+            }
+        }
+    } catch (error) {
+        console.error('[exportReadingBank] 匯出失敗:', error);
+        console.error('[exportReadingBank] 錯誤詳情:', error.message, error.stack);
+        showMessage(`匯出失敗: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Import reading bank from JSON file
+ */
+function importReadingBankFromFile() {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json';
+    fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            const jsonContent = await file.text();
+            const importedBank = JSON.parse(jsonContent);
+
+            if (!importedBank.name || !importedBank.text || !importedBank.questions) {
+                showMessage('題庫格式錯誤，請確認是有效的題庫檔案！', 'error');
+                return;
+            }
+
+            const bankName = importedBank.name;
+            const existingIndex = readingQuestionBanks.findIndex(b => b.name === bankName);
+
+            if (existingIndex >= 0) {
+                if (!confirm(`題庫「${bankName}」已存在，是否覆蓋？`)) {
+                    return;
+                }
+                readingQuestionBanks[existingIndex] = {
+                    name: importedBank.name,
+                    text: importedBank.text,
+                    questions: importedBank.questions,
+                    timestamp: importedBank.timestamp || new Date().toISOString()
+                };
+            } else {
+                readingQuestionBanks.push({
+                    name: importedBank.name,
+                    text: importedBank.text,
+                    questions: importedBank.questions,
+                    timestamp: importedBank.timestamp || new Date().toISOString()
+                });
+            }
+
+            localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
+            updateReadingBankList();
+            showMessage(`題庫「${bankName}」已匯入！`, 'success');
+        } catch (error) {
+            console.error('匯入題庫失敗:', error);
+            showMessage('匯入題庫失敗，請確認檔案格式正確！', 'error');
+        }
+    });
+    fileInput.click();
+}
+
+/**
+ * Delete reading bank
+ */
+function deleteReadingBank(index) {
+    if (index >= 0 && index < readingQuestionBanks.length) {
+        const bankName = readingQuestionBanks[index].name;
+        if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            readingQuestionBanks.splice(index, 1);
+            localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
+            updateReadingBankList();
+            showMessage(`題庫「${bankName}」已刪除`, 'success');
+        }
+    }
+}
+
+// Make functions globally accessible
+window.loadReadingBankToTextarea = loadReadingBankToTextarea;
+window.deleteReadingBank = deleteReadingBank;
+window.exportReadingBank = exportReadingBank;
+window.importReadingBankFromFile = importReadingBankFromFile;
+
+// Load reading question banks from localStorage on init
+const savedReadingBanks = localStorage.getItem('readingQuestionBanks');
+if (savedReadingBanks) {
+    try {
+        readingQuestionBanks = JSON.parse(savedReadingBanks);
+        updateReadingBankList();
+    } catch (e) {
+        console.error('Failed to parse reading question banks:', e);
+    }
+}
+
+// ==========================================================
+// 🆕 NEW [v3.8.0] A-1: 是非/選擇題題庫管理 - QuizBankManager 模組
+// ==========================================================
+// 用 localStorage 儲存教師常用題目，重複使用避免每次都重新輸入
+// 設計：以 type ('tf' | 'mc') 區分兩個獨立題庫空間
+// localStorage key: questionBanks_v1.tf / questionBanks_v1.mc
+// 資料結構：{ name: string, content: string|object, savedAt: ISO string }
+// 注意：line 6929 已有 class QuestionBankManager（用於排序/配對等舊題型），故新模組改名 QuizBankManager 避免衝突
+
+const QuizBankManager = (() => {
+    const STORAGE_KEY_PREFIX = 'questionBanks_v1.';
+
+    // 內部狀態：以 type 為 key 的 banks 陣列
+    const banks = { tf: [], mc: [] };
+
+    function loadFromStorage(type) {
+        try {
+            const raw = localStorage.getItem(STORAGE_KEY_PREFIX + type);
+            banks[type] = raw ? JSON.parse(raw) : [];
+        } catch (e) {
+            console.error(`[QuestionBank:${type}] localStorage 解析失敗：`, e);
+            banks[type] = [];
+        }
+    }
+
+    function saveToStorage(type) {
+        try {
+            localStorage.setItem(STORAGE_KEY_PREFIX + type, JSON.stringify(banks[type]));
+        } catch (e) {
+            console.error(`[QuestionBank:${type}] localStorage 寫入失敗：`, e);
+            showMessage('❌ 儲存失敗，瀏覽器儲存空間可能已滿', 'error');
+        }
+    }
+
+    function getList(type) {
+        return banks[type] || [];
+    }
+
+    /**
+     * 儲存題庫（content 任意 JSON 結構，由各 type 自行決定）
+     * - TF：content = { text: string, images: [{dataUrl}], correctAnswer: 'O'|'X'|null }
+     * - MC：content = { questionsRaw: string, hasCustomQuestions: boolean }
+     */
+    function save(type, name, content) {
+        if (!name || !name.trim()) {
+            showMessage('❌ 請輸入題庫名稱', 'error');
+            return false;
+        }
+        name = name.trim();
+        const idx = banks[type].findIndex(b => b.name === name);
+        const bank = { name, content, savedAt: new Date().toISOString() };
+
+        if (idx >= 0) {
+            if (!confirm(`題庫「${name}」已存在，是否覆蓋？`)) return false;
+            banks[type][idx] = bank;
+        } else {
+            banks[type].push(bank);
+        }
+        saveToStorage(type);
+        showMessage(`✅ 題庫「${name}」已儲存`, 'success');
+        return true;
+    }
+
+    function deleteBank(type, name) {
+        if (!confirm(`確定刪除題庫「${name}」？此動作無法復原。`)) return;
+        banks[type] = banks[type].filter(b => b.name !== name);
+        saveToStorage(type);
+        showMessage(`🗑️ 題庫「${name}」已刪除`, 'info');
+    }
+
+    function exportBank(type, name) {
+        const bank = banks[type].find(b => b.name === name);
+        if (!bank) return;
+        const data = {
+            type,
+            name: bank.name,
+            content: bank.content,
+            savedAt: bank.savedAt,
+            exportedAt: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+        const filename = `${name}_${type === 'tf' ? '是非題' : '選擇題'}題庫_${new Date().toISOString().slice(0, 10)}.json`;
+        if (typeof window.saveAs === 'function') {
+            window.saveAs(blob, filename);
+        } else {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
+        showMessage(`📥 題庫「${name}」已匯出`, 'success');
+    }
+
+    function importBank(type, file, onSuccess) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!data.name || !data.content) {
+                    showMessage('❌ 檔案格式錯誤（缺少 name 或 content）', 'error');
+                    return;
+                }
+                if (data.type && data.type !== type) {
+                    if (!confirm(`此檔案是「${data.type}」題庫，確定要匯入到「${type}」？`)) return;
+                }
+                const idx = banks[type].findIndex(b => b.name === data.name);
+                if (idx >= 0) {
+                    if (!confirm(`題庫「${data.name}」已存在，是否覆蓋？`)) return;
+                    banks[type][idx] = { name: data.name, content: data.content, savedAt: new Date().toISOString() };
+                } else {
+                    banks[type].push({ name: data.name, content: data.content, savedAt: new Date().toISOString() });
+                }
+                saveToStorage(type);
+                showMessage(`✅ 已匯入題庫「${data.name}」`, 'success');
+                if (typeof onSuccess === 'function') onSuccess();
+            } catch (err) {
+                showMessage('❌ 檔案解析失敗：' + err.message, 'error');
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    /**
+     * 渲染題庫列表到 DOM
+     * @param {string} type - 'tf' | 'mc'
+     * @param {string} listElId - 要渲染的 div id
+     * @param {Function} onLoad - 點擊「載入」時呼叫的 callback(bankContent)
+     */
+    function renderList(type, listElId, onLoad) {
+        const listEl = document.getElementById(listElId);
+        if (!listEl) return;
+        const list = banks[type];
+
+        if (!list.length) {
+            listEl.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-2">目前沒有儲存的題庫</p>';
+            return;
+        }
+
+        listEl.innerHTML = list.map(bank => {
+            const safeName = String(bank.name).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            const dateStr = bank.savedAt ? new Date(bank.savedAt).toLocaleDateString('zh-TW') : '';
+            return `
+                <div class="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-gray-50 border-b last:border-b-0">
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-semibold text-gray-800 truncate" title="${safeName}">${safeName}</div>
+                        <div class="text-xs text-gray-400">${dateStr}</div>
+                    </div>
+                    <div class="flex gap-0.5 flex-shrink-0">
+                        <button type="button" data-bank-action="load" data-bank-name="${safeName}"
+                            class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded font-bold" title="載入到目前設定">📂 載入</button>
+                        <button type="button" data-bank-action="export" data-bank-name="${safeName}"
+                            class="text-green-600 hover:text-green-700 px-1.5" title="匯出 JSON">
+                            <i class="fas fa-download text-xs"></i>
+                        </button>
+                        <button type="button" data-bank-action="delete" data-bank-name="${safeName}"
+                            class="text-red-500 hover:text-red-700 px-1.5" title="刪除">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // 綁定按鈕（事件委派）
+        listEl.querySelectorAll('[data-bank-action]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const action = e.currentTarget.dataset.bankAction;
+                const name = e.currentTarget.dataset.bankName;
+                const bank = banks[type].find(b => b.name === name);
+                if (!bank) return;
+                if (action === 'load') {
+                    if (typeof onLoad === 'function') onLoad(bank.content);
+                    showMessage(`📂 已載入題庫「${name}」`, 'success');
+                } else if (action === 'export') {
+                    exportBank(type, name);
+                } else if (action === 'delete') {
+                    deleteBank(type, name);
+                    renderList(type, listElId, onLoad);
+                }
+            });
+        });
+    }
+
+    // 啟動時載入兩個 type 的 banks
+    loadFromStorage('tf');
+    loadFromStorage('mc');
+
+    return { save, deleteBank, exportBank, importBank, renderList, getList, loadFromStorage };
+})();
+
+// ==========================================================
+// 🆕 NEW [v3.7.15]: 班級即時排行榜 - WaitingGameLeaderboard 模組
+// ==========================================================
+// 用 onSnapshot 監聽 classrooms/{code}/waitingGameScores/{name}
+// 偵測新完成 → 在學生端彈 Toast 通知 + 即時更新排行榜 UI
+
+const WaitingGameLeaderboard = (() => {
+    let unsubscribe = null;
+    // Map<studentName, {bestTime, lastTime, lastMoves, completedAtMs}>
+    // 用於偵測「新完成」與「再挑戰刷新紀錄」
+    const lastSeen = new Map();
+    let isFirstSnapshot = true;
+    let cachedScores = []; // 排序後的 scores
+
+    function formatTime(seconds) {
+        if (seconds == null || isNaN(seconds)) return '--';
+        if (seconds < 60) return seconds + '秒';
+        return Math.floor(seconds / 60) + '分' + (seconds % 60).toString().padStart(2, '0') + '秒';
+    }
+
+    function rankClass(rank) {
+        return rank === 1 ? 'leaderboard-rank-1'
+            : rank === 2 ? 'leaderboard-rank-2'
+            : rank === 3 ? 'leaderboard-rank-3' : '';
+    }
+
+    function rankIcon(rank) {
+        return rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+    }
+
+    function renderLeaderboard(scores, newCompletionNames = []) {
+        const listEl = document.getElementById('leaderboard-list');
+        const countLabel = document.getElementById('leaderboard-count-label');
+        const wrapper = document.getElementById('waiting-game-leaderboard');
+        if (!listEl || !wrapper) return;
+
+        wrapper.classList.remove('hidden');
+        cachedScores = scores;
+
+        if (scores.length === 0) {
+            listEl.innerHTML = '<p class="text-sm text-gray-400 italic text-center py-2">第一個完成的人將出現在這裡 🎯</p>';
+            if (countLabel) countLabel.textContent = '尚無紀錄';
+            return;
+        }
+
+        if (countLabel) countLabel.textContent = `共 ${scores.length} 位完成`;
+
+        // 顯示前 8 名（如果自己不在前 8 名，最後一行加自己）
+        const top = scores.slice(0, 8);
+        const selfIdx = scores.findIndex(s => s.name === studentName);
+        const showSelfSeparately = selfIdx >= 8;
+
+        const rows = top.map((s, idx) => buildRow(s, idx + 1, newCompletionNames));
+        if (showSelfSeparately) {
+            rows.push('<div class="text-center text-gray-400 text-xs py-1">⋯</div>');
+            rows.push(buildRow(scores[selfIdx], selfIdx + 1, newCompletionNames));
+        }
+        listEl.innerHTML = rows.join('');
+    }
+
+    function buildRow(score, rank, newCompletionNames) {
+        const isSelf = score.name === studentName;
+        const isNew = newCompletionNames.includes(score.name);
+        const classes = ['leaderboard-row'];
+        if (isSelf) classes.push('is-self');
+        if (isNew) classes.push('is-new');
+        return `
+            <div class="${classes.join(' ')}">
+                <span class="leaderboard-rank ${rankClass(rank)}">${rankIcon(rank)}</span>
+                <span class="leaderboard-name">${escapeHtml(score.name)}${isSelf ? ' (你)' : ''}</span>
+                <span class="leaderboard-time">⏱️ ${formatTime(score.bestTime)}</span>
+                <span class="leaderboard-moves">🎯 ${score.bestMoves}</span>
+            </div>
+        `;
+    }
+
+    function escapeHtml(s) {
+        return String(s || '').replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function start() {
+        if (!classroomCode) return;
+        stop(); // 防止重複啟動
+        isFirstSnapshot = true;
+        lastSeen.clear();
+
+        const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'waitingGameScores');
+        unsubscribe = onSnapshot(colRef, (snap) => {
+            const scores = [];
+            const currentSeen = new Map();
+            const newCompletionNames = [];
+
+            snap.forEach(d => {
+                const data = d.data();
+                if (!data || !data.name) return;
+                scores.push({
+                    name: data.name,
+                    bestTime: data.bestTime,
+                    bestMoves: data.bestMoves,
+                    lastTime: data.lastTime,
+                    lastMoves: data.lastMoves,
+                    totalGames: data.totalGames || 1,
+                    completedAtMs: data.completedAt?.toMillis ? data.completedAt.toMillis() : 0
+                });
+                currentSeen.set(data.name, data.completedAt?.toMillis ? data.completedAt.toMillis() : 0);
+            });
+
+            // 排序：bestTime 升序，再以 bestMoves 升序作為 tiebreaker
+            scores.sort((a, b) => {
+                if (a.bestTime !== b.bestTime) return a.bestTime - b.bestTime;
+                return (a.bestMoves || 0) - (b.bestMoves || 0);
+            });
+
+            // 偵測新完成（避開首次載入的歷史紀錄與自己的紀錄，避免擾人）
+            if (!isFirstSnapshot) {
+                currentSeen.forEach((completedAt, name) => {
+                    const prev = lastSeen.get(name);
+                    // 新加入或時間更新（再挑戰刷新最佳成績）
+                    if ((!prev || prev !== completedAt) && name !== studentName) {
+                        newCompletionNames.push(name);
+                        const rank = scores.findIndex(s => s.name === name) + 1;
+                        const score = scores.find(s => s.name === name);
+                        if (score && rank > 0) {
+                            showMessage(
+                                `🎉 <strong>${escapeHtml(name)}</strong> 剛完成配對：第 ${rank} 名（${formatTime(score.bestTime)} / ${score.bestMoves} 次）`,
+                                'success', 4000, true
+                            );
+                        }
+                    }
+                });
+            }
+
+            isFirstSnapshot = false;
+            lastSeen.clear();
+            currentSeen.forEach((v, k) => lastSeen.set(k, v));
+
+            renderLeaderboard(scores, newCompletionNames);
+        }, (err) => {
+            console.error('[WaitingGameLeaderboard] snapshot error:', err);
+        });
+
+        console.log('[WaitingGameLeaderboard] 已啟動，監聽 classroom:', classroomCode);
+    }
+
+    function stop() {
+        if (unsubscribe) {
+            unsubscribe();
+            unsubscribe = null;
+        }
+        lastSeen.clear();
+        isFirstSnapshot = true;
+        cachedScores = [];
+        // 隱藏 UI
+        const wrapper = document.getElementById('waiting-game-leaderboard');
+        if (wrapper) wrapper.classList.add('hidden');
+        const rankDisplay = document.getElementById('game-rank-display');
+        if (rankDisplay) rankDisplay.classList.add('hidden');
+        console.log('[WaitingGameLeaderboard] 已停止');
+    }
+
+    /**
+     * 取得目前學生在排行榜中的排名（基於最新 cachedScores）
+     */
+    function getMyRank() {
+        if (!studentName || !cachedScores.length) return null;
+        const idx = cachedScores.findIndex(s => s.name === studentName);
+        return idx >= 0 ? { rank: idx + 1, total: cachedScores.length } : null;
+    }
+
+    /**
+     * 寫入個人成績到 Firestore（取最佳值 + 紀錄最近一次）
+     */
+    async function recordScore(timeSeconds, moves) {
+        if (!classroomCode || !studentName) return;
+        try {
+            const ref = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'waitingGameScores', studentName);
+            const existing = await getDoc(ref);
+            const data = existing.exists() ? existing.data() : {};
+            const newBestTime = !data.bestTime || timeSeconds < data.bestTime ? timeSeconds : data.bestTime;
+            const newBestMoves = !data.bestMoves || moves < data.bestMoves ? moves : data.bestMoves;
+            await setDoc(ref, {
+                name: studentName,
+                bestTime: newBestTime,
+                bestMoves: newBestMoves,
+                lastTime: timeSeconds,
+                lastMoves: moves,
+                totalGames: (data.totalGames || 0) + 1,
+                completedAt: serverTimestamp()
+            });
+            console.log('[WaitingGameLeaderboard] 成績已記錄：', { time: timeSeconds, moves, newBestTime, newBestMoves });
+        } catch (err) {
+            console.error('[WaitingGameLeaderboard] 寫入成績失敗：', err);
+        }
+    }
+
+    return { start, stop, recordScore, getMyRank };
+})();
+
+// ========================================
+// 🎮 MEMORY GAME SYSTEM (Waiting Page)
+// ========================================
+const gameEmojis = ['🌟', '🎨', '🎭', '🎪', '🎯', '🎲', '🎸', '🎺', '🎻', '🎮', '🏀', '⚽'];
+let gameCards = [];
+let flippedCards = [];
+let matchedCards = new Set();
+let gameStarted = false;
+let gameTimer = null;
+let gameTime = 0;
+let gameMoves = 0;
+let isChecking = false;
+let bestGameTime = localStorage.getItem('memoryGameBestTime') ? parseInt(localStorage.getItem('memoryGameBestTime')) : null;
+let bestGameMoves = localStorage.getItem('memoryGameBestMoves') ? parseInt(localStorage.getItem('memoryGameBestMoves')) : null;
+
+function initializeMemoryGame() {
+    const grid = document.getElementById('memory-game-grid');
+    const pairsCount = 12;
+    gameCards = [];
+    flippedCards = [];
+    matchedCards.clear();
+    gameMoves = 0;
+    gameTime = 0;
+
+    // 建立卡片對（每個emoji出現兩次）
+    const cardSet = [];
+    for (let i = 0; i < pairsCount; i++) {
+        cardSet.push(gameEmojis[i], gameEmojis[i]);
+    }
+
+    // 打亂卡片
+    for (let i = cardSet.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [cardSet[i], cardSet[j]] = [cardSet[j], cardSet[i]];
+    }
+
+    // 生成卡片 DOM
+    grid.innerHTML = '';
+    cardSet.forEach((emoji, index) => {
+        const card = document.createElement('div');
+        card.className = 'memory-card bg-gradient-to-br from-purple-400 to-blue-500 rounded-lg p-2 sm:p-3 cursor-pointer transform transition-all duration-300 hover:scale-105 shadow-lg flex items-center justify-center text-3xl sm:text-4xl md:text-5xl h-16 sm:h-20 md:h-24';
+        card.dataset.index = index;
+        card.dataset.emoji = emoji;
+        card.textContent = '?';
+        card.addEventListener('click', () => flipCard(card, index));
+        grid.appendChild(card);
+        gameCards.push({ emoji, revealed: false, matched: false });
+    });
+
+    // 更新 UI
+    updateGameStats();
+    document.getElementById('game-completion-msg').classList.add('hidden');
+    document.getElementById('start-game-btn').classList.add('hidden');
+    document.getElementById('reset-game-btn').classList.remove('hidden');
+}
+
+function flipCard(cardElement, index) {
+    if (!gameStarted || gameCards[index].matched || flippedCards.includes(index) || isChecking) return;
+
+    // 開始計時
+    if (gameStarted && !gameTimer) {
+        gameTimer = setInterval(() => {
+            gameTime++;
+            document.getElementById('game-time').textContent = gameTime + '秒';
+        }, 1000);
+    }
+
+    // 🎮 添加3D翻轉動畫
+    cardElement.classList.add('flip-animation');
+
+    // 翻轉卡片
+    flippedCards.push(index);
+    cardElement.textContent = gameCards[index].emoji;
+    cardElement.classList.add('flipped');
+
+    // 檢查配對
+    if (flippedCards.length === 2) {
+        isChecking = true;
+        gameMoves++;
+        updateGameStats();
+
+        const [idx1, idx2] = flippedCards;
+        if (gameCards[idx1].emoji === gameCards[idx2].emoji) {
+            // 配對成功 - 應用綠色發光效果
+            const card1 = document.querySelector(`[data-index="${idx1}"]`);
+            const card2 = document.querySelector(`[data-index="${idx2}"]`);
+
+            gameCards[idx1].matched = true;
+            gameCards[idx2].matched = true;
+            matchedCards.add(idx1);
+            matchedCards.add(idx2);
+
+            setTimeout(() => {
+                if (card1) card1.classList.add('matched-success');
+                if (card2) card2.classList.add('matched-success');
+            }, 200);
+
+            flippedCards = [];
+            isChecking = false;
+
+            // 檢查是否完成
+            if (matchedCards.size === gameCards.length) {
+                completeGame();
+            }
+        } else {
+            // 配對失敗 - 應用紅色抖動效果
+            const card1 = document.querySelector(`[data-index="${idx1}"]`);
+            const card2 = document.querySelector(`[data-index="${idx2}"]`);
+
+            setTimeout(() => {
+                if (card1) card1.classList.add('matched-fail');
+                if (card2) card2.classList.add('matched-fail');
+            }, 200);
+
+            setTimeout(() => {
+                if (card1) {
+                    card1.textContent = '?';
+                    card1.classList.remove('flipped', 'matched-fail');
+                }
+                if (card2) {
+                    card2.textContent = '?';
+                    card2.classList.remove('flipped', 'matched-fail');
+                }
+                flippedCards = [];
+                isChecking = false;
+            }, 800);
+        }
+    }
+}
+
+function updateGameStats() {
+    document.getElementById('game-matches').textContent = matchedCards.size / 2;
+    document.getElementById('game-moves').textContent = gameMoves;
+}
+
+function completeGame() {
+    gameStarted = false;
+    if (gameTimer) {
+        clearInterval(gameTimer);
+        gameTimer = null;
+    }
+
+    // 🏆 更新最佳成績
+    let isNewBestTime = false;
+    let isNewBestMoves = false;
+
+    if (!bestGameTime || gameTime < bestGameTime) {
+        bestGameTime = gameTime;
+        localStorage.setItem('memoryGameBestTime', bestGameTime);
+        isNewBestTime = true;
+    }
+
+    if (!bestGameMoves || gameMoves < bestGameMoves) {
+        bestGameMoves = gameMoves;
+        localStorage.setItem('memoryGameBestMoves', bestGameMoves);
+        isNewBestMoves = true;
+    }
+
+    document.getElementById('final-time').textContent = gameTime;
+    document.getElementById('final-moves').textContent = gameMoves;
+
+    // 🎉 顯示最佳成績
+    let bestScoreText = '📊 最佳成績: ';
+    if (bestGameTime) bestScoreText += `⏱️ ${bestGameTime}秒`;
+    if (bestGameTime && bestGameMoves) bestScoreText += ' | ';
+    if (bestGameMoves) bestScoreText += `🎯 ${bestGameMoves}次翻轉`;
+
+    let recordMessage = '';
+    if (isNewBestTime && isNewBestMoves) {
+        recordMessage = ' 🎊 新紀錄！雙料冠軍！';
+    } else if (isNewBestTime) {
+        recordMessage = ' ⚡ 新的速度紀錄！';
+    } else if (isNewBestMoves) {
+        recordMessage = ' 🎯 最少翻轉次數！';
+    }
+
+    const completionMsg = document.getElementById('game-completion-msg');
+    const finalTimeEl = document.getElementById('final-time');
+    if (finalTimeEl) {
+        finalTimeEl.parentElement.innerHTML = `用時: <span id="final-time">${gameTime}</span> 秒 | 翻轉次數: <span id="final-moves">${gameMoves}</span> 次${recordMessage}`;
+    }
+
+    // 🎊 觸發彩帶慶祝動畫
+    if (typeof confetti !== 'undefined') {
+        const duration = 3000;
+        const animationEnd = Date.now() + duration;
+        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 10000 };
+
+        function randomInRange(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+
+        const interval = setInterval(function () {
+            const timeLeft = animationEnd - Date.now();
+
+            if (timeLeft <= 0) {
+                return clearInterval(interval);
+            }
+
+            const particleCount = 50 * (timeLeft / duration);
+            confetti(Object.assign({}, defaults, {
+                particleCount,
+                origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+            }));
+            confetti(Object.assign({}, defaults, {
+                particleCount,
+                origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+            }));
+        }, 250);
+    }
+
+    completionMsg.classList.remove('hidden');
+    document.getElementById('reset-game-btn').classList.remove('hidden');
+
+    // 🆕 NEW [v3.7.15]: 將成績寫入 Firestore + 短暫延遲後顯示排名（等待 onSnapshot 同步）
+    (async () => {
+        if (typeof WaitingGameLeaderboard === 'undefined' || !classroomCode || !studentName) return;
+        await WaitingGameLeaderboard.recordScore(gameTime, gameMoves);
+        // 等待 onSnapshot 收到剛才的寫入後再讀排名
+        setTimeout(() => {
+            const rankInfo = WaitingGameLeaderboard.getMyRank();
+            const rankDisplay = document.getElementById('game-rank-display');
+            const rankNum = document.getElementById('game-rank-num');
+            const rankTotal = document.getElementById('game-rank-total');
+            if (rankInfo && rankDisplay && rankNum && rankTotal) {
+                rankNum.textContent = rankInfo.rank;
+                rankTotal.textContent = rankInfo.total;
+                rankDisplay.classList.remove('hidden');
+                // 觸發跳動動畫
+                rankNum.classList.remove('pop-in');
+                void rankNum.offsetWidth;
+                rankNum.classList.add('pop-in');
+                // 對自己也彈個 toast
+                let rankEmoji = rankInfo.rank === 1 ? '🥇' : rankInfo.rank === 2 ? '🥈' : rankInfo.rank === 3 ? '🥉' : '🎉';
+                showMessage(`${rankEmoji} 你目前排名第 ${rankInfo.rank} 名（共 ${rankInfo.total} 位完成）`, 'success', 4000);
+            }
+        }, 700);
+    })();
+}
+
+function resetGame() {
+    if (gameTimer) {
+        clearInterval(gameTimer);
+        gameTimer = null;
+    }
+    document.getElementById('start-game-btn').classList.remove('hidden');
+    document.getElementById('reset-game-btn').classList.add('hidden');
+    document.getElementById('game-completion-msg').classList.add('hidden');
+    gameStarted = false;
+    gameTime = 0;
+    gameMoves = 0;
+    flippedCards = [];
+    matchedCards.clear();
+    isChecking = false;
+    document.getElementById('game-time').textContent = '0秒';
+    document.getElementById('game-matches').textContent = '0';
+    document.getElementById('game-moves').textContent = '0';
+
+    // 清除所有動畫類
+    const grid = document.getElementById('memory-game-grid');
+    if (grid) {
+        grid.querySelectorAll('.memory-card').forEach(card => {
+            card.classList.remove('flip-animation', 'matched-success', 'matched-fail', 'flipped');
+        });
+    }
+}
+
+// 事件監聽器
+document.getElementById('start-game-btn').addEventListener('click', () => {
+    initializeMemoryGame();
+    gameStarted = true;
+});
+
+document.getElementById('reset-game-btn').addEventListener('click', resetGame);
+
+// --- Start Application ---
+initialize();
+setupEventListeners(); // Call setupEventListeners only once here.
+

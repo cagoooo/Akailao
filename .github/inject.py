@@ -1,4 +1,5 @@
 import os
+import sys
 
 def inject_secrets():
     print("Starting secret injection...")
@@ -7,8 +8,15 @@ def inject_secrets():
         print("Warning: FIREBASE_API_KEY environment variable not found or empty.")
         return
 
-    # Files to process
+    # 🆕 [v3.8.25] D-1: 支援 --target 參數指定目標檔案
     files_to_update = ["index.html", "set.html"]
+    for arg in sys.argv[1:]:
+        if arg.startswith("--target"):
+            # --target dist/index.html
+            if "=" in arg:
+                files_to_update = [arg.split("=", 1)[1]]
+            elif sys.argv.index(arg) + 1 < len(sys.argv):
+                files_to_update = [sys.argv[sys.argv.index(arg) + 1]]
     
     gemini_key = os.environ.get("GEMINI_API_KEY")
 

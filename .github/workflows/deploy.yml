@@ -21,7 +21,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    # 🆕 NEW [v3.8.5] D-5: 強制 actions 使用 Node.js 24（消除 Node 20 deprecation 警告，2026-09-16 後將強制升級）
+    # 🆕 NEW [v3.8.5] D-5: 強制 actions 使用 Node.js 24
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -35,22 +35,38 @@ jobs:
         with:
           enablement: true
 
-      - name: 🔑 注入環境變數
-        run: python .github/inject.py
+      - name: 📦 安裝依賴
+        run: npm ci
+
+      # 🆕 [v3.8.25] D-1: Vite 構建（取代舊的 inject.py + tailwind 流程）
+      # Vite 會自動注入 API Keys（透過 define 配置讀取環境變數）
+      # 並將所有 JS/CSS 內聯回單一 HTML 輸出至 dist/
+      - name: 🔧 Vite 構建
+        run: npm run build
         env:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      # 🆕 NEW [v3.8.7] D-2: 建置 Tailwind CSS（保險措施，本地 commit 應已含 tailwind-build.css）
-      - name: 🎨 建置 Tailwind CSS
+      # 備用：對 dist/index.html 執行 inject.py 替換殘留佔位符
+      - name: 🔑 注入環境變數（備用）
         run: |
-          npm install --no-save @tailwindcss/cli@^4 tailwindcss@^4
-          npx tailwindcss -i tailwind.input.css -o tailwind-build.css --minify
+          python .github/inject.py --target dist/index.html 2>/dev/null || true
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      # 複製 set.html 和其他靜態資源到 dist/
+      - name: 📋 複製靜態資源
+        run: |
+          cp set.html dist/set.html 2>/dev/null || true
+          cp -r icons dist/icons 2>/dev/null || true
+          cp manifest.json dist/manifest.json 2>/dev/null || true
+          cp sw.js dist/sw.js 2>/dev/null || true
 
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: 'dist'
 
       - name: 🌐 部署到 GitHub Pages
         id: deployment

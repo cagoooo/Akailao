@@ -1,0 +1,2921 @@
+/* === Style block 1 (from line 24) === */
+
+/* 🐛 CRITICAL FIX [v3.8.17]: 終極修復 — 確保 .hidden 在任何 CSS 中都能生效
+   問題根因：inline <style> 在 <link tailwind-build.css> 之後載入，
+   所有在 inline style 裡有 display:* 宣告的 class（如 .btn、.flex 元素等），
+   都會因 source order 蓋過 tailwind 的 .hidden { display: none }。
+
+   解法：在 inline <style> 最頂端，用 [class~="hidden"] 屬性選擇器 + !important
+   強制覆蓋所有衝突。這比 .hidden { display: none !important } 更安全，
+   因為 Tailwind 的 responsive utilities（如 sm:inline）同樣在 tailwind-build.css
+   裡用 @media 宣告，在 inline style 之前載入，不會被此規則影響。
+   但 sm:inline 在手機端不會套用（因為 @media 不匹配），所以不衝突。
+
+   注意：Tailwind 的 responsive utilities（sm:block、md:flex 等）若要在
+   有 hidden class 的元素上生效，需要用 JS 動態 remove('hidden') 而非
+   依賴 CSS cascade — 這是目前專案的標準做法。
+*/
+[class~="hidden"] {
+    display: none !important;
+}
+
+/* 🐛 CRITICAL FIX [v3.8.9]: 修復 V3.8.7 Tailwind 本地化後 modal 預設不隱藏的問題
+
+   問題背景：
+   V3.8.7 把 Tailwind 從 CDN 改為本地 build (tailwind-build.css 用 <link> 在頁首)，
+   但 inline <style> 緊接 <link> 之後，所以兩個位置的 CSS 衝突時 source order 後者贏：
+     - tailwind-build.css: .hidden { display: none }
+     - inline <style>:    .magnified-image-modal { display: flex }
+                          .zoomable-image-viewer { display: flex }
+   兩個 selector specificity 都是 (0,1,0)，後者勝 → 所有預設帶 hidden 的 modal
+   （quick-poll-stats / zoomable-image-viewer / statistics 等 30+ 個 modal）
+   一進頁面就全部跳出，黑色蒙版蓋滿畫面。
+
+   解法：所有「預設 hidden 但開啟時 display: flex」的 modal 規則改用 :not(.hidden) 修飾，
+        避免與 .hidden 衝突。不能用 !important 否則破壞 responsive utility（如 hidden sm:inline）。
+   */
+/* 🐛 v3.8.17: 還原 modal 規則為正常寫法（不再需要 :not(.hidden) hack，由頂端通用規則處理） */
+.magnified-image-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(5px);
+}
+
+.zoomable-image-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0, 0, 0, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* --- 全新初始畫面美化樣式 --- */
+body.initial-view-background {
+    background-color: #f0f4f8;
+    /* Fallback */
+    background-image:
+        radial-gradient(circle at 1px 1px, #d1d5db 1px, transparent 0),
+        radial-gradient(circle at 20px 20px, #d1d5db 1px, transparent 0);
+    background-size: 40px 40px;
+}
+
+.role-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #ffffff;
+    padding: 1.25rem 1rem;
+    border-radius: 1rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+    transition: all 0.3s ease-in-out;
+    text-align: center;
+}
+
+@media (min-width: 640px) {
+    .role-card {
+        padding: 1.5rem 1.25rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .role-card {
+        padding: 2rem 1.5rem;
+    }
+}
+
+.role-card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.05);
+    border-color: #93c5fd;
+    /* Light blue border on hover */
+}
+
+.role-card-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    transition: all 0.3s ease-in-out;
+}
+
+@media (min-width: 640px) {
+    .role-card-icon {
+        width: 70px;
+        height: 70px;
+        font-size: 2.25rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .role-card-icon {
+        width: 80px;
+        height: 80px;
+        font-size: 2.5rem;
+    }
+}
+
+.role-card .btn {
+    font-size: 1rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+@media (min-width: 640px) {
+    .role-card .btn {
+        font-size: 1.1rem;
+        padding-top: 0.625rem;
+        padding-bottom: 0.625rem;
+    }
+}
+
+/* --- 初始畫面樣式結束 --- */
+
+/* 自訂樣式 */
+body {
+    font-family: 'Noto Sans TC', sans-serif;
+    background-color: #f0f4f8;
+    /* 柔和的背景色 */
+}
+
+/* 隱藏元素的通用 class */
+.hidden {
+    display: none;
+}
+
+/* 按鈕樣式 (直接在 HTML 中使用 Tailwind class，不使用 @apply) */
+/* 🆕 MODIFIED [v3.8.20]: inline-block → inline-flex 垂直置中 + padding 縮小 */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    width: 100%;
+    padding: 0.375rem 0.75rem;
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+    font-weight: 700;
+    color: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    transition: transform 0.2s ease-in-out;
+}
+
+/* 🐛 v3.8.17: .btn.hidden 由頂端 [class~="hidden"] 規則統一處理，此處不再需要 */
+
+.btn:hover {
+    transform: scale(1.05);
+}
+
+.btn-primary {
+    background-color: #2563eb;
+}
+
+.btn-primary:hover {
+    background-color: #1d4ed8;
+}
+
+.btn-green {
+    background-color: #16a34a;
+}
+
+.btn-green:hover {
+    background-color: #15803d;
+}
+
+.btn-orange {
+    background-color: #ea580c;
+}
+
+.btn-orange:hover {
+    background-color: #c2410c;
+}
+
+.btn-purple {
+    background-color: #9333ea;
+}
+
+.btn-purple:hover {
+    background-color: #7e22ce;
+}
+
+.btn-red {
+    background-color: #dc2626;
+}
+
+.btn-red:hover {
+    background-color: #b91c1c;
+}
+
+.btn-teal {
+    background-color: #0d9488;
+}
+
+/* New Teal color */
+.btn-teal:hover {
+    background-color: #0f766e;
+}
+
+.btn-gray {
+    background-color: #9ca3af;
+    cursor: not-allowed;
+}
+
+/* 搶答按鈕樣式 */
+.quick-answer-btn {
+    position: absolute;
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+    border: none;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: 0 8px 15px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulse 2s infinite;
+}
+
+.quick-answer-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 12px 20px rgba(0, 0, 0, 0.4);
+}
+
+.quick-answer-btn:active {
+    transform: scale(0.95);
+}
+
+.quick-answer-btn.locked {
+    background: #9ca3af;
+    cursor: not-allowed;
+    animation: none;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* 繪圖板 Canvas 樣式 */
+#drawing-canvas {
+    border: 2px solid #cbd5e1;
+    border-radius: 0.5rem;
+    cursor: crosshair;
+    touch-action: none;
+    /* 防止在 canvas 上繪圖時觸發頁面滾動 */
+    display: block;
+    /* Ensures it takes up its own line and respects margins */
+    margin: 0 auto;
+    /* Center the canvas */
+    background-color: white;
+    /* 繪圖畫布背景色 */
+    flex-grow: 1;
+    /* Allow canvas to take available vertical space */
+    width: 100%;
+    /* Ensure canvas takes full width within its container */
+}
+
+/* 學生作答結果卡片 */
+.student-card {
+    background-color: white;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    margin-bottom: 0.75rem;
+    word-break: break-all;
+}
+
+/* 新增：用於學生作答列表的卡片樣式 */
+.student-response-item {
+    background-color: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
+    transition: border 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+
+    /* 🆕 NEW [v3.8.23] PERF-1: 虛擬清單渲染（瀏覽器原生）
+       content-visibility: auto 讓瀏覽器自動跳過不在可視區的卡片渲染。
+       50+ 卡片時渲染效能提升 50-80%，零 JS 改動。
+       支援：Chrome 85+, Edge 85+, Opera 71+。不支援的瀏覽器自動 fallback 為普通渲染。 */
+    content-visibility: auto;
+    contain-intrinsic-size: 0 180px;
+}
+
+.student-response-item .name-box {
+    background-color: #d1e7dd;
+    /* Light green for name */
+    color: #0f5132;
+    /* Dark green text */
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    width: 100%;
+    /* Take full width within its grid column */
+}
+
+.student-response-item .name-box span {
+    max-width: 100px;
+    /* Max width for name text only */
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    display: inline-block;
+}
+
+.student-response-item .answer-box {
+    background-color: white;
+    /* Changed to white */
+    color: #0e7490;
+    /* Dark blue text */
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    width: 100%;
+    /* Take full width within its grid column */
+    word-break: break-word;
+    flex-grow: 1;
+    /* Allow answer box to take available space */
+    min-height: 48px;
+    /* Ensure a consistent height regardless of content */
+    display: flex;
+    /* To vertically center content */
+    align-items: center;
+    justify-content: center;
+}
+
+/* 📖 閱讀測驗：answer-box 改為靠上靠左對齊，防止多行內容跑版 */
+/* 🆕 MODIFIED [v3.7.10]: max-height 320 → 500，避免 Q1-Q10 + 時間戳一起顯示時被截斷出現捲軸 */
+.reading-mode-container .student-response-item .answer-box {
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow-y: auto;
+    max-height: 500px;
+}
+
+/* 🆕 NEW [v3.7.9]: 「尚未作答」視覺強化 - 斜紋背景 + 虛線邊框 + 漏斗 icon + 脈動動畫 */
+.student-response-item .answer-box .unanswered-placeholder {
+    width: 100%;
+    min-height: 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 14px 12px;
+    color: #94a3b8;
+    font-style: italic;
+    background: repeating-linear-gradient(45deg,
+            #f8fafc,
+            #f8fafc 8px,
+            #f1f5f9 8px,
+            #f1f5f9 16px);
+    border: 1.5px dashed #cbd5e1;
+    border-radius: 0.5rem;
+}
+
+.student-response-item .answer-box .unanswered-icon {
+    font-size: 22px;
+    color: #94a3b8;
+    animation: unanswered-pulse 1.8s ease-in-out infinite;
+}
+
+.student-response-item .answer-box .unanswered-text {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+@keyframes unanswered-pulse {
+
+    0%,
+    100% {
+        opacity: 0.55;
+        transform: rotate(0deg);
+    }
+
+    50% {
+        opacity: 1;
+        transform: rotate(180deg);
+    }
+}
+
+/* 閱讀模式下的 placeholder 更飽滿 */
+.reading-mode-container .unanswered-placeholder {
+    min-height: 100px !important;
+    gap: 10px !important;
+}
+
+.reading-mode-container .unanswered-icon {
+    font-size: 28px !important;
+}
+
+.reading-mode-container .unanswered-text {
+    font-size: 14px !important;
+}
+
+.student-response-item .answer-box img {
+    max-width: 100%;
+    /* Make images responsive within the answer box */
+    height: auto;
+    max-height: 120px;
+    /* Limit image height to prevent large images */
+    object-fit: contain;
+    /* Ensure image fits without cropping */
+    display: block;
+    /* Remove extra space below image */
+    margin: 0 auto;
+    /* Center image if it's smaller than max-width */
+}
+
+.student-response-item .answer-box audio {
+    width: 100%;
+    max-width: 200px;
+    /* Limit audio player width */
+}
+
+/* New: Styles for custom multiple choice answers in teacher monitor */
+.student-response-item .mc-question-answer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
+    color: #334155;
+}
+
+.student-response-item .mc-question-answer .icon {
+    font-size: 1.1rem;
+}
+
+.student-response-item .mc-question-answer .correct-icon {
+    color: #16a34a;
+    /* Green */
+}
+
+.student-response-item .mc-question-answer .incorrect-icon {
+    color: #dc2626;
+    /* Red */
+}
+
+.student-response-item .mc-question-answer .question-text {
+    font-weight: 500;
+}
+
+.student-response-item .mc-question-answer .student-choice {
+    font-weight: bold;
+    color: #2563eb;
+    /* Blue */
+}
+
+/* 🆕 NEW [v3.7.13]: 閱讀測驗模式 - 解除外容器 h-96 (384px) 的高度限制
+   原本 Tailwind 的 h-96 讓整個學生卡片區塊只有 384px 可見，
+   導致老師需要在極小視窗內捲動 15-25 張學生卡片，體驗很差。
+   改為動態依視窗高度（min 500px, 80vh，max 900px）：
+   - 小筆電（768px 高）→ 80vh = 614px 可見
+   - 一般桌機（1080px 高）→ 80vh = 864px，被 max 900 鎖定
+   - 內部仍保留 overflow-y-auto 讓卡片多時可捲動
+*/
+#student-responses-container.reading-mode-container {
+    height: clamp(500px, 80vh, 900px) !important;
+}
+
+/* 📖 閱讀測驗模式：教師端容器自適應欄數 */
+/* 🆕 MODIFIED [v3.7.12]: 改用 clamp() 動態計算 minmax，無斷點切換更平滑
+   - 240px 是「絕對最小值」確保任何視窗都能塞下 3 欄（900px 視窗下精準塞 3 欄）
+   - 22vw 隨視窗放大（1280px=281, 1600px=352, 1920px=422）
+   - 380px 是「絕對最大值」避免 4K 螢幕下卡片過寬
+   - 整段公式：minmax(clamp(240px, 22vw, 380px), 1fr)
+
+   實測欄數（含 padding 與 gap）：
+     900px → minmax(240) → 3 欄（每張 ~258px）
+    1280px → minmax(281) → 4 欄（每張 ~290px）
+    1600px → minmax(352) → 4 欄（每張 ~370px）
+    1920px → minmax(380) → 4 欄（每張 ~448px）
+    2560px → minmax(380) → 6 欄（每張 ~415px）
+*/
+.reading-mode-container {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(240px, 22vw, 380px), 1fr)) !important;
+}
+
+/* 閱讀測驗卡片：啟用 container query 精準控制內部排版 */
+/* 🆕 MODIFIED [v3.7.13]: min-height 120 → 180，讓卡片視覺更飽滿不侷促 */
+.reading-mode-container .student-response-item {
+    min-height: 180px;
+    container-type: inline-size;
+    container-name: student-card;
+}
+
+/* 🆕 NEW [v3.7.6 / MODIFIED v3.7.10 / v3.7.11]: 用 container query 依「卡片實際寬度」精準調整 badges 排版
+   重要：container-type: inline-size 測量的是 content-box（扣除 padding），
+         卡片外觀 400px → content-box ~360px（扣 padding 1rem × 2 = 32px）
+         所以閾值要設比實際卡片視覺寬度少 32-40px
+   v3.7.11: 降低所有閾值，讓窄卡片（3 欄佈局）也能有好的內部排版
+*/
+
+/* content-box ≥ 220px（卡片視覺 ~260px）：Q1-Q10 badges 3 欄 */
+@container student-card (min-width: 220px) {
+    .answer-box > div[style*="grid-template-columns"] {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: 4px 8px !important;
+        font-size: 12.5px !important;
+    }
+}
+
+/* content-box ≥ 340px（卡片視覺 ~380px）：badges 5 欄（10 題排成 5×2），卡片內元素全面放大 */
+@container student-card (min-width: 340px) {
+    .answer-box > div[style*="grid-template-columns"] {
+        grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+        gap: 6px 10px !important;
+        font-size: 13px !important;
+        padding: 4px 2px !important;
+    }
+
+    /* 🆕 v3.7.10: 提升到 600px 讓 Q1-Q10 + 作答時間 + 分數全部可見不需捲軸 */
+    .answer-box {
+        max-height: 600px !important;
+    }
+
+    .answer-box .fa-check-circle,
+    .answer-box .fa-times-circle,
+    .answer-box .fa-exclamation-circle {
+        font-size: 14px !important;
+    }
+
+    .name-box {
+        font-size: 15px !important;
+        padding: 0.5rem 0.75rem !important;
+    }
+
+    .quick-comment-btn {
+        font-size: 12px !important;
+        padding: 4px 12px !important;
+    }
+
+    /* 🆕 v3.7.9: 閱讀模式下寬卡片，未作答 placeholder 再放大 */
+    .unanswered-placeholder {
+        min-height: 120px !important;
+        padding: 20px !important;
+    }
+
+    .unanswered-icon {
+        font-size: 34px !important;
+    }
+
+    .unanswered-text {
+        font-size: 15px !important;
+    }
+}
+
+/* content-box ≥ 420px（卡片視覺 ~460px）：字體與間距再放大一點（超寬卡片時的奢侈版） */
+@container student-card (min-width: 420px) {
+    .answer-box > div[style*="grid-template-columns"] {
+        font-size: 13.5px !important;
+        gap: 8px 12px !important;
+    }
+}
+
+/* 卡片本身 padding 無法用 container query（@container 不能選 container 自身），
+   改用 media query 在桌機以上套用較寬鬆的 padding */
+@media (min-width: 1024px) {
+    .reading-mode-container .student-response-item {
+        padding: 1.25rem !important;
+    }
+}
+
+/* 🛡️ @supports fallback：舊瀏覽器不支援 container query 時，沿用 media query 方案 */
+@supports not (container-type: inline-size) {
+    @media (min-width: 640px) {
+        .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 4px 8px !important;
+            font-size: 12.5px !important;
+        }
+    }
+
+    @media (min-width: 1024px) {
+        .reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+            grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+            gap: 6px 10px !important;
+            font-size: 13px !important;
+            padding: 4px 2px !important;
+        }
+        .reading-mode-container .answer-box {
+            max-height: 600px !important;
+        }
+        .reading-mode-container .answer-box .fa-check-circle,
+        .reading-mode-container .answer-box .fa-times-circle,
+        .reading-mode-container .answer-box .fa-exclamation-circle {
+            font-size: 14px !important;
+        }
+        .reading-mode-container .name-box {
+            font-size: 15px !important;
+            padding: 0.5rem 0.75rem !important;
+        }
+        .reading-mode-container .quick-comment-btn {
+            font-size: 12px !important;
+            padding: 3px 10px !important;
+        }
+    }
+}
+
+/* 🚀 NEW: 閱讀測驗縮放功能樣式 */
+#reading-zoom-range {
+    transition: all 0.2s;
+}
+
+#reading-zoom-range:hover {
+    height: 10px;
+}
+
+#interaction-reading-comprehension {
+    transition: zoom 0.1s ease-out;
+    transform-origin: top center;
+}
+
+#reading-zoom-controls-container {
+    transition: zoom 0.1s ease-out;
+    /* 讓控制列的補償寬度撐開，不要擠在一起 */
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* 🚀 NEW: 閱讀測驗專用寬版模式，釋放桌面端左右空間 */
+#app-container.reading-test-wide-mode {
+    max-width: 98% !important;
+}
+
+/* 隱藏列印時的縮放控制 */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+}
+
+/* 📚 閱讀測驗排行榜：浮動於畫面右下角，不影響文件流 */
+#reading-leaderboard {
+    position: fixed;
+    bottom: 80px;
+    right: 16px;
+    z-index: 1000;
+    width: 300px;
+    max-width: calc(100vw - 32px);
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+    transform: translateX(0);
+    opacity: 1;
+}
+
+#reading-leaderboard.hidden {
+    display: block !important;
+    /* 覆寫 hidden 預設行為，改用動画隱藏 */
+    transform: translateX(calc(100% + 32px));
+    opacity: 0;
+    pointer-events: none;
+}
+
+#reading-leaderboard-inner {
+    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 50%, #fffbeb 100%);
+    border: 2px solid #fbbf24;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 120px);
+}
+
+#reading-leaderboard-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: linear-gradient(90deg, #fef3c7, #fde68a);
+    border-bottom: 1px solid #fbbf24;
+    border-radius: 10px 10px 0 0;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+#reading-leaderboard-body {
+    padding: 10px;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 0 0 10px 10px;
+}
+
+#reading-leaderboard-body.collapsed {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    padding: 0 10px;
+}
+
+#reading-leaderboard-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+#reading-leaderboard-list>div {
+    font-size: 11px;
+}
+
+/* ⚠️ 閱讀測驗最後30秒：按鈕警示震動動畫 */
+@keyframes reading-submit-warn {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.5);
+    }
+
+    50% {
+        transform: scale(1.04);
+        box-shadow: 0 0 0 8px rgba(234, 88, 12, 0);
+    }
+
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);
+    }
+}
+
+.reading-submit-warning {
+    background: linear-gradient(135deg, #f97316, #dc2626) !important;
+    border-color: #dc2626 !important;
+    color: #fff !important;
+    animation: reading-submit-warn 0.9s ease-in-out infinite;
+}
+
+/* 🆕 NEW [v3.7.2]: 閱讀測驗未答題警示動畫（捲動後紅框閃爍提醒） */
+@keyframes reading-unanswered-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+        border-color: #ef4444;
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+        border-color: #dc2626;
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+        border-color: #ef4444;
+    }
+}
+
+.reading-unanswered-warn {
+    border: 2px solid #ef4444 !important;
+    background: linear-gradient(135deg, #fef2f2, #fee2e2) !important;
+    animation: reading-unanswered-pulse 1s ease-in-out infinite;
+}
+
+/* 🆕 NEW: 閱讀測驗 AI 出題圖片上傳 - 縮圖預覽樣式 */
+.ai-reading-image-thumb {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 2px solid #c4b5fd;
+    background: #f5f3ff;
+    box-shadow: 0 1px 3px rgba(139, 92, 246, 0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ai-reading-image-thumb:hover {
+    transform: scale(1.04);
+    box-shadow: 0 4px 10px rgba(139, 92, 246, 0.4);
+}
+
+.ai-reading-image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.ai-reading-image-thumb-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(220, 38, 38, 0.92);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 900;
+    cursor: pointer;
+    border: 1.5px solid #fff;
+    transition: background 0.15s ease, transform 0.15s ease;
+    line-height: 1;
+}
+
+.ai-reading-image-thumb-remove:hover {
+    background: #b91c1c;
+    transform: scale(1.15);
+}
+
+.ai-reading-image-thumb-index {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(88, 28, 135, 0.85);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    padding: 1px 0;
+    line-height: 1.4;
+}
+
+/* 💬 教師快速評語 toast */
+#teacher-comment-toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-80px);
+    z-index: 9999;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    padding: 14px 24px;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(99, 102, 241, 0.4);
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+    min-width: 220px;
+    max-width: 90vw;
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+    opacity: 0;
+    pointer-events: none;
+}
+
+#teacher-comment-toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+/* 📊 班級作答進度條 */
+#class-progress-bar-wrapper {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 990;
+    background: rgba(255, 255, 255, 0.95);
+    border-top: 1px solid #e5e7eb;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
+    backdrop-filter: blur(6px);
+}
+
+#class-progress-bar-wrapper.hidden {
+    display: none;
+}
+
+#class-progress-bar-track {
+    flex: 1;
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#class-progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #34d399, #10b981);
+    border-radius: 8px;
+    transition: width 0.5s ease;
+}
+
+#class-progress-bar-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+/* 🤖 AI 出題進度條 */
+#ai-gen-progress-wrap {
+    margin-top: 12px;
+    display: none;
+}
+
+#ai-gen-progress-wrap.visible {
+    display: block;
+}
+
+#ai-gen-progress-track {
+    height: 10px;
+    background: #ede9fe;
+    border-radius: 99px;
+    overflow: hidden;
+    position: relative;
+}
+
+#ai-gen-progress-fill {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #7c3aed, #a855f7, #7c3aed);
+    background-size: 200% 100%;
+    animation: ai-shimmer 1.6s linear infinite;
+    transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0%;
+}
+
+@keyframes ai-shimmer {
+    0% {
+        background-position: 100% 0;
+    }
+
+    100% {
+        background-position: -100% 0;
+    }
+}
+
+#ai-gen-steps {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+}
+
+.ai-gen-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    flex: 1;
+}
+
+.ai-gen-step-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #ede9fe;
+    border: 2px solid #c4b5fd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #a78bfa;
+    transition: all 0.4s ease;
+}
+
+.ai-gen-step.done .ai-gen-step-dot {
+    background: #7c3aed;
+    border-color: #7c3aed;
+    color: #fff;
+}
+
+.ai-gen-step.active .ai-gen-step-dot {
+    background: #a855f7;
+    border-color: #7c3aed;
+    color: #fff;
+    box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2);
+    animation: ai-step-pulse 1s ease-in-out infinite;
+}
+
+@keyframes ai-step-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2);
+    }
+
+    50% {
+        box-shadow: 0 0 0 7px rgba(124, 58, 237, 0.08);
+    }
+}
+
+.ai-gen-step-label {
+    font-size: 9px;
+    color: #9ca3af;
+    text-align: center;
+    line-height: 1.2;
+    transition: color 0.3s;
+}
+
+.ai-gen-step.done .ai-gen-step-label,
+.ai-gen-step.active .ai-gen-step-label {
+    color: #7c3aed;
+    font-weight: 600;
+}
+
+#ai-gen-status-text {
+    font-size: 11px;
+    color: #7c3aed;
+    text-align: center;
+    margin-top: 6px;
+    min-height: 16px;
+    font-weight: 600;
+}
+
+.peer-review-work-item {
+    background-color: white;
+    border-radius: 0.75rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    transition: all 0.3s ease;
+    position: relative;
+    border: 2px solid transparent;
+}
+
+.peer-review-work-item:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+}
+
+.peer-review-work-item .work-author {
+    background-color: #e0f2fe;
+    color: #0369a1;
+    padding: 0.5rem 1rem;
+    border-radius: 1rem;
+    font-weight: bold;
+    margin-bottom: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.peer-review-work-item .work-content {
+    flex-grow: 1;
+    margin-bottom: 0.75rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.peer-review-work-item .work-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.peer-review-work-item .work-content p {
+    padding: 0.5rem;
+    background-color: #f8fafc;
+    border-radius: 0.5rem;
+    color: #374151;
+    line-height: 1.5;
+}
+
+.peer-review-work-item .vote-section {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.peer-review-work-item .vote-btn {
+    background: none;
+    border: 2px solid transparent;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    padding: 0.5rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    position: relative;
+}
+
+.peer-review-work-item .vote-btn:hover {
+    background-color: #fef7f7;
+    transform: scale(1.1);
+    border-color: #fca5a5;
+}
+
+.peer-review-work-item .vote-btn.voted {
+    color: #dc2626;
+    background-color: #fef2f2;
+    border-color: #dc2626;
+    animation: pulse 2s infinite;
+}
+
+.peer-review-work-item .vote-btn:not(.voted) {
+    color: #9ca3af;
+    border-color: #e5e7eb;
+}
+
+.peer-review-work-item .vote-btn:not(.voted):hover {
+    color: #dc2626;
+    background-color: #fef7f7;
+}
+
+/* Pulse animation for voted buttons */
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+/* Tooltip for vote buttons */
+.peer-review-work-item .vote-btn::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: -2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #374151;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+}
+
+.peer-review-work-item .vote-btn:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+.peer-review-work-item .vote-count {
+    font-weight: bold;
+    color: #dc2626;
+    font-size: 1.1rem;
+}
+
+.peer-review-work-item .vote-count.zero {
+    color: #9ca3af;
+}
+
+/* 教師端投票統計樣式 */
+.vote-stats-item {
+    background-color: #f8fafc;
+    border-radius: 0.75rem;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    border: 1px solid #e2e8f0;
+    position: relative;
+}
+
+.vote-stats-item .stats-author {
+    background-color: #dbeafe;
+    color: #1e40af;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.vote-stats-item .stats-content {
+    flex-grow: 1;
+    margin-bottom: 0.5rem;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.vote-stats-item .stats-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.375rem;
+    max-height: 120px;
+    object-fit: contain;
+}
+
+.vote-stats-item .stats-content p {
+    padding: 0.375rem;
+    background-color: white;
+    border-radius: 0.375rem;
+    color: #374151;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+.vote-stats-item .stats-votes {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem;
+    background-color: #fef2f2;
+    border-radius: 0.5rem;
+    border: 1px solid #fecaca;
+}
+
+.vote-stats-item .stats-votes .vote-icon {
+    color: #dc2626;
+    font-size: 1.2rem;
+}
+
+.vote-stats-item .stats-votes .vote-count {
+    font-weight: bold;
+    color: #dc2626;
+    font-size: 1.1rem;
+}
+
+.vote-stats-item .stats-votes .vote-count.zero {
+    color: #9ca3af;
+}
+
+
+/* 放大繪圖 Modal 樣式 */
+/* 🐛 v3.8.9: 此規則已上移至文件頂端，改為 .magnified-image-modal:not(.hidden) — 此處保留註解供搜尋 */
+
+.magnified-image-modal-content {
+    position: relative;
+    background-color: white;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    max-width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    /* Allow scrolling for large content */
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+}
+
+/* 排序題和配對題的模態框樣式 */
+#sequencing-settings-modal-content,
+#matching-settings-modal-content {
+    max-width: 95%;
+    max-height: 95vh;
+    width: 1200px;
+    justify-content: flex-start;
+    align-items: stretch;
+}
+
+.magnified-image-modal-content img {
+    max-width: 100%;
+    max-height: 80vh;
+    /* Limit image height within modal */
+    object-fit: contain;
+}
+
+.magnified-image-modal-close {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    font-size: 2rem;
+    color: #333;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.2s;
+}
+
+.magnified-image-modal-close:hover {
+    background-color: #eee;
+}
+
+/* 🆕 NEW [v3.7.7]: 可縮放圖片檢視器（ZoomableImageViewer）
+   專門給學生端顯示老師上傳的題目圖片，支援：
+   - 雙指縮放（手機/平板 pinch-to-zoom）
+   - 滑鼠滾輪縮放（桌機）
+   - 拖曳平移（觸控單指 / 滑鼠 drag）
+   - 雙擊切換 1x↔2x
+   - Esc / 點背景關閉
+*/
+/* 🐛 v3.8.9: 此規則已上移至文件頂端，改為 .zoomable-image-viewer:not(.hidden) — 此處保留註解供搜尋 */
+
+.zoomable-viewer-canvas {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    overflow: hidden;
+}
+
+.zoomable-viewer-canvas.dragging {
+    cursor: grabbing;
+}
+
+#zoomable-viewer-img {
+    max-width: 95vw;
+    max-height: 95vh;
+    object-fit: contain;
+    will-change: transform;
+    transition: transform 0.1s ease-out;
+    /* 預設 transform 由 JS 設定 */
+    transform: translate(0, 0) scale(1);
+    transform-origin: center center;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+    /* 滑鼠事件由父層 canvas 接收 */
+    -webkit-user-drag: none;
+}
+
+/* 正在縮放或拖曳時關閉 transition 提升即時性 */
+#zoomable-viewer-img.interacting {
+    transition: none;
+}
+
+.zoomable-viewer-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 44px;
+    height: 44px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.15s;
+    z-index: 10;
+}
+
+.zoomable-viewer-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+.zoomable-viewer-controls {
+    position: absolute;
+    bottom: 1.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 0.5rem 0.85rem;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+}
+
+.zoomable-viewer-ctrl-btn {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s, transform 0.1s;
+}
+
+.zoomable-viewer-ctrl-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.zoomable-viewer-ctrl-btn:active {
+    transform: scale(0.92);
+}
+
+.zoomable-viewer-scale {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    min-width: 52px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.zoomable-viewer-hint {
+    position: absolute;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    backdrop-filter: blur(4px);
+    z-index: 10;
+    max-width: 85vw;
+    text-align: center;
+}
+
+/* 🆕 標記「可點擊放大」的圖片：加上 hover 提示 */
+.zoomable-trigger {
+    cursor: zoom-in;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.zoomable-trigger:hover {
+    transform: scale(1.02);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+/* Dropdown styles for drawing tools */
+.drawing-tool-select {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    border: 1px solid #d1d5db;
+    background-color: white;
+    font-size: 1rem;
+    height: 44px;
+    /* Match button height for alignment */
+    cursor: pointer;
+    min-width: 100px;
+    /* Ensure dropdown has minimum width */
+    appearance: none;
+    /* Remove default dropdown arrow */
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='currentColor'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1.25em 1.25em;
+}
+
+/* Styles for color swatch in dropdown */
+.color-option-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.color-swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid #ccc;
+    flex-shrink: 0;
+    /* Prevent shrinking when text is long */
+}
+
+/* Hidden select for visual color swatch */
+#current-color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 2px solid #2563eb;
+    /* Highlight selected color */
+    margin-right: 8px;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+/* Made by link styling */
+.made-by-text {
+    background-color: #e0f7fa;
+    /* Light blue background */
+    color: #007bff;
+    /* Blue text */
+    padding: 8px 15px;
+    border-radius: 12px;
+    /* Rounded corners */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    text-decoration: none;
+    /* Remove underline */
+    transition: background-color 0.3s ease;
+}
+
+.made-by-text:hover {
+    background-color: #cceeff;
+    /* Lighter blue on hover */
+    color: #0056b3;
+}
+
+/* 🚀 ENHANCED: Modal for student list with improved RWD */
+#student-list-modal-content {
+    padding: 1rem;
+    max-width: 90vw;
+    width: 100%;
+}
+
+@media (min-width: 640px) {
+    #student-list-modal-content {
+        padding: 1.5rem;
+    }
+}
+
+@media (min-width: 768px) {
+    #student-list-modal-content {
+        padding: 2rem;
+    }
+}
+
+/* 🚀 ENHANCED: Modal student list with responsive grid layout (RWD) */
+#modal-student-names {
+    display: grid;
+    grid-template-columns: 1fr;
+    /* 手機：單列 */
+    gap: 0.5rem;
+    padding: 0.75rem;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: linear-gradient(135deg, #f0f9ff 0%, #f8fafc 100%);
+    border-radius: 0.75rem;
+    border: 2px solid #e0f2f7;
+}
+
+@media (min-width: 640px) {
+    #modal-student-names {
+        grid-template-columns: repeat(2, 1fr);
+        /* 平板：2列 */
+        gap: 0.625rem;
+        padding: 1rem;
+        max-height: 55vh;
+    }
+}
+
+@media (min-width: 1024px) {
+    #modal-student-names {
+        grid-template-columns: repeat(3, 1fr);
+        /* 桌面：3列 */
+        max-height: 60vh;
+    }
+}
+
+/* 🚀 FIX: 空狀態容器跨越所有列並居中顯示 */
+#modal-student-names .empty-state-container {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 140px;
+    padding: 2rem 1rem;
+}
+
+/* 🚀 NEW: 學生卡片抽籤被選中時的高亮樣式 */
+#modal-student-names .modal-selected-student-border {
+    background-color: #fef3c7 !important;
+    border-color: #f59e0b !important;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3) !important;
+}
+
+/* No specific styling for the last-child within the grid items, as gap handles spacing */
+
+/* NEW: Styles for Unsubmitted Students Modal */
+#modal-unsubmitted-student-names {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 0.5rem;
+    padding: 0.5rem;
+    max-height: 64vh;
+    overflow-y: auto;
+    background-color: #fef2f2;
+    /* Light red background */
+    border-radius: 0.5rem;
+    border: 1px solid #fca5a5;
+    /* Red border */
+}
+
+#modal-unsubmitted-student-names p {
+    background-color: #fee2e2;
+    /* Lighter red background for each name */
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    text-align: center;
+    font-size: 0.9rem;
+    color: #b91c1c;
+    /* Darker red text */
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+}
+
+@media (min-width: 768px) {
+
+    /* md breakpoint */
+    #modal-unsubmitted-student-names {
+        grid-template-columns: repeat(5, 1fr);
+    }
+}
+
+
+/* Styles for Chart Modal - RWD Optimized */
+#statistics-modal-content {
+    padding: 0.75rem;
+    max-width: 95vw;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: auto;
+}
+
+@media (min-width: 640px) {
+    #statistics-modal-content {
+        padding: 1.25rem;
+        max-width: 650px;
+        gap: 1rem;
+    }
+}
+
+@media (min-width: 768px) {
+    #statistics-modal-content {
+        padding: 1.5rem;
+        max-width: 750px;
+    }
+}
+
+#chart-container {
+    background-color: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    padding: 0.5rem;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+@media (min-width: 640px) {
+    #chart-container {
+        padding: 1rem;
+        overflow-x: visible;
+    }
+}
+
+#chart-svg {
+    display: block;
+    margin: 0 auto;
+    background-color: #fff;
+    border-radius: 0.5rem;
+    flex-shrink: 0;
+    width: 100%;
+    height: auto;
+    min-height: 280px;
+    max-height: 400px;
+}
+
+@media (min-width: 640px) {
+    #chart-svg {
+        min-height: 320px;
+    }
+}
+
+@media (min-width: 768px) {
+    #chart-svg {
+        min-height: 360px;
+    }
+}
+
+/* 長條圖樣式優化 */
+#chart-svg .bar {
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+#chart-svg .bar:hover {
+    opacity: 0.8;
+}
+
+#chart-svg text {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#students-by-answer-list-container {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    background-color: #f8fafc;
+}
+
+@media (min-width: 640px) {
+    #students-by-answer-list-container {
+        padding: 0.75rem;
+    }
+}
+
+#students-by-answer-list-container h5 {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #334155;
+}
+
+/* New style for the paragraph containing names */
+#students-by-answer-names {
+    word-wrap: break-word;
+    /* Allow long names to wrap */
+    color: #475569;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+/* New CSS for selected student border */
+.selected-student-border {
+    border: 4px solid #ef4444;
+    /* Tailwind red-500 */
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.6);
+    /* Optional: add a glow effect */
+}
+
+/* 🚀 ENHANCED: Selected student highlight in the modal - More prominent for RWD */
+.modal-selected-student-border {
+    background: linear-gradient(135deg, #fca5a5 0%, #fecaca 100%) !important;
+    /* Bold red gradient */
+    border: 3px solid #dc2626 !important;
+    /* Dark red border */
+    box-shadow: 0 0 15px rgba(220, 38, 38, 0.8), inset 0 0 8px rgba(255, 255, 255, 0.3) !important;
+    /* Strong glow + inset light */
+    transform: scale(1.05);
+    /* Slightly enlarge for emphasis */
+    transition: all 0.3s ease-in-out;
+    color: #ffffff !important;
+    /* White text for better contrast */
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.modal-selected-student-border:hover {
+    transform: scale(1.08);
+    box-shadow: 0 0 20px rgba(220, 38, 38, 1), inset 0 0 10px rgba(255, 255, 255, 0.4) !important;
+}
+
+/* 🚀 OPTIMIZED: Student-side chart containers - Full RWD support */
+#student-chart-container-tf,
+#student-chart-container-mc {
+    background-color: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    padding: 0.75rem;
+    width: 100%;
+}
+
+@media (min-width: 640px) {
+
+    #student-chart-container-tf,
+    #student-chart-container-mc {
+        padding: 1rem;
+    }
+}
+
+@media (min-width: 1024px) {
+
+    #student-chart-container-tf,
+    #student-chart-container-mc {
+        padding: 1.25rem;
+    }
+}
+
+#student-chart-svg-tf,
+#student-chart-svg-mc {
+    display: block;
+    margin: 0 auto;
+    background-color: #fff;
+    border-radius: 0.5rem;
+    width: 100%;
+    height: auto;
+}
+
+#student-chart-container-tf h4,
+#student-chart-container-mc h4 {
+    font-size: 0.875rem;
+    font-weight: bold;
+    color: #1e40af;
+    margin: 0 0 0.5rem 0;
+}
+
+@media (min-width: 640px) {
+
+    #student-chart-container-tf h4,
+    #student-chart-container-mc h4 {
+        font-size: 1rem;
+        margin: 0 0 0.75rem 0;
+    }
+}
+
+@media (min-width: 1024px) {
+
+    #student-chart-container-tf h4,
+    #student-chart-container-mc h4 {
+        font-size: 1.125rem;
+        margin: 0 0 1rem 0;
+    }
+}
+
+/* AI Text Summary Modal Styles */
+#ai-summary-modal-content {
+    padding: 1.5rem;
+    max-width: 500px;
+    width: 90%;
+    background-color: white;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    /* Needed for close button positioning */
+}
+
+#ai-summary-modal-content h4 {
+    font-size: 1.75rem;
+    font-weight: bold;
+    color: #334155;
+    text-align: center;
+    margin-bottom: 0.5rem;
+}
+
+#ai-summary-result-list {
+    list-style-type: none;
+    /* Removed decimal numbering */
+    padding-left: 0;
+    /* Removed default padding for list */
+    font-size: 1rem;
+}
+
+/* Default style for list items (successful results) */
+#ai-summary-result-list li {
+    margin-bottom: 0.4rem;
+    padding: 0.2rem 0;
+    border-bottom: 1px dashed #e2e8f0;
+    color: black;
+    /* Changed to black */
+    font-weight: bold;
+    /* Added bold */
+}
+
+#ai-summary-result-list li:last-child {
+    border-bottom: none;
+}
+
+/* Style for error messages within the list */
+#ai-summary-result-list li.error-message {
+    color: white;
+    /* White color for error messages */
+    background-color: #dc2626;
+    /* A red background for visual emphasis (optional, but good for error) */
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+    text-align: center;
+}
+
+#ai-loading-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100px;
+    /* Ensure some height for spinner */
+    color: #2563eb;
+    font-size: 1.1rem;
+}
+
+/* AI Settings Modal Styles */
+#ai-settings-modal-content {
+    padding: 1.5rem;
+    max-width: 400px;
+    width: 90%;
+    background-color: white;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+}
+
+#ai-settings-modal-content h4 {
+    font-size: 1.75rem;
+    font-weight: bold;
+    color: #334155;
+    text-align: center;
+    margin-bottom: 0.5rem;
+}
+
+#ai-settings-modal-content label {
+    font-weight: 500;
+    color: #475569;
+    margin-bottom: 0.25rem;
+    display: block;
+}
+
+#ai-settings-modal-content select,
+#ai-settings-modal-content input[type="password"] {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+    background-color: white;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='currentColor'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1.25em 1.25em;
+}
+
+#ai-settings-modal-content input[type="password"] {
+    background-image: none;
+    /* Remove dropdown arrow for password field */
+}
+
+.settings-button-group {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.settings-button-group .btn {
+    width: auto;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+/* New: URL Dispatch Modal Styles */
+#url-dispatch-settings-modal-content {
+    padding: 1.5rem;
+    max-width: 500px;
+    width: 90%;
+}
+
+#url-dispatch-settings-modal-content h4 {
+    font-size: 1.75rem;
+    font-weight: bold;
+    color: #334155;
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+#url-dispatch-settings-modal-content label {
+    font-weight: 500;
+    color: #475569;
+    margin-bottom: 0.25rem;
+    display: block;
+}
+
+#url-dispatch-settings-modal-content input[type="text"] {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+}
+
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    margin-top: 1rem;
+    gap: 0.5rem;
+}
+
+.checkbox-container input[type="checkbox"] {
+    height: 1.25rem;
+    width: 1.25rem;
+    border-radius: 0.25rem;
+    border-color: #d1d5db;
+    color: #2563eb;
+}
+
+/* New: Student-side URL Dispatch Styles */
+#interaction-url-dispatch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    padding: 1rem;
+}
+
+.url-card {
+    background-color: #ffffff;
+    border-radius: 1rem;
+    padding: 2rem;
+    text-align: center;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-decoration: none;
+    color: inherit;
+}
+
+.url-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+.url-card-icon {
+    font-size: 4rem;
+    color: #2563eb;
+}
+
+.url-card-text {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #1e3a8a;
+}
+
+.url-card-link {
+    font-size: 1rem;
+    color: #6b7280;
+    word-break: break-all;
+}
+
+.youtube-embed-container {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    padding-bottom: 56.25%;
+    /* 16:9 aspect ratio */
+    height: 0;
+    overflow: hidden;
+    border-radius: 1rem;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    background-color: #000;
+    /* 添加黑色背景，如果影片載入失敗會看到 */
+}
+
+.youtube-embed-container iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+/* NEW: Pause Overlay for Student */
+.pause-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.9);
+    /* Semi-transparent white */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 999;
+    /* Below modals */
+    border-radius: 0.5rem;
+    /* Match container border-radius */
+    text-align: center;
+    padding: 1rem;
+}
+
+.pause-overlay p {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #dc2626;
+    /* Red text */
+    margin-bottom: 1rem;
+}
+
+.pause-overlay i {
+    font-size: 4rem;
+    color: #ef4444;
+    /* Lighter red icon */
+}
+
+/* NEW: HTML Dispatch Styles */
+/* This ID is now reused for the combined dispatch, but the content will be in the iframe */
+#interaction-html-dispatch {
+    position: fixed;
+    /* Use fixed positioning to cover entire screen */
+    top: 0;
+    left: 0;
+    width: 100vw;
+    /* Full viewport width */
+    height: 100vh;
+    /* Full viewport height */
+    margin: 0;
+    padding: 0;
+    border: none;
+    overflow: hidden;
+    /* Prevent scrolling at container level */
+    background-color: white;
+    z-index: 1000;
+    /* Ensure it's above other content */
+}
+
+#html-content-iframe {
+    width: 100vw;
+    /* Full viewport width */
+    height: 100vh;
+    /* Full viewport height */
+    margin: 0;
+    padding: 0;
+    border: none;
+    background-color: white;
+    display: block;
+    /* Ensure no inline spacing */
+}
+
+/* HTML Dispatch Status Indicator */
+.html-dispatch-indicator {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    background-color: rgba(239, 68, 68, 0.9);
+    /* Red background with transparency */
+    color: white;
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    z-index: 1001;
+    /* Above the HTML content */
+    animation: blink-glow 1.5s ease-in-out infinite alternate;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes blink-glow {
+    0% {
+        opacity: 0.7;
+        transform: scale(1);
+        box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1.05);
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.6);
+    }
+}
+
+/* 🎮 MEMORY GAME: 3D Card Flip Animation */
+.memory-card {
+    perspective: 1000px;
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease !important;
+}
+
+.memory-card.flip-animation {
+    animation: cardFlip3D 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes cardFlip3D {
+    0% {
+        transform: rotateY(0deg) rotateX(0deg);
+    }
+
+    45% {
+        transform: rotateY(90deg) rotateX(5deg);
+    }
+
+    100% {
+        transform: rotateY(0deg) rotateX(0deg) scale(1.02);
+    }
+}
+
+/* 🟢 Success Match: Green Glow + Bounce */
+.memory-card.matched-success {
+    background: linear-gradient(135deg, #10b981, #059669) !important;
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.6), 0 0 40px rgba(16, 185, 129, 0.3) !important;
+    animation: successBounce 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
+    border: 3px solid #34d399 !important;
+}
+
+@keyframes successBounce {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.15);
+    }
+
+    100% {
+        transform: scale(1.1);
+    }
+}
+
+/* 🔴 Failed Match: Red Shake */
+.memory-card.matched-fail {
+    animation: failShake 0.5s ease-in-out forwards;
+    background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.5) !important;
+}
+
+@keyframes failShake {
+
+    0%,
+    100% {
+        transform: translateX(0) rotateZ(0deg);
+    }
+
+    10% {
+        transform: translateX(-8px) rotateZ(-2deg);
+    }
+
+    20% {
+        transform: translateX(8px) rotateZ(2deg);
+    }
+
+    30% {
+        transform: translateX(-8px) rotateZ(-2deg);
+    }
+
+    40% {
+        transform: translateX(8px) rotateZ(2deg);
+    }
+
+    50% {
+        transform: translateX(-8px) rotateZ(-2deg);
+    }
+
+    60% {
+        transform: translateX(8px) rotateZ(2deg);
+    }
+
+    70% {
+        transform: translateX(-4px) rotateZ(-1deg);
+    }
+
+    80% {
+        transform: translateX(4px) rotateZ(1deg);
+    }
+
+    90% {
+        transform: translateX(-2px) rotateZ(-0.5deg);
+    }
+}
+
+/* 🆕 NEW [v3.7.15]: 班級即時排行榜 */
+.leaderboard-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #fffbeb, #fef3c7);
+    border: 1px solid #fde68a;
+    transition: transform 0.2s, background 0.2s;
+    font-size: 13px;
+}
+
+.leaderboard-row.is-self {
+    background: linear-gradient(90deg, #ddd6fe, #ede9fe) !important;
+    border-color: #8b5cf6;
+    box-shadow: 0 2px 6px rgba(139, 92, 246, 0.25);
+}
+
+.leaderboard-row.is-new {
+    animation: leaderboard-flash 1.4s ease-out;
+}
+
+@keyframes leaderboard-flash {
+    0% { background: #fde047; transform: scale(1.04); }
+    100% { background: linear-gradient(90deg, #fffbeb, #fef3c7); transform: scale(1); }
+}
+
+.leaderboard-rank {
+    font-weight: 900;
+    font-size: 16px;
+    min-width: 28px;
+    text-align: center;
+}
+
+.leaderboard-rank-1 { color: #d97706; font-size: 18px; }
+.leaderboard-rank-2 { color: #6b7280; font-size: 17px; }
+.leaderboard-rank-3 { color: #b45309; font-size: 16px; }
+
+.leaderboard-name {
+    flex: 1;
+    font-weight: 600;
+    color: #1f2937;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.leaderboard-time {
+    font-family: monospace;
+    font-weight: 700;
+    color: #0369a1;
+    white-space: nowrap;
+}
+
+.leaderboard-moves {
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+}
+
+/* 🆕 NEW [v3.7.15]: 排名數字大字體跳動動畫 */
+@keyframes rank-pop-in {
+    0% { transform: scale(0.5); opacity: 0; }
+    60% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+#game-rank-num.pop-in {
+    display: inline-block;
+    animation: rank-pop-in 0.5s ease-out;
+}
+
+/* 🏆 Best Score Display */
+#best-score-display {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    font-weight: bold;
+    color: white;
+    text-align: center;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+    box-shadow: 0 4px 6px rgba(245, 158, 11, 0.3);
+}
+
+/* NEW: Styles for enlarged default multiple-choice buttons with RWD */
+#interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
+    width: 10rem;
+    /* Mobile */
+    height: 10rem;
+    font-size: 6rem;
+}
+
+@media (min-width: 640px) {
+    #interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
+        width: 12rem;
+        /* Tablet */
+        height: 12rem;
+        font-size: 7rem;
+    }
+}
+
+@media (min-width: 768px) {
+    #interaction-multiple-choice.enlarged-buttons #default-mc-options .answer-btn {
+        width: 14rem;
+        /* Desktop */
+        height: 14rem;
+        font-size: 8rem;
+    }
+}
+
+/* MODIFIED: MC Settings Modal for AI Question Generation */
+#multiple-choice-settings-modal {
+    align-items: center;
+    /* Center modal vertically */
+}
+
+#multiple-choice-settings-modal-content {
+    max-width: 800px;
+    /* Wider modal for two columns */
+    max-height: 95vh;
+    /* Increase max height */
+    height: auto;
+    /* Allow dynamic height */
+    justify-content: flex-start;
+    /* Align content to top */
+    align-items: stretch;
+    /* Stretch to full width */
+    padding: 1.5rem;
+    /* Increase padding */
+    margin-top: 0;
+    /* Remove top margin */
+}
+
+/* Sequencing Question Styles - RWD Optimized */
+.sequencing-item {
+    background-color: white;
+    border-radius: 0.75rem;
+    padding: 0.875rem 1rem;
+    margin-bottom: 0.625rem;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    cursor: grab;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 2px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1rem;
+    font-weight: 500;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+@media (min-width: 640px) {
+    .sequencing-item {
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+        gap: 1rem;
+        font-size: 1.125rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .sequencing-item {
+        padding: 1.125rem 1.5rem;
+        margin-bottom: 0.875rem;
+        font-size: 1.25rem;
+    }
+}
+
+.sequencing-item::before {
+    content: '⋮⋮';
+    color: #9ca3af;
+    font-size: 1.25rem;
+    line-height: 1;
+    margin-right: -0.25rem;
+    transition: color 0.2s ease;
+}
+
+.sequencing-item:hover {
+    box-shadow: 0 6px 12px rgba(59, 130, 246, 0.15);
+    transform: translateY(-3px);
+    border-color: #93c5fd;
+}
+
+.sequencing-item:hover::before {
+    color: #3b82f6;
+}
+
+.sequencing-item:active {
+    cursor: grabbing;
+}
+
+.sequencing-item.dragging {
+    opacity: 0.75;
+    cursor: grabbing;
+    transform: scale(1.05) rotate(2deg);
+    box-shadow: 0 12px 24px rgba(59, 130, 246, 0.3);
+    border-color: #3b82f6;
+    z-index: 1000;
+    animation: pulse-drag 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse-drag {
+
+    0%,
+    100% {
+        transform: scale(1.05) rotate(2deg);
+    }
+
+    50% {
+        transform: scale(1.08) rotate(2deg);
+    }
+}
+
+.sequencing-item.drag-over {
+    border-color: #3b82f6;
+    background-color: #eff6ff;
+    transform: translateY(0);
+}
+
+.sequencing-item-number {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+    transition: all 0.3s ease;
+}
+
+@media (min-width: 640px) {
+    .sequencing-item-number {
+        width: 2.5rem;
+        height: 2.5rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .sequencing-item-number {
+        width: 2.75rem;
+        height: 2.75rem;
+        font-size: 1.125rem;
+    }
+}
+
+.sequencing-item:hover .sequencing-item-number {
+    transform: rotate(360deg);
+}
+
+.sequencing-item-text {
+    flex: 1;
+    line-height: 1.5;
+}
+
+.sequencing-container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 0 0.5rem;
+}
+
+@media (min-width: 640px) {
+    .sequencing-container {
+        padding: 0;
+    }
+}
+
+/* Matching Question Styles - RWD Optimized */
+.matching-container {
+    max-width: 900px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    position: relative;
+    padding: 0 0.5rem;
+}
+
+@media (min-width: 640px) {
+    .matching-container {
+        gap: 1.5rem;
+        padding: 0;
+    }
+}
+
+@media (min-width: 768px) {
+    .matching-container {
+        gap: 2.5rem;
+    }
+}
+
+.matching-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    z-index: 2;
+}
+
+@media (min-width: 640px) {
+    .matching-column {
+        gap: 1rem;
+    }
+}
+
+.matching-item {
+    background-color: white;
+    border-radius: 0.75rem;
+    padding: 0.875rem 1rem;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 3px solid #e5e7eb;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    min-height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+@media (min-width: 640px) {
+    .matching-item {
+        padding: 1rem 1.25rem;
+        min-height: 4rem;
+        font-size: 1.0625rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .matching-item {
+        padding: 1.125rem 1.5rem;
+        min-height: 4.5rem;
+        font-size: 1.125rem;
+    }
+}
+
+.matching-item:hover {
+    box-shadow: 0 6px 12px rgba(236, 72, 153, 0.12);
+    transform: translateY(-2px) scale(1.02);
+    border-color: #f9a8d4;
+}
+
+.matching-item.selected {
+    border-color: #ec4899;
+    background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
+    box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.15), 0 6px 16px rgba(236, 72, 153, 0.2);
+    animation: pulse-select 1.5s ease-in-out infinite;
+    transform: scale(1.05);
+}
+
+@keyframes pulse-select {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.15), 0 6px 16px rgba(236, 72, 153, 0.2);
+    }
+
+    50% {
+        box-shadow: 0 0 0 6px rgba(236, 72, 153, 0.25), 0 8px 20px rgba(236, 72, 153, 0.3);
+    }
+}
+
+.matching-item.selected::after {
+    content: '✓';
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: linear-gradient(135deg, #ec4899 0%, #db2777 100%);
+    color: white;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(236, 72, 153, 0.4);
+    animation: pop-in 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+@keyframes pop-in {
+    0% {
+        transform: scale(0);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+.matching-item.matched {
+    border-color: #10b981;
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    cursor: default;
+    box-shadow: 0 4px 10px rgba(16, 185, 129, 0.15);
+}
+
+.matching-item.matched:hover {
+    transform: none;
+}
+
+.matching-item.matched::before {
+    content: '✓';
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4);
+}
+
+.matching-item.answer-revealed {
+    border-color: #10b981;
+    background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+    cursor: default;
+    box-shadow: 0 4px 10px rgba(16, 185, 129, 0.15);
+}
+
+.matching-item.answer-revealed:hover {
+    transform: none;
+}
+
+#matching-svg-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.matching-line {
+    stroke: url(#lineGradient);
+    stroke-width: 4;
+    fill: none;
+    stroke-linecap: round;
+    opacity: 0;
+    animation: draw-line 0.5s ease-out forwards;
+    filter: drop-shadow(0 2px 4px rgba(236, 72, 153, 0.3));
+}
+
+@media (min-width: 768px) {
+    .matching-line {
+        stroke-width: 5;
+    }
+}
+
+@keyframes draw-line {
+    from {
+        stroke-dasharray: 1000;
+        stroke-dashoffset: 1000;
+        opacity: 0;
+    }
+
+    to {
+        stroke-dasharray: 1000;
+        stroke-dashoffset: 0;
+        opacity: 1;
+    }
+}
+
+.matching-line.correct {
+    stroke: url(#lineGradientCorrect);
+    filter: drop-shadow(0 2px 4px rgba(16, 185, 129, 0.3));
+}
+
+.matching-line.incorrect {
+    stroke: url(#lineGradientIncorrect);
+    filter: drop-shadow(0 2px 4px rgba(239, 68, 68, 0.3));
+}
+
+/* Confetti Container for Quick Answer Success */
+.confetti-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+/* 螢光筆功能樣式 - 學生端與教師端共用 */
+.highlighter-btn,
+.teacher-highlighter-btn {
+    position: relative;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 0.375rem;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.highlighter-btn:hover,
+.teacher-highlighter-btn:hover {
+    transform: scale(1.1);
+    border-color: #6366f1;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.highlighter-btn.active,
+.teacher-highlighter-btn.active {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+}
+
+.highlighter-preview {
+    width: 20px;
+    height: 20px;
+    border-radius: 0.25rem;
+    display: block;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* 螢光筆標註效果 */
+.highlight {
+    padding: 2px 0;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.highlight:hover {
+    opacity: 0.7;
+}
+
+.highlight-yellow {
+    background-color: rgba(254, 240, 138, 0.6);
+}
+
+.highlight-green {
+    background-color: rgba(134, 239, 172, 0.6);
+}
+
+.highlight-pink {
+    background-color: rgba(249, 168, 212, 0.6);
+}
+
+.highlight-blue {
+    background-color: rgba(147, 197, 253, 0.6);
+}
+
+.highlight-orange {
+    background-color: rgba(253, 186, 116, 0.6);
+}
+
+/* RWD 響應式調整 */
+@media (min-width: 640px) {
+
+    .highlighter-btn,
+    .teacher-highlighter-btn {
+        width: 32px;
+        height: 32px;
+    }
+
+    .highlighter-preview {
+        width: 24px;
+        height: 24px;
+    }
+}
+    
+
+/* === Style block 2 (from line 9639) === */
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: scale(0.8); }
+                to { opacity: 1; transform: scale(1); }
+            }
+        
+
+/* === Style block 3 (from line 19491) === */
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: scale(0.8); }
+                to { opacity: 1; transform: scale(1); }
+            }
+        
+
+/* === Style block 4 (from line 25252) === */
+
+@keyframes live-pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50% { opacity:0.5; transform:scale(1.3); }
+}
+    
+
