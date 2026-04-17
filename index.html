@@ -3227,70 +3227,70 @@
                 </div>
 
                 <!-- 第二行：功能按鈕區 -->
-                <!-- 🆕 MODIFIED [v3.8.18]: grid → flex-wrap，按鈕均勻排列不靠左 -->
-                <div class="flex flex-wrap gap-1.5 sm:gap-2 justify-center">
+                <!-- 🆕 MODIFIED [v3.8.19]: 用 grid auto-fill minmax 保證按鈕夠寬不截斷 -->
+                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px;">
                     <button id="toggle-pause-btn"
-                        class="btn bg-gray-500 hover:bg-gray-600 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px]">
+                        class="btn bg-gray-500 hover:bg-gray-600 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap">
                         <i class="fas fa-pause mr-1 sm:mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
                     </button>
                     <button id="reset-answers-btn"
-                        class="btn btn-green text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px]">
+                        class="btn btn-green text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap">
                         <i class="fas fa-redo mr-1 sm:mr-2"></i> <span>重新開始 🔄</span>
                     </button>
                     <button id="draw-lottery-btn"
-                        class="btn btn-orange text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px]">抽籤
+                        class="btn btn-orange text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap">抽籤
                         🎲</button>
                     <button id="show-unsubmitted-students-btn"
-                        class="btn btn-orange text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">未作答學生
+                        class="btn btn-orange text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">未作答學生
                         📝</button>
                     <button id="ai-text-summary-btn"
-                        class="btn btn-purple text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">AI
+                        class="btn btn-purple text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">AI
                         文字分析 🤖</button>
                     <button id="download-media-btn"
-                        class="btn btn-purple text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">下載所有媒體
+                        class="btn btn-purple text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">下載所有媒體
                         💾</button>
                     <button id="show-statistics-btn"
-                        class="btn btn-primary text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">顯示統計
+                        class="btn btn-primary text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">顯示統計
                         📊</button>
                     <button id="start-peer-review-btn"
-                        class="btn btn-teal text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">開始互評
+                        class="btn btn-teal text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">開始互評
                         ❤️</button>
                     <button id="view-questions-btn"
-                        class="btn bg-indigo-600 hover:bg-indigo-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">查看題目
+                        class="btn bg-indigo-600 hover:bg-indigo-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">查看題目
                         📝</button>
                     <button id="view-reading-questions-btn"
-                        class="btn bg-red-600 hover:bg-red-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">顯示題目
+                        class="btn bg-red-600 hover:bg-red-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">顯示題目
                         📖</button>
                     <button id="rescore-all-students-btn"
-                        class="btn bg-green-600 hover:bg-green-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">更新學生答案
+                        class="btn bg-green-600 hover:bg-green-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">更新學生答案
                         ✏️</button>
                     <!-- 🆕 NEW [v3.8.3] A-4: 歷史趨勢按鈕 -->
                     <!-- 🐛 MODIFIED [v3.8.14]: 預設加 hidden（由 JS switch 依模式精準 show） -->
                     <button id="show-historical-quizzes-btn"
-                        class="btn bg-purple-600 hover:bg-purple-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden"
+                        class="btn bg-purple-600 hover:bg-purple-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden"
                         title="查看本教室過去所有評分型互動的趨勢統計">
                         📊 歷史趨勢
                     </button>
                     <!-- 🆕 NEW [v3.8.4] A-5: 即時加題（只在閱讀測驗/選擇題進行中顯示） -->
                     <button id="add-question-on-fly-btn"
-                        class="btn bg-teal-600 hover:bg-teal-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden"
+                        class="btn bg-teal-600 hover:bg-teal-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden"
                         title="互動進行中追加一題給學生作答（已提交者該題視為未答）">
                         ✏️ 加題
                     </button>
                     <!-- 🆕 NEW [v3.7.1]: 允許學生提前交卷（只在閱讀測驗模式顯示） -->
                     <button id="allow-early-submit-btn"
-                        class="btn bg-amber-500 hover:bg-amber-600 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden"
+                        class="btn bg-amber-500 hover:bg-amber-600 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden"
                         title="點擊後學生可立即送出答案，不必等到 5 分鐘">
                         <i class="fas fa-bolt mr-1"></i><span id="allow-early-submit-btn-text">允許提前交卷 ⚡</span>
                     </button>
                     <button id="show-matching-answer-btn"
-                        class="btn bg-pink-600 hover:bg-pink-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">顯示答案
+                        class="btn bg-pink-600 hover:bg-pink-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">顯示答案
                         💡</button>
                     <button id="show-sequencing-answer-btn"
-                        class="btn bg-cyan-600 hover:bg-cyan-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">顯示答案
+                        class="btn bg-cyan-600 hover:bg-cyan-700 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">顯示答案
                         💡</button>
                     <button id="download-responses-btn"
-                        class="btn btn-green text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex-1 min-w-[110px] max-w-[200px] hidden">下載回應
+                        class="btn btn-green text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap hidden">下載回應
                         📥</button>
                 </div>
                 <!-- 結束互動：獨立滿寬，不在 flex 按鈕群組內 -->
