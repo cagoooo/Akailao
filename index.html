@@ -20,6 +20,25 @@
     <!-- 🆕 NEW [v3.8.5] A-4 完整版：Chart.js 用於班級歷史趨勢折線圖 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
     <style>
+        /* 🐛 CRITICAL FIX [v3.8.17]: 終極修復 — 確保 .hidden 在任何 CSS 中都能生效
+           問題根因：inline <style> 在 <link tailwind-build.css> 之後載入，
+           所有在 inline style 裡有 display:* 宣告的 class（如 .btn、.flex 元素等），
+           都會因 source order 蓋過 tailwind 的 .hidden { display: none }。
+
+           解法：在 inline <style> 最頂端，用 [class~="hidden"] 屬性選擇器 + !important
+           強制覆蓋所有衝突。這比 .hidden { display: none !important } 更安全，
+           因為 Tailwind 的 responsive utilities（如 sm:inline）同樣在 tailwind-build.css
+           裡用 @media 宣告，在 inline style 之前載入，不會被此規則影響。
+           但 sm:inline 在手機端不會套用（因為 @media 不匹配），所以不衝突。
+
+           注意：Tailwind 的 responsive utilities（sm:block、md:flex 等）若要在
+           有 hidden class 的元素上生效，需要用 JS 動態 remove('hidden') 而非
+           依賴 CSS cascade — 這是目前專案的標準做法。
+        */
+        [class~="hidden"] {
+            display: none !important;
+        }
+
         /* 🐛 CRITICAL FIX [v3.8.9]: 修復 V3.8.7 Tailwind 本地化後 modal 預設不隱藏的問題
 
            問題背景：
@@ -35,7 +54,8 @@
            解法：所有「預設 hidden 但開啟時 display: flex」的 modal 規則改用 :not(.hidden) 修飾，
                 避免與 .hidden 衝突。不能用 !important 否則破壞 responsive utility（如 hidden sm:inline）。
            */
-        .magnified-image-modal:not(.hidden) {
+        /* 🐛 v3.8.17: 還原 modal 規則為正常寫法（不再需要 :not(.hidden) hack，由頂端通用規則處理） */
+        .magnified-image-modal {
             position: fixed;
             top: 0;
             left: 0;
@@ -49,7 +69,7 @@
             backdrop-filter: blur(5px);
         }
 
-        .zoomable-image-viewer:not(.hidden) {
+        .zoomable-image-viewer {
             position: fixed;
             inset: 0;
             z-index: 2000;
@@ -173,6 +193,8 @@
             box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
             transition: transform 0.2s ease-in-out;
         }
+
+        /* 🐛 v3.8.17: .btn.hidden 由頂端 [class~="hidden"] 規則統一處理，此處不再需要 */
 
         .btn:hover {
             transform: scale(1.05);
@@ -2997,26 +3019,20 @@
                     </div>
                 </div>
 
-                <!-- 右側區域：QR Code 按鈕 + 學生統計 -->
-                <div class="flex items-center gap-1 sm:gap-2 md:gap-3 flex-shrink-0 ml-auto">
-                    <!-- QR Code 按鈕 -->
-                    <!-- 🆕 MODIFIED [v3.8.16]: QR Code 按鈕 RWD 修正（xs: 不是 Tailwind 預設斷點） -->
+                <!-- 🆕 MODIFIED [v3.8.17]: 右側區域改為獨立一行，避免與左側教室代碼擠在同行跑版 -->
+                <div class="flex items-center gap-1.5 sm:gap-2 ml-auto">
                     <button id="show-qrcode-btn-menu"
-                        class="btn bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-center gap-1 whitespace-nowrap shadow-md rounded-lg border border-teal-700">
-                        <i class="fas fa-qrcode"></i> <span>課堂 QR Code 🔐</span>
+                        class="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs h-8 px-2.5 flex items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-teal-700">
+                        <i class="fas fa-qrcode"></i> <span class="hidden sm:inline">課堂</span> QR Code
                     </button>
-
-                    <!-- 學生統計卡片 -->
-                    <div
-                        class="flex items-center gap-1 sm:gap-2 p-1 sm:p-2 md:p-3 rounded-lg bg-blue-50 border border-blue-200 shadow-sm">
+                    <div class="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 border border-blue-200">
                         <div id="student-status-area"
-                            class="text-gray-700 text-xs sm:text-sm md:text-base font-semibold flex items-center gap-1 cursor-pointer hover:text-blue-700 transition-colors">
+                            class="text-xs font-semibold flex items-center gap-1 cursor-pointer hover:text-blue-700">
                             <i class="fas fa-users text-blue-600"></i> <span id="active-student-count"
                                 class="font-bold text-blue-700">0</span>
                         </div>
                         <button id="refresh-student-count-btn"
-                            class="text-blue-600 hover:text-blue-800 hover:bg-blue-200 transition-colors text-sm md:text-base p-0.5 rounded"
-                            title="更新統計">
+                            class="text-blue-600 hover:text-blue-800 text-xs p-0.5 rounded" title="更新統計">
                             <i class="fas fa-sync-alt"></i>
                         </button>
                     </div>
