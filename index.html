@@ -7483,9 +7483,29 @@
                 if (viewName === 'entry') {
                     body.classList.add('initial-view-background');
                 }
+                // 🆕 NEW [v3.8.15]: 進入教師監控頁時，先把所有可選按鈕隱藏
+                // 這樣在 setInteractionMode 執行 Step 2 之前，不會閃出無關按鈕
+                if (viewName === 'teacherMonitor') {
+                    hideAllOptionalButtons();
+                }
             } else {
                 console.error('找不到視圖:', viewName);
             }
+        }
+
+        // 🆕 NEW [v3.8.15]: 全局函數 — 隱藏所有教師端可選按鈕
+        function hideAllOptionalButtons() {
+            const ids = [
+                'show-statistics-btn', 'show-matching-answer-btn', 'show-sequencing-answer-btn',
+                'view-questions-btn', 'view-reading-questions-btn', 'rescore-all-students-btn',
+                'allow-early-submit-btn', 'add-question-on-fly-btn', 'start-peer-review-btn',
+                'download-media-btn', 'ai-text-summary-btn', 'show-unsubmitted-students-btn',
+                'download-responses-btn', 'show-historical-quizzes-btn'
+            ];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
         }
 
         /**
