@@ -11277,6 +11277,9 @@ function setupEventListeners() {
     document.getElementById('cancel-word-cloud-btn').addEventListener('click', () => document.getElementById('word-cloud-settings-modal').classList.add('hidden'));
     document.getElementById('start-word-cloud-btn').addEventListener('click', startWordCloud);
     document.getElementById('word-cloud-display-close-btn').addEventListener('click', () => document.getElementById('word-cloud-display-modal').classList.add('hidden'));
+    // 🆕 FIX: 文字雲/分組競賽模態框中的 QR Code 按鈕
+    document.getElementById('word-cloud-qrcode-btn').addEventListener('click', showQRCodeModal);
+    document.getElementById('team-battle-qrcode-btn').addEventListener('click', showQRCodeModal);
     document.getElementById('word-cloud-refresh-btn').addEventListener('click', () => {
         // 重新取得數據渲染
         listenToWordCloudResponses();
@@ -14769,14 +14772,23 @@ async function startWordCloud() {
     if (!topic) { showMessage('請輸入討論主題', 'error'); return; }
     const maxWords = parseInt(document.getElementById('word-cloud-max-words').value) || 1;
 
-    wordCloudSettings = { topic, maxWords, startedAt: Date.now() };
+    // 🆕 FIX: 使用 timestamp 作為 sessionId，每次啟動都是新的一輪
+    const sessionId = Date.now();
+    wordCloudSettings = { topic, maxWords, startedAt: sessionId };
     document.getElementById('word-cloud-settings-modal').classList.add('hidden');
     showView('teacherMonitor');
-    await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords } });
+    await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords, startedAt: sessionId } });
 
     // 顯示文字雲展示模態框
     document.getElementById('word-cloud-display-modal').classList.remove('hidden');
     document.getElementById('word-cloud-display-topic').textContent = `主題：${topic}`;
+
+    // 清空 canvas
+    const canvas = document.getElementById('word-cloud-canvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
 
     // 監聽學生回應
     listenToWordCloudResponses();
@@ -14850,12 +14862,17 @@ function setupWordCloudStudent(controlData) {
     if (!settings) return;
     wordCloudSettings = settings;
     document.getElementById('word-cloud-topic-display').textContent = `主題：${settings.topic}`;
-    // 檢查是否已提交
-    const subKey = `wordCloud_${classroomCode}_${settings.topic}`;
+    // 🆕 FIX: 使用 sessionId（startedAt timestamp）作為 key，每次新啟動都是全新一輪
+    const subKey = `wordCloud_${classroomCode}_${settings.startedAt || settings.topic}`;
     if (localStorage.getItem(subKey)) {
         document.getElementById('word-cloud-input-phase').classList.add('hidden');
         document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
         document.getElementById('word-cloud-submitted-word').textContent = localStorage.getItem(subKey);
+    } else {
+        // 新一輪：重置 UI 確保顯示輸入框
+        document.getElementById('word-cloud-input-phase').classList.remove('hidden');
+        document.getElementById('word-cloud-submitted-status').classList.add('hidden');
+        document.getElementById('word-cloud-student-input').value = '';
     }
 }
 
@@ -14867,7 +14884,8 @@ async function submitWordCloudWord() {
     try {
         const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
         await setDoc(respRef, { word, studentName, timestamp: serverTimestamp(), interactionMode: 'word_cloud' });
-        const subKey = `wordCloud_${classroomCode}_${wordCloudSettings?.topic || ''}`;
+        // 🆕 FIX: 使用 sessionId 作為 key，與 setupWordCloudStudent 一致
+        const subKey = `wordCloud_${classroomCode}_${wordCloudSettings?.startedAt || wordCloudSettings?.topic || ''}`;
         localStorage.setItem(subKey, word);
         document.getElementById('word-cloud-input-phase').classList.add('hidden');
         document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
