@@ -3000,9 +3000,10 @@
                 <!-- 右側區域：QR Code 按鈕 + 學生統計 -->
                 <div class="flex items-center gap-1 sm:gap-2 md:gap-3 flex-shrink-0 ml-auto">
                     <!-- QR Code 按鈕 -->
+                    <!-- 🆕 MODIFIED [v3.8.16]: QR Code 按鈕 RWD 修正（xs: 不是 Tailwind 預設斷點） -->
                     <button id="show-qrcode-btn-menu"
-                        class="btn bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs sm:text-sm md:text-base h-9 sm:h-10 md:h-11 px-2 sm:px-3 md:px-4 flex items-center justify-center gap-1 whitespace-nowrap shadow-md transition-all hover:shadow-lg rounded-lg border border-teal-700">
-                        <i class="fas fa-qrcode"></i> <span class="hidden xs:inline">QR Code</span>
+                        class="btn bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-center gap-1 whitespace-nowrap shadow-md rounded-lg border border-teal-700">
+                        <i class="fas fa-qrcode"></i> <span>課堂 QR Code 🔐</span>
                     </button>
 
                     <!-- 學生統計卡片 -->
@@ -3202,12 +3203,11 @@
                     </button>
 
                     <!-- 🚀 右側：QR Code 功能區分 -->
-                    <div class="flex flex-row sm:flex-row gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
-                        <button id="show-qrcode-btn"
-                            class="btn bg-teal-600 hover:bg-teal-700 text-white font-semibold w-full sm:w-auto text-sm sm:text-base md:text-lg h-10 sm:h-11 md:h-12 px-3 sm:px-4 md:px-5 flex items-center justify-center gap-1.5 whitespace-nowrap shadow-md transition-all hover:shadow-lg rounded-lg border border-teal-700">
-                            <i class="fas fa-qrcode text-base sm:text-lg md:text-xl"></i> <span>課堂 QR Code 🔐</span>
-                        </button>
-                    </div>
+                    <!-- 🆕 MODIFIED [v3.8.16]: QR Code 按鈕精簡 -->
+                    <button id="show-qrcode-btn"
+                        class="btn bg-teal-600 hover:bg-teal-700 text-white font-semibold w-full sm:w-auto text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 flex items-center justify-center gap-1 whitespace-nowrap shadow-md rounded-lg border border-teal-700">
+                        <i class="fas fa-qrcode"></i> <span>課堂 QR Code 🔐</span>
+                    </button>
                 </div>
 
                 <!-- 第二行：功能按鈕區（Bento Box 響應式網格） -->
