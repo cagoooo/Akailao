@@ -11262,10 +11262,6 @@ function setupEventListeners() {
     document.getElementById('start-team-battle-btn').addEventListener('click', startTeamBattle);
     document.getElementById('team-count-select').addEventListener('change', renderTeamNameInputs);
     document.getElementById('team-scoreboard-close-btn').addEventListener('click', () => document.getElementById('team-scoreboard-modal').classList.add('hidden'));
-    document.getElementById('team-add-score-btn').addEventListener('click', () => {
-        // 打開積分板（如果已關閉）
-        document.getElementById('team-scoreboard-modal').classList.remove('hidden');
-    });
     document.getElementById('team-reset-scores-btn').addEventListener('click', resetTeamScores);
     document.getElementById('end-team-battle-btn').addEventListener('click', endTeamBattle);
 
