@@ -107,8 +107,9 @@
 - [x] **[V3.8.25] 🏗️ D-1 Vite 構建系統（Phase 1）**
   - 25,000 行 index.html 拆分為 3 個檔案（HTML 3K + JS 19K + CSS 3K）
   - Firebase CDN ESM → npm firebase@11.6.1（tree-shakable）
-  - Vite 8 + vite-plugin-singlefile 輸出單一 HTML（gzip 287KB）
+  - Vite 8 + vite-plugin-singlefile 輸出單一 HTML（gzip 291KB）
   - GitHub Actions 部署管線升級（npm ci → vite build → deploy dist/）
+  - 🐛 修復 `__firebase_config is not defined`：Firebase config 改為直接內嵌 + Vite define 注入
 
 ---
 
