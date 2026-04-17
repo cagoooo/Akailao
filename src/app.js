@@ -11301,6 +11301,7 @@ function setupEventListeners() {
 
     // 🆕 NEW [v3.8.25] MODE-5：課後回饋 Event Listeners
     document.getElementById('feedback-stats-close-btn').addEventListener('click', () => document.getElementById('feedback-stats-modal').classList.add('hidden'));
+    document.getElementById('feedback-qrcode-btn').addEventListener('click', showQRCodeModal);
     document.getElementById('end-feedback-btn').addEventListener('click', endCourseFeedback);
     document.getElementById('feedback-download-btn').addEventListener('click', downloadFeedbackCSV);
     document.getElementById('submit-feedback-btn').addEventListener('click', submitCourseFeedback);
@@ -14635,17 +14636,26 @@ function updateTeamScoreboardUI() {
     const container = document.getElementById('team-scoreboard-container');
     const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
     container.innerHTML = sorted.map((team, i) => `
-        <div class="flex items-center gap-4 p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
-            <span class="text-4xl">${i === 0 ? '👑' : team.emoji}</span>
-            <div class="flex-1">
-                <h3 class="text-2xl font-bold" style="color:${team.color}">${team.name}</h3>
+        <div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
+            <span class="text-3xl sm:text-4xl">${i === 0 ? '👑' : team.emoji}</span>
+            <div class="flex-1 min-w-0">
+                <h3 class="text-lg sm:text-2xl font-bold truncate" style="color:${team.color}">${team.name}</h3>
             </div>
-            <div class="text-5xl font-black" style="color:${team.color}">${team.score}</div>
+            <div class="text-4xl sm:text-5xl font-black" style="color:${team.color}">${team.score}</div>
             <div class="flex gap-1">
-                <button onclick="adjustTeamScore('${team.name}', 1)" class="btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
-                <button onclick="adjustTeamScore('${team.name}', -1)" class="btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
+                <button data-team="${team.name}" data-delta="1" class="team-score-btn btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
+                <button data-team="${team.name}" data-delta="-1" class="team-score-btn btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
             </div>
         </div>`).join('');
+
+    // 🆕 FIX: 使用事件委派取代 onclick（ES Module 中 onclick 無法訪問模組作用域函數）
+    container.querySelectorAll('.team-score-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const teamName = btn.dataset.team;
+            const delta = parseInt(btn.dataset.delta);
+            adjustTeamScore(teamName, delta);
+        });
+    });
 }
 
 async function adjustTeamScore(teamName, delta) {
@@ -15045,19 +15055,19 @@ function updateFeedbackStatsUI(ratings, comments) {
     document.getElementById('feedback-avg-rating').textContent = avg;
     document.getElementById('feedback-total-count').textContent = ratings.length;
 
-    // 分布
+    // 分布 — RWD 優化：手機端用數字代替多星號，進度條自適應
     const dist = document.getElementById('feedback-distribution');
     dist.innerHTML = '';
     for (let star = 5; star >= 1; star--) {
         const count = ratings.filter(r => r === star).length;
         const pct = ratings.length > 0 ? (count / ratings.length * 100) : 0;
         dist.innerHTML += `
-            <div class="flex items-center gap-2">
-                <span class="text-amber-400 w-8 text-right">${'★'.repeat(star)}</span>
-                <div class="flex-1 bg-gray-200 rounded-full h-5 overflow-hidden">
+            <div class="flex items-center gap-1.5 sm:gap-2">
+                <span class="text-amber-400 text-xs sm:text-sm font-bold w-10 sm:w-12 text-right whitespace-nowrap">${star}★</span>
+                <div class="flex-1 bg-gray-200 rounded-full h-4 sm:h-5 overflow-hidden min-w-[60px]">
                     <div class="bg-amber-400 h-full rounded-full transition-all duration-500" style="width:${pct}%"></div>
                 </div>
-                <span class="text-sm text-gray-600 w-16 text-right">${count} (${pct.toFixed(0)}%)</span>
+                <span class="text-xs sm:text-sm text-gray-600 w-14 sm:w-16 text-right whitespace-nowrap">${count} (${pct.toFixed(0)}%)</span>
             </div>`;
     }
 

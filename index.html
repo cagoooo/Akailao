@@ -2931,43 +2931,44 @@
         </div>
     </div>
 
-    <!-- 🆕 NEW [v3.8.25] MODE-5：課後回饋統計模態框（教師端） -->
+    <!-- 🆕 NEW [v3.8.25] MODE-5：課後回饋統計模態框（教師端）— RWD 優化 -->
     <div id="feedback-stats-modal" class="magnified-image-modal hidden">
-        <div class="magnified-image-modal-content" style="max-width: 800px; max-height: 90vh;">
+        <div class="magnified-image-modal-content w-11/12 sm:w-auto" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
             <button id="feedback-stats-close-btn" class="magnified-image-modal-close">×</button>
-            <h4 class="text-2xl font-bold mb-4 text-gray-800 text-center">📝 課後回饋統計</h4>
-            <!-- 摘要 -->
-            <div class="grid grid-cols-3 gap-4 mb-6">
-                <div class="bg-amber-50 rounded-xl p-4 text-center border-2 border-amber-200">
-                    <p class="text-sm text-gray-600">平均分數</p>
-                    <p id="feedback-avg-rating" class="text-4xl font-bold text-amber-600">—</p>
+            <h4 class="text-lg sm:text-2xl font-bold mb-3 sm:mb-4 text-gray-800 text-center">📝 課後回饋統計</h4>
+            <!-- 摘要：手機端橫排緊湊，桌面端寬鬆 -->
+            <div class="flex justify-center gap-2 sm:gap-4 mb-4 sm:mb-6">
+                <div class="bg-amber-50 rounded-xl px-3 py-2 sm:p-4 text-center border-2 border-amber-200 flex-1 max-w-[140px]">
+                    <p class="text-xs sm:text-sm text-gray-600">平均分數</p>
+                    <p id="feedback-avg-rating" class="text-2xl sm:text-4xl font-bold text-amber-600">—</p>
                 </div>
-                <div class="bg-blue-50 rounded-xl p-4 text-center border-2 border-blue-200">
-                    <p class="text-sm text-gray-600">回饋人數</p>
-                    <p id="feedback-total-count" class="text-4xl font-bold text-blue-600">0</p>
+                <div class="bg-blue-50 rounded-xl px-3 py-2 sm:p-4 text-center border-2 border-blue-200 flex-1 max-w-[140px]">
+                    <p class="text-xs sm:text-sm text-gray-600">回饋人數</p>
+                    <p id="feedback-total-count" class="text-2xl sm:text-4xl font-bold text-blue-600">0</p>
                 </div>
-                <div class="bg-green-50 rounded-xl p-4 text-center border-2 border-green-200">
-                    <p class="text-sm text-gray-600">在線學生</p>
-                    <p id="feedback-online-count" class="text-4xl font-bold text-green-600">0</p>
+                <div class="bg-green-50 rounded-xl px-3 py-2 sm:p-4 text-center border-2 border-green-200 flex-1 max-w-[140px]">
+                    <p class="text-xs sm:text-sm text-gray-600">在線學生</p>
+                    <p id="feedback-online-count" class="text-2xl sm:text-4xl font-bold text-green-600">0</p>
                 </div>
             </div>
             <!-- 評分分布 -->
-            <div class="bg-gray-50 rounded-xl p-4 mb-4">
-                <h5 class="font-bold text-gray-700 mb-3">評分分布</h5>
-                <div id="feedback-distribution" class="space-y-2">
+            <div class="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
+                <h5 class="font-bold text-gray-700 mb-2 sm:mb-3 text-sm sm:text-base">評分分布</h5>
+                <div id="feedback-distribution" class="space-y-1.5 sm:space-y-2">
                     <!-- 由 JS 動態生成 -->
                 </div>
             </div>
             <!-- 學生建議 -->
-            <div class="bg-gray-50 rounded-xl p-4 mb-4 overflow-y-auto" style="max-height: 250px;">
-                <h5 class="font-bold text-gray-700 mb-3">學生建議</h5>
+            <div class="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 overflow-y-auto" style="max-height: 200px;">
+                <h5 class="font-bold text-gray-700 mb-2 sm:mb-3 text-sm sm:text-base">學生建議</h5>
                 <div id="feedback-comments-list" class="space-y-2">
-                    <p class="text-gray-400 text-center">等待學生回饋中...</p>
+                    <p class="text-gray-400 text-center text-sm">等待學生回饋中...</p>
                 </div>
             </div>
-            <div class="flex justify-center gap-4">
-                <button id="feedback-download-btn" class="btn btn-green !w-auto text-base h-11 px-6"><i class="fas fa-download mr-2"></i>下載 CSV</button>
-                <button id="end-feedback-btn" class="btn btn-red !w-auto text-base h-11 px-6"><i class="fas fa-stop mr-2"></i>結束回饋</button>
+            <div class="flex justify-center gap-2 sm:gap-4 flex-wrap">
+                <button id="feedback-qrcode-btn" class="btn bg-teal-600 hover:bg-teal-700 !w-auto text-sm sm:text-base h-10 sm:h-11 px-4 sm:px-6"><i class="fas fa-qrcode mr-1 sm:mr-2"></i>QR Code</button>
+                <button id="feedback-download-btn" class="btn btn-green !w-auto text-sm sm:text-base h-10 sm:h-11 px-4 sm:px-6"><i class="fas fa-download mr-1 sm:mr-2"></i>下載 CSV</button>
+                <button id="end-feedback-btn" class="btn btn-red !w-auto text-sm sm:text-base h-10 sm:h-11 px-4 sm:px-6"><i class="fas fa-stop mr-1 sm:mr-2"></i>結束回饋</button>
             </div>
         </div>
     </div>
