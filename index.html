@@ -19,6 +19,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <!-- 🆕 NEW [v3.8.5] A-4 完整版：Chart.js 用於班級歷史趨勢折線圖 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+    <!-- 🆕 NEW [v3.8.25] MODE-3：wordcloud2.js 文字雲渲染 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.2.2/wordcloud2.min.js"></script>
     <style>
         /* 🐛 CRITICAL FIX [v3.8.17]: 終極修復 — 確保 .hidden 在任何 CSS 中都能生效
            問題根因：inline <style> 在 <link tailwind-build.css> 之後載入，
@@ -3095,6 +3097,27 @@
                     <span class="text-base sm:text-lg md:text-xl lg:text-2xl opacity-60 mb-2 sm:mb-3">I.</span>
                     <span class="text-3xl sm:text-4xl md:text-5xl lg:text-5xl font-bold leading-tight">快速投票</span>
                 </button>
+                <!-- 🆕 NEW [v3.8.25] MODE-2~5：四個新互動模式 -->
+                <button id="team-battle-settings-btn"
+                    class="btn bg-rose-500 hover:bg-rose-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-base sm:text-lg md:text-xl lg:text-2xl opacity-60 mb-2 sm:mb-3">J.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-4xl font-bold leading-tight">分組競賽</span>
+                </button>
+                <button id="word-cloud-settings-btn"
+                    class="btn bg-cyan-500 hover:bg-cyan-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-base sm:text-lg md:text-xl lg:text-2xl opacity-60 mb-2 sm:mb-3">K.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-4xl font-bold leading-tight">文字雲</span>
+                </button>
+                <button data-mode="photo_wall"
+                    class="btn bg-pink-500 hover:bg-pink-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-base sm:text-lg md:text-xl lg:text-2xl opacity-60 mb-2 sm:mb-3">L.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-4xl font-bold leading-tight">相片牆</span>
+                </button>
+                <button data-mode="course_feedback"
+                    class="btn bg-amber-500 hover:bg-amber-600 aspect-square w-full flex flex-col items-center justify-center p-1">
+                    <span class="text-base sm:text-lg md:text-xl lg:text-2xl opacity-60 mb-2 sm:mb-3">M.</span>
+                    <span class="text-2xl sm:text-3xl md:text-4xl lg:text-4xl font-bold leading-tight">課後回饋</span>
+                </button>
             </div>
             <div class="mt-6 sm:mt-8 flex flex-col items-center px-2">
                 <div class="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-4 w-full sm:w-auto">
@@ -3839,6 +3862,92 @@
                         <i class="fas fa-check-circle text-green-600 text-5xl mb-3"></i>
                         <h4 class="text-2xl font-bold text-green-700 mb-2">投票成功！</h4>
                         <p class="text-gray-700">感謝您的參與</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🆕 NEW [v3.8.25] MODE-2：分組競賽 — 學生端 -->
+            <div id="interaction-team-battle" class="hidden text-center flex flex-col items-center justify-center min-h-[60vh] p-4">
+                <!-- 選隊階段 -->
+                <div id="team-select-phase">
+                    <h3 class="text-3xl font-bold text-gray-800 mb-2">🏆 分組競賽</h3>
+                    <p class="text-lg text-gray-600 mb-6">請選擇你的隊伍：</p>
+                    <div id="team-select-buttons" class="grid grid-cols-2 gap-4 max-w-md mx-auto">
+                        <!-- 隊伍按鈕由 JS 動態生成 -->
+                    </div>
+                </div>
+                <!-- 已加入隊伍 -->
+                <div id="team-joined-phase" class="hidden w-full max-w-2xl">
+                    <div id="team-joined-banner" class="rounded-xl p-6 mb-6 text-white text-center shadow-lg">
+                        <h3 class="text-3xl font-bold mb-1"><span id="team-joined-emoji"></span> <span id="team-joined-name"></span></h3>
+                        <p class="text-lg opacity-90">你已加入此隊伍！</p>
+                    </div>
+                    <!-- 即時隊伍積分板 -->
+                    <div id="team-scoreboard-student" class="space-y-3">
+                        <!-- 由 JS 動態更新 -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🆕 NEW [v3.8.25] MODE-3：文字雲 — 學生端 -->
+            <div id="interaction-word-cloud" class="hidden text-center flex flex-col items-center justify-center min-h-[60vh] p-4">
+                <h3 class="text-3xl font-bold text-gray-800 mb-2">☁️ 文字雲</h3>
+                <p id="word-cloud-topic-display" class="text-lg text-gray-600 mb-6"></p>
+                <div id="word-cloud-input-phase" class="w-full max-w-md">
+                    <input type="text" id="word-cloud-student-input"
+                        class="w-full px-4 py-4 border-2 border-cyan-300 rounded-xl text-2xl text-center focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                        placeholder="輸入一個詞彙…" maxlength="20">
+                    <button id="submit-word-cloud-btn" class="btn bg-cyan-500 hover:bg-cyan-600 w-full mt-4 h-14 text-xl">
+                        <i class="fas fa-paper-plane mr-2"></i> 送出詞彙 ✨
+                    </button>
+                </div>
+                <div id="word-cloud-submitted-status" class="hidden mt-8">
+                    <div class="bg-cyan-100 border-2 border-cyan-500 rounded-lg p-6">
+                        <i class="fas fa-check-circle text-cyan-600 text-5xl mb-3"></i>
+                        <h4 class="text-2xl font-bold text-cyan-700 mb-2">已送出！</h4>
+                        <p class="text-gray-700">你的詞彙：「<span id="word-cloud-submitted-word" class="font-bold"></span>」</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 🆕 NEW [v3.8.25] MODE-4：相片牆 — 學生端（與教師端共用展示） -->
+            <div id="interaction-photo-wall" class="hidden p-2">
+                <h3 class="text-2xl font-bold text-gray-800 mb-4 text-center">🖼️ 班級相片牆</h3>
+                <div id="photo-wall-grid-student" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    <p class="text-gray-500 text-center col-span-full">載入作品中...</p>
+                </div>
+            </div>
+
+            <!-- 🆕 NEW [v3.8.25] MODE-5：課後回饋 — 學生端 -->
+            <div id="interaction-course-feedback" class="hidden text-center flex flex-col items-center justify-center min-h-[60vh] p-4">
+                <h3 class="text-3xl font-bold text-gray-800 mb-2">📝 課後回饋</h3>
+                <p class="text-lg text-gray-600 mb-6">匿名評分，幫助老師改善教學</p>
+                <div id="feedback-input-phase" class="w-full max-w-md">
+                    <!-- 星星評分 -->
+                    <div class="mb-6">
+                        <p class="text-lg font-semibold text-gray-700 mb-3">今天的課程你覺得如何？</p>
+                        <div id="feedback-stars" class="flex justify-center gap-3">
+                            <button class="feedback-star text-5xl text-gray-300 hover:text-amber-400 transition-colors" data-rating="1">★</button>
+                            <button class="feedback-star text-5xl text-gray-300 hover:text-amber-400 transition-colors" data-rating="2">★</button>
+                            <button class="feedback-star text-5xl text-gray-300 hover:text-amber-400 transition-colors" data-rating="3">★</button>
+                            <button class="feedback-star text-5xl text-gray-300 hover:text-amber-400 transition-colors" data-rating="4">★</button>
+                            <button class="feedback-star text-5xl text-gray-300 hover:text-amber-400 transition-colors" data-rating="5">★</button>
+                        </div>
+                        <p id="feedback-rating-label" class="text-sm text-gray-500 mt-2">點擊星星評分</p>
+                    </div>
+                    <!-- 文字建議 -->
+                    <textarea id="feedback-comment-input" rows="3"
+                        class="w-full px-4 py-3 border-2 border-amber-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                        placeholder="一句話建議或心得（選填）"></textarea>
+                    <button id="submit-feedback-btn" class="btn bg-amber-500 hover:bg-amber-600 w-full mt-4 h-14 text-xl" disabled>
+                        <i class="fas fa-paper-plane mr-2"></i> 送出回饋 📬
+                    </button>
+                </div>
+                <div id="feedback-submitted-status" class="hidden mt-8">
+                    <div class="bg-amber-100 border-2 border-amber-500 rounded-lg p-6">
+                        <i class="fas fa-heart text-amber-600 text-5xl mb-3"></i>
+                        <h4 class="text-2xl font-bold text-amber-700 mb-2">感謝回饋！</h4>
+                        <p class="text-gray-700">你的意見對老師很重要 ❤️</p>
                     </div>
                 </div>
             </div>
@@ -5414,6 +5523,17 @@
             </div>
 
             <div class="w-full space-y-3 sm:space-y-4">
+                <!-- 🆕 NEW [v3.8.25] MODE-1：投票問題輸入 -->
+                <div>
+                    <label for="quick-poll-question-input"
+                        class="block text-gray-700 text-xs sm:text-base font-bold mb-2 flex items-center gap-2">
+                        <i class="fas fa-question-circle text-lime-600"></i> <span>投票問題：</span>
+                    </label>
+                    <input type="text" id="quick-poll-question-input"
+                        class="w-full px-3 sm:px-4 py-2 sm:py-3 border-2 border-gray-300 rounded-lg text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-lime-500 focus:border-lime-500"
+                        placeholder="例如：你最喜歡哪種上課方式？">
+                </div>
+
                 <!-- 投票類型選擇 - 卡片式設計 -->
                 <div>
                     <label
@@ -5581,6 +5701,165 @@
                 <button id="end-quick-poll-btn" class="btn btn-red !w-auto text-base h-11 px-6">
                     <i class="fas fa-stop mr-2"></i>結束投票
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-2：分組競賽設定模態框 -->
+    <div id="team-battle-settings-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content w-11/12 sm:w-96 md:w-full" style="max-width: 550px;">
+            <button id="team-battle-settings-close-btn" class="magnified-image-modal-close">×</button>
+            <div class="w-full mb-4">
+                <h4 class="text-lg sm:text-2xl font-bold text-center text-gray-800">🏆 分組競賽設定</h4>
+                <p class="text-xs sm:text-sm text-gray-500 text-center mt-1">設定隊伍名稱，學生自選加入</p>
+            </div>
+            <div class="w-full space-y-3">
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2"><i class="fas fa-users text-rose-500 mr-1"></i> 隊伍數量：</label>
+                    <select id="team-count-select" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-rose-500">
+                        <option value="2">2 隊</option>
+                        <option value="3">3 隊</option>
+                        <option value="4" selected>4 隊</option>
+                        <option value="5">5 隊</option>
+                        <option value="6">6 隊</option>
+                    </select>
+                </div>
+                <div id="team-names-container" class="space-y-2">
+                    <!-- 由 JS 動態產生隊名輸入框 -->
+                </div>
+                <p class="text-xs text-gray-400 text-center">💡 每次互動（是非/選擇/搶答等）的分數會自動累計至隊伍</p>
+            </div>
+            <div class="flex gap-2 mt-4 w-full">
+                <button id="start-team-battle-btn" class="btn bg-rose-500 hover:bg-rose-600 text-white font-bold flex-1 h-11 text-base rounded shadow-md flex items-center justify-center gap-1.5">
+                    <i class="fas fa-play"></i> 開始競賽 🚀
+                </button>
+                <button id="cancel-team-battle-btn" class="btn bg-gray-400 hover:bg-gray-500 text-white font-bold flex-1 h-11 text-base rounded shadow-md flex items-center justify-center gap-1.5">
+                    <i class="fas fa-times"></i> 取消
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-3：文字雲設定模態框 -->
+    <div id="word-cloud-settings-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content w-11/12 sm:w-96 md:w-full" style="max-width: 500px;">
+            <button id="word-cloud-settings-close-btn" class="magnified-image-modal-close">×</button>
+            <div class="w-full mb-4">
+                <h4 class="text-lg sm:text-2xl font-bold text-center text-gray-800">☁️ 文字雲設定</h4>
+                <p class="text-xs sm:text-sm text-gray-500 text-center mt-1">學生各提交一個詞彙，即時合成文字雲</p>
+            </div>
+            <div class="w-full space-y-3">
+                <div>
+                    <label for="word-cloud-topic-input" class="block text-gray-700 text-sm font-bold mb-2"><i class="fas fa-lightbulb text-cyan-500 mr-1"></i> 討論主題：</label>
+                    <input type="text" id="word-cloud-topic-input"
+                        class="w-full px-3 py-3 border-2 border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                        placeholder="例如：形容夏天的詞彙">
+                </div>
+                <div>
+                    <label class="block text-gray-700 text-sm font-bold mb-2"><i class="fas fa-text-width text-cyan-500 mr-1"></i> 每人可提交：</label>
+                    <select id="word-cloud-max-words" class="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-base focus:ring-2 focus:ring-cyan-500">
+                        <option value="1" selected>1 個詞彙</option>
+                        <option value="3">最多 3 個詞彙</option>
+                        <option value="5">最多 5 個詞彙</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4 w-full">
+                <button id="start-word-cloud-btn" class="btn bg-cyan-500 hover:bg-cyan-600 text-white font-bold flex-1 h-11 text-base rounded shadow-md flex items-center justify-center gap-1.5">
+                    <i class="fas fa-play"></i> 開始收集 🚀
+                </button>
+                <button id="cancel-word-cloud-btn" class="btn bg-gray-400 hover:bg-gray-500 text-white font-bold flex-1 h-11 text-base rounded shadow-md flex items-center justify-center gap-1.5">
+                    <i class="fas fa-times"></i> 取消
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-2：分組競賽即時積分板模態框（教師端） -->
+    <div id="team-scoreboard-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 900px; max-height: 90vh;">
+            <button id="team-scoreboard-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-3xl font-bold mb-6 text-gray-800 text-center">🏆 隊伍積分板</h4>
+            <div id="team-scoreboard-container" class="space-y-4">
+                <!-- 由 JS 動態生成 -->
+            </div>
+            <div class="flex justify-center gap-4 mt-6">
+                <button id="team-add-score-btn" class="btn btn-green !w-auto text-base h-11 px-6"><i class="fas fa-plus mr-2"></i>加分</button>
+                <button id="team-reset-scores-btn" class="btn btn-orange !w-auto text-base h-11 px-6"><i class="fas fa-redo mr-2"></i>重置分數</button>
+                <button id="end-team-battle-btn" class="btn btn-red !w-auto text-base h-11 px-6"><i class="fas fa-stop mr-2"></i>結束競賽</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-3：文字雲全螢幕展示模態框（教師端） -->
+    <div id="word-cloud-display-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 1000px; max-height: 90vh;">
+            <button id="word-cloud-display-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-2 text-gray-800 text-center">☁️ 文字雲</h4>
+            <p id="word-cloud-display-topic" class="text-lg text-gray-600 text-center mb-4"></p>
+            <div class="bg-white border-2 border-gray-200 rounded-xl p-2" style="min-height: 500px;">
+                <canvas id="word-cloud-canvas" width="900" height="500"></canvas>
+            </div>
+            <div class="flex justify-center gap-4 mt-4">
+                <button id="word-cloud-refresh-btn" class="btn btn-green !w-auto text-base h-11 px-6"><i class="fas fa-sync mr-2"></i>重新整理</button>
+                <button id="word-cloud-fullscreen-btn" class="btn btn-primary !w-auto text-base h-11 px-6"><i class="fas fa-expand mr-2"></i>全螢幕</button>
+                <button id="end-word-cloud-btn" class="btn btn-red !w-auto text-base h-11 px-6"><i class="fas fa-stop mr-2"></i>結束</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-4：相片牆全螢幕模態框 -->
+    <div id="photo-wall-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 95vw; max-height: 95vh; width: 95vw;">
+            <button id="photo-wall-modal-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-4 text-gray-800 text-center">🖼️ 班級相片牆</h4>
+            <div id="photo-wall-grid-teacher" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 overflow-y-auto" style="max-height: 75vh;">
+                <!-- 由 JS 動態生成 -->
+            </div>
+            <div class="flex justify-center gap-4 mt-4">
+                <button id="photo-wall-fullscreen-btn" class="btn btn-primary !w-auto text-base h-11 px-6"><i class="fas fa-expand mr-2"></i>全螢幕</button>
+                <button id="end-photo-wall-btn" class="btn btn-red !w-auto text-base h-11 px-6"><i class="fas fa-stop mr-2"></i>結束</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🆕 NEW [v3.8.25] MODE-5：課後回饋統計模態框（教師端） -->
+    <div id="feedback-stats-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 800px; max-height: 90vh;">
+            <button id="feedback-stats-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-4 text-gray-800 text-center">📝 課後回饋統計</h4>
+            <!-- 摘要 -->
+            <div class="grid grid-cols-3 gap-4 mb-6">
+                <div class="bg-amber-50 rounded-xl p-4 text-center border-2 border-amber-200">
+                    <p class="text-sm text-gray-600">平均分數</p>
+                    <p id="feedback-avg-rating" class="text-4xl font-bold text-amber-600">—</p>
+                </div>
+                <div class="bg-blue-50 rounded-xl p-4 text-center border-2 border-blue-200">
+                    <p class="text-sm text-gray-600">回饋人數</p>
+                    <p id="feedback-total-count" class="text-4xl font-bold text-blue-600">0</p>
+                </div>
+                <div class="bg-green-50 rounded-xl p-4 text-center border-2 border-green-200">
+                    <p class="text-sm text-gray-600">在線學生</p>
+                    <p id="feedback-online-count" class="text-4xl font-bold text-green-600">0</p>
+                </div>
+            </div>
+            <!-- 評分分布 -->
+            <div class="bg-gray-50 rounded-xl p-4 mb-4">
+                <h5 class="font-bold text-gray-700 mb-3">評分分布</h5>
+                <div id="feedback-distribution" class="space-y-2">
+                    <!-- 由 JS 動態生成 -->
+                </div>
+            </div>
+            <!-- 學生建議 -->
+            <div class="bg-gray-50 rounded-xl p-4 mb-4 overflow-y-auto" style="max-height: 250px;">
+                <h5 class="font-bold text-gray-700 mb-3">學生建議</h5>
+                <div id="feedback-comments-list" class="space-y-2">
+                    <p class="text-gray-400 text-center">等待學生回饋中...</p>
+                </div>
+            </div>
+            <div class="flex justify-center gap-4">
+                <button id="feedback-download-btn" class="btn btn-green !w-auto text-base h-11 px-6"><i class="fas fa-download mr-2"></i>下載 CSV</button>
+                <button id="end-feedback-btn" class="btn btn-red !w-auto text-base h-11 px-6"><i class="fas fa-stop mr-2"></i>結束回饋</button>
             </div>
         </div>
     </div>
@@ -7518,6 +7797,11 @@
             quick_poll: document.getElementById('interaction-quick-poll'), // Quick poll UI
             sequencing: document.getElementById('interaction-sequencing'), // Sequencing UI
             matching: document.getElementById('interaction-matching'), // Matching UI
+            // 🆕 NEW [v3.8.25] MODE-2~5：四個新互動模式
+            team_battle: document.getElementById('interaction-team-battle'),
+            word_cloud: document.getElementById('interaction-word-cloud'),
+            photo_wall: document.getElementById('interaction-photo-wall'),
+            course_feedback: document.getElementById('interaction-course-feedback'),
         };
 
         // --- Core Logic Functions ---
@@ -8085,6 +8369,30 @@
                     document.getElementById('quick-poll-options-container').classList.remove('hidden');
                     document.getElementById('quick-poll-voted-status').classList.add('hidden');
                     document.getElementById('quick-poll-question-display').textContent = '';
+                    break;
+                // 🆕 NEW [v3.8.25] MODE-2~5 學生端 UI 重置
+                case 'team_battle':
+                    document.getElementById('team-select-phase').classList.remove('hidden');
+                    document.getElementById('team-joined-phase').classList.add('hidden');
+                    document.getElementById('team-select-buttons').innerHTML = '';
+                    break;
+                case 'word_cloud':
+                    document.getElementById('word-cloud-input-phase').classList.remove('hidden');
+                    document.getElementById('word-cloud-submitted-status').classList.add('hidden');
+                    document.getElementById('word-cloud-student-input').value = '';
+                    break;
+                case 'photo_wall':
+                    // Gallery loaded by event handler
+                    break;
+                case 'course_feedback':
+                    document.getElementById('feedback-input-phase').classList.remove('hidden');
+                    document.getElementById('feedback-submitted-status').classList.add('hidden');
+                    document.getElementById('feedback-comment-input').value = '';
+                    document.getElementById('submit-feedback-btn').disabled = true;
+                    document.querySelectorAll('.feedback-star').forEach(s => s.classList.remove('text-amber-400'));
+                    document.querySelectorAll('.feedback-star').forEach(s => s.classList.add('text-gray-300'));
+                    document.getElementById('feedback-rating-label').textContent = '點擊星星評分';
+                    window._selectedFeedbackRating = 0;
                     break;
             }
         }
@@ -8820,6 +9128,23 @@
                     // 派送（只有結束互動+重新開始）
                     break;
 
+                // 🆕 NEW [v3.8.25] MODE-2~5：新互動模式按鈕
+                case 'team_battle':
+                    // 分組競賽（積分板在 modal 中）
+                    break;
+
+                case 'word_cloud':
+                    // 文字雲
+                    break;
+
+                case 'photo_wall':
+                    // 相片牆
+                    break;
+
+                case 'course_feedback':
+                    // 課後回饋
+                    break;
+
                 default:
                     break;
             }
@@ -8847,8 +9172,8 @@
 
 
             try {
-                // Clear previous student responses unless it's a waiting state.
-                if (mode !== 'waiting') {
+                // Clear previous student responses unless it's a waiting state or photo_wall (preserves drawings).
+                if (mode !== 'waiting' && mode !== 'photo_wall') {
                     const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
                     const querySnapshot = await getDocs(studentsColRef);
                     const deletePromises = [];
@@ -8943,6 +9268,20 @@
                     if (mode !== 'reading_comprehension') {
                         readingComprehensionData = {}; // 清空但不刪除全局變量
                     }
+                }
+
+                // 🆕 NEW [v3.8.25] MODE-2：分組競賽設定
+                if (mode === 'team_battle' && options.teamSettings) {
+                    payload.teamBattleSettings = options.teamSettings;
+                } else if (mode !== 'team_battle') {
+                    payload.teamBattleSettings = null;
+                }
+
+                // 🆕 NEW [v3.8.25] MODE-3：文字雲設定
+                if (mode === 'word_cloud' && options.wordCloudSettings) {
+                    payload.wordCloudSettings = options.wordCloudSettings;
+                } else if (mode !== 'word_cloud') {
+                    payload.wordCloudSettings = null;
                 }
 
                 await setDoc(controlRef, payload, { merge: true });
@@ -10055,6 +10394,24 @@
                     } else if (currentInteractionMode === 'quick_poll') {
                         if (modeChanged) {
                             listenToQuickPollConfig();
+                        }
+                    }
+                    // 🆕 NEW [v3.8.25] MODE-2~5 學生端處理
+                    else if (currentInteractionMode === 'team_battle') {
+                        if (modeChanged) {
+                            setupTeamBattleStudent(data);
+                        }
+                    } else if (currentInteractionMode === 'word_cloud') {
+                        if (modeChanged) {
+                            setupWordCloudStudent(data);
+                        }
+                    } else if (currentInteractionMode === 'photo_wall') {
+                        if (modeChanged) {
+                            loadPhotoWallGallery('student');
+                        }
+                    } else if (currentInteractionMode === 'course_feedback') {
+                        if (modeChanged) {
+                            setupCourseFeedbackStudent();
                         }
                     }
                 }
@@ -16023,6 +16380,16 @@
                         showQuizEntryModal('true_false');
                         return;
                     }
+                    // 🆕 NEW [v3.8.25] MODE-4：相片牆直接啟動全螢幕展示
+                    if (mode === 'photo_wall') {
+                        startPhotoWall();
+                        return;
+                    }
+                    // 🆕 NEW [v3.8.25] MODE-5：課後回饋直接啟動
+                    if (mode === 'course_feedback') {
+                        startCourseFeedback();
+                        return;
+                    }
                     showView('teacherMonitor');
                     await setInteractionMode(mode); // Set mode and handle student responses listener
                 });
@@ -16755,6 +17122,72 @@
                 radio.addEventListener('change', (e) => {
                     const customSection = document.getElementById('custom-poll-options-section');
                     customSection.classList.toggle('hidden', e.target.value !== 'custom');
+                });
+            });
+
+            // 🆕 NEW [v3.8.25] MODE-2：分組競賽 Event Listeners
+            document.getElementById('team-battle-settings-btn').addEventListener('click', () => {
+                document.getElementById('team-battle-settings-modal').classList.remove('hidden');
+                renderTeamNameInputs();
+            });
+            document.getElementById('team-battle-settings-close-btn').addEventListener('click', () => document.getElementById('team-battle-settings-modal').classList.add('hidden'));
+            document.getElementById('cancel-team-battle-btn').addEventListener('click', () => document.getElementById('team-battle-settings-modal').classList.add('hidden'));
+            document.getElementById('start-team-battle-btn').addEventListener('click', startTeamBattle);
+            document.getElementById('team-count-select').addEventListener('change', renderTeamNameInputs);
+            document.getElementById('team-scoreboard-close-btn').addEventListener('click', () => document.getElementById('team-scoreboard-modal').classList.add('hidden'));
+            document.getElementById('team-add-score-btn').addEventListener('click', () => {
+                // 打開積分板（如果已關閉）
+                document.getElementById('team-scoreboard-modal').classList.remove('hidden');
+            });
+            document.getElementById('team-reset-scores-btn').addEventListener('click', resetTeamScores);
+            document.getElementById('end-team-battle-btn').addEventListener('click', endTeamBattle);
+
+            // 🆕 NEW [v3.8.25] MODE-3：文字雲 Event Listeners
+            document.getElementById('word-cloud-settings-btn').addEventListener('click', () => {
+                document.getElementById('word-cloud-settings-modal').classList.remove('hidden');
+            });
+            document.getElementById('word-cloud-settings-close-btn').addEventListener('click', () => document.getElementById('word-cloud-settings-modal').classList.add('hidden'));
+            document.getElementById('cancel-word-cloud-btn').addEventListener('click', () => document.getElementById('word-cloud-settings-modal').classList.add('hidden'));
+            document.getElementById('start-word-cloud-btn').addEventListener('click', startWordCloud);
+            document.getElementById('word-cloud-display-close-btn').addEventListener('click', () => document.getElementById('word-cloud-display-modal').classList.add('hidden'));
+            document.getElementById('word-cloud-refresh-btn').addEventListener('click', () => {
+                // 重新取得數據渲染
+                listenToWordCloudResponses();
+            });
+            document.getElementById('word-cloud-fullscreen-btn').addEventListener('click', () => {
+                const canvas = document.getElementById('word-cloud-canvas');
+                if (canvas.requestFullscreen) canvas.requestFullscreen();
+            });
+            document.getElementById('end-word-cloud-btn').addEventListener('click', endWordCloud);
+            document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
+
+            // 🆕 NEW [v3.8.25] MODE-4：相片牆 Event Listeners
+            document.getElementById('photo-wall-modal-close-btn').addEventListener('click', () => document.getElementById('photo-wall-modal').classList.add('hidden'));
+            document.getElementById('photo-wall-fullscreen-btn').addEventListener('click', () => {
+                const grid = document.getElementById('photo-wall-grid-teacher')?.parentElement;
+                if (grid?.requestFullscreen) grid.requestFullscreen();
+            });
+            document.getElementById('end-photo-wall-btn').addEventListener('click', endPhotoWall);
+
+            // 🆕 NEW [v3.8.25] MODE-5：課後回饋 Event Listeners
+            document.getElementById('feedback-stats-close-btn').addEventListener('click', () => document.getElementById('feedback-stats-modal').classList.add('hidden'));
+            document.getElementById('end-feedback-btn').addEventListener('click', endCourseFeedback);
+            document.getElementById('feedback-download-btn').addEventListener('click', downloadFeedbackCSV);
+            document.getElementById('submit-feedback-btn').addEventListener('click', submitCourseFeedback);
+
+            // 星星評分交互
+            document.querySelectorAll('.feedback-star').forEach(star => {
+                star.addEventListener('click', () => {
+                    const rating = parseInt(star.dataset.rating);
+                    window._selectedFeedbackRating = rating;
+                    const labels = ['', '😕 需要改善', '😐 普通', '🙂 不錯', '😊 很好', '🤩 非常棒'];
+                    document.getElementById('feedback-rating-label').textContent = labels[rating] || '';
+                    document.getElementById('submit-feedback-btn').disabled = false;
+                    document.querySelectorAll('.feedback-star').forEach(s => {
+                        const r = parseInt(s.dataset.rating);
+                        s.classList.toggle('text-amber-400', r <= rating);
+                        s.classList.toggle('text-gray-300', r > rating);
+                    });
                 });
             });
 
@@ -19125,7 +19558,8 @@
          * Starts a quick poll
          */
         async function startQuickPoll() {
-            const question = '快速投票';
+            const questionInput = document.getElementById('quick-poll-question-input');
+            const question = (questionInput && questionInput.value.trim()) || '快速投票';
             const pollType = document.querySelector('input[name="pollType"]:checked').value;
             const anonymous = document.getElementById('quick-poll-anonymous-checkbox').checked;
             const customOptions = document.getElementById('custom-poll-options-input').value;
@@ -19998,6 +20432,527 @@
                     }
                 }
             });
+        }
+
+        // ==========================================================
+        // 🆕 NEW [v3.8.25] MODE-2：分組競賽（Team Battle）
+        // ==========================================================
+
+        const TEAM_PRESETS = [
+            { name: '紅隊', color: '#ef4444', emoji: '🔴', bg: 'bg-red-500' },
+            { name: '藍隊', color: '#3b82f6', emoji: '🔵', bg: 'bg-blue-500' },
+            { name: '綠隊', color: '#22c55e', emoji: '🟢', bg: 'bg-green-500' },
+            { name: '黃隊', color: '#eab308', emoji: '🟡', bg: 'bg-yellow-500' },
+            { name: '紫隊', color: '#a855f7', emoji: '🟣', bg: 'bg-purple-500' },
+            { name: '橘隊', color: '#f97316', emoji: '🟠', bg: 'bg-orange-500' },
+        ];
+        let teamBattleData = null;
+        let teamScoresUnsubscribe = null;
+
+        function renderTeamNameInputs() {
+            const count = parseInt(document.getElementById('team-count-select').value);
+            const container = document.getElementById('team-names-container');
+            container.innerHTML = '';
+            for (let i = 0; i < count; i++) {
+                const preset = TEAM_PRESETS[i] || { name: `隊伍${i+1}`, emoji: '🏳️', color: '#6b7280' };
+                container.innerHTML += `
+                    <div class="flex items-center gap-2">
+                        <span class="text-2xl">${preset.emoji}</span>
+                        <input type="text" class="team-name-input flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            value="${preset.name}" data-index="${i}" data-color="${preset.color}" data-emoji="${preset.emoji}">
+                    </div>`;
+            }
+        }
+
+        async function startTeamBattle() {
+            const inputs = document.querySelectorAll('.team-name-input');
+            const teams = [];
+            inputs.forEach(input => {
+                teams.push({
+                    name: input.value.trim() || TEAM_PRESETS[input.dataset.index]?.name || `隊伍${parseInt(input.dataset.index)+1}`,
+                    color: input.dataset.color,
+                    emoji: input.dataset.emoji,
+                    score: 0
+                });
+            });
+            if (teams.length < 2) { showMessage('至少需要 2 支隊伍', 'error'); return; }
+
+            teamBattleData = { teams, startedAt: Date.now() };
+
+            // 初始化隊伍分數到 Firestore
+            for (const team of teams) {
+                const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', team.name);
+                await setDoc(teamRef, { name: team.name, color: team.color, emoji: team.emoji, score: 0 });
+            }
+
+            document.getElementById('team-battle-settings-modal').classList.add('hidden');
+            showView('teacherMonitor');
+            await setInteractionMode('team_battle', { teamSettings: { teams } });
+
+            // 顯示積分板
+            showTeamScoreboard();
+            listenToTeamScores();
+            showMessage('分組競賽已開始！', 'success');
+        }
+
+        function showTeamScoreboard() {
+            document.getElementById('team-scoreboard-modal').classList.remove('hidden');
+            updateTeamScoreboardUI();
+        }
+
+        function updateTeamScoreboardUI() {
+            if (!teamBattleData) return;
+            const container = document.getElementById('team-scoreboard-container');
+            const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
+            container.innerHTML = sorted.map((team, i) => `
+                <div class="flex items-center gap-4 p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
+                    <span class="text-4xl">${i === 0 ? '👑' : team.emoji}</span>
+                    <div class="flex-1">
+                        <h3 class="text-2xl font-bold" style="color:${team.color}">${team.name}</h3>
+                    </div>
+                    <div class="text-5xl font-black" style="color:${team.color}">${team.score}</div>
+                    <div class="flex gap-1">
+                        <button onclick="adjustTeamScore('${team.name}', 1)" class="btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
+                        <button onclick="adjustTeamScore('${team.name}', -1)" class="btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
+                    </div>
+                </div>`).join('');
+        }
+
+        async function adjustTeamScore(teamName, delta) {
+            if (!teamBattleData) return;
+            const team = teamBattleData.teams.find(t => t.name === teamName);
+            if (team) {
+                team.score = Math.max(0, team.score + delta);
+                const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', teamName);
+                await setDoc(teamRef, { score: team.score }, { merge: true });
+                updateTeamScoreboardUI();
+            }
+        }
+
+        async function resetTeamScores() {
+            if (!teamBattleData || !confirm('確定要重置所有隊伍分數嗎？')) return;
+            for (const team of teamBattleData.teams) {
+                team.score = 0;
+                const teamRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores', team.name);
+                await setDoc(teamRef, { score: 0 }, { merge: true });
+            }
+            updateTeamScoreboardUI();
+            showMessage('所有分數已重置', 'info');
+        }
+
+        function listenToTeamScores() {
+            if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); }
+            const scoresRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores');
+            teamScoresUnsubscribe = onSnapshot(scoresRef, (snapshot) => {
+                if (!teamBattleData) return;
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    const team = teamBattleData.teams.find(t => t.name === data.name);
+                    if (team) team.score = data.score || 0;
+                });
+                updateTeamScoreboardUI();
+                // 更新學生端積分板
+                if (currentRole === 'student') updateStudentScoreboard();
+            });
+            ListenerManager.register('teamScores', teamScoresUnsubscribe);
+        }
+
+        async function endTeamBattle() {
+            if (!confirm('確定結束分組競賽？')) return;
+            document.getElementById('team-scoreboard-modal').classList.add('hidden');
+            if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); teamScoresUnsubscribe = null; }
+            await setInteractionMode('waiting');
+            teamBattleData = null;
+            showMessage('分組競賽已結束！', 'info');
+        }
+
+        // 學生端：設置分組競賽
+        function setupTeamBattleStudent(controlData) {
+            const settings = controlData?.teamBattleSettings;
+            if (!settings || !settings.teams) return;
+
+            teamBattleData = { teams: settings.teams.map(t => ({...t, score: 0})) };
+
+            // 檢查是否已加入
+            const joinedTeam = localStorage.getItem(`teamBattle_${classroomCode}`);
+            if (joinedTeam && settings.teams.some(t => t.name === joinedTeam)) {
+                showJoinedTeamUI(joinedTeam);
+                listenToTeamScores();
+                return;
+            }
+
+            // 顯示選隊按鈕
+            const container = document.getElementById('team-select-buttons');
+            container.innerHTML = '';
+            settings.teams.forEach(team => {
+                const btn = document.createElement('button');
+                btn.className = 'rounded-xl p-6 text-white font-bold text-2xl shadow-lg hover:scale-105 transition-transform flex flex-col items-center gap-2';
+                btn.style.backgroundColor = team.color;
+                btn.innerHTML = `<span class="text-4xl">${team.emoji}</span>${team.name}`;
+                btn.addEventListener('click', () => joinTeam(team.name));
+                container.appendChild(btn);
+            });
+        }
+
+        async function joinTeam(teamName) {
+            try {
+                const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                await setDoc(respRef, { team: teamName, studentName, timestamp: serverTimestamp() }, { merge: true });
+                localStorage.setItem(`teamBattle_${classroomCode}`, teamName);
+                showJoinedTeamUI(teamName);
+                listenToTeamScores();
+                if (navigator.vibrate) navigator.vibrate(100);
+                showMessage(`已加入 ${teamName}！`, 'success');
+            } catch (e) {
+                console.error('Error joining team:', e);
+                showMessage('加入隊伍失敗，請重試', 'error');
+            }
+        }
+
+        function showJoinedTeamUI(teamName) {
+            document.getElementById('team-select-phase').classList.add('hidden');
+            document.getElementById('team-joined-phase').classList.remove('hidden');
+            const team = teamBattleData?.teams.find(t => t.name === teamName) || { name: teamName, emoji: '🏳️', color: '#6b7280' };
+            document.getElementById('team-joined-emoji').textContent = team.emoji;
+            document.getElementById('team-joined-name').textContent = team.name;
+            document.getElementById('team-joined-banner').style.background = `linear-gradient(135deg, ${team.color}, ${team.color}cc)`;
+        }
+
+        function updateStudentScoreboard() {
+            if (!teamBattleData) return;
+            const container = document.getElementById('team-scoreboard-student');
+            if (!container) return;
+            const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
+            container.innerHTML = sorted.map((team, i) => `
+                <div class="flex items-center gap-3 p-3 rounded-lg border" style="border-color:${team.color};">
+                    <span class="text-2xl">${i === 0 ? '👑' : team.emoji}</span>
+                    <span class="flex-1 font-bold text-lg" style="color:${team.color}">${team.name}</span>
+                    <span class="text-3xl font-black" style="color:${team.color}">${team.score}</span>
+                </div>`).join('');
+        }
+
+        // ==========================================================
+        // 🆕 NEW [v3.8.25] MODE-3：文字雲（Word Cloud）
+        // ==========================================================
+
+        let wordCloudSettings = null;
+
+        async function startWordCloud() {
+            const topic = document.getElementById('word-cloud-topic-input').value.trim();
+            if (!topic) { showMessage('請輸入討論主題', 'error'); return; }
+            const maxWords = parseInt(document.getElementById('word-cloud-max-words').value) || 1;
+
+            wordCloudSettings = { topic, maxWords, startedAt: Date.now() };
+            document.getElementById('word-cloud-settings-modal').classList.add('hidden');
+            showView('teacherMonitor');
+            await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords } });
+
+            // 顯示文字雲展示模態框
+            document.getElementById('word-cloud-display-modal').classList.remove('hidden');
+            document.getElementById('word-cloud-display-topic').textContent = `主題：${topic}`;
+
+            // 監聽學生回應
+            listenToWordCloudResponses();
+            showMessage('文字雲收集已開始！', 'success');
+        }
+
+        function listenToWordCloudResponses() {
+            const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const unsub = onSnapshot(respRef, (snapshot) => {
+                const words = [];
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    if (data.word) {
+                        // 支援多詞彙
+                        if (Array.isArray(data.word)) {
+                            data.word.forEach(w => words.push(w));
+                        } else {
+                            words.push(data.word);
+                        }
+                    }
+                });
+                renderWordCloud(words);
+            });
+            ListenerManager.register('wordCloudResponses', unsub);
+        }
+
+        function renderWordCloud(words) {
+            if (!words || words.length === 0) return;
+
+            // 統計詞頻
+            const freq = {};
+            words.forEach(w => { freq[w] = (freq[w] || 0) + 1; });
+
+            // 轉換為 wordcloud2 格式 [word, weight]
+            const maxFreq = Math.max(...Object.values(freq));
+            const list = Object.entries(freq).map(([word, count]) => [word, Math.max(20, (count / maxFreq) * 80)]);
+
+            const canvas = document.getElementById('word-cloud-canvas');
+            if (!canvas || typeof WordCloud === 'undefined') return;
+
+            // 清除舊的
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+            WordCloud(canvas, {
+                list: list,
+                gridSize: 12,
+                weightFactor: function(size) { return size * (canvas.width / 600); },
+                fontFamily: '"Noto Sans TC", sans-serif',
+                color: function() { return colors[Math.floor(Math.random() * colors.length)]; },
+                rotateRatio: 0.3,
+                backgroundColor: 'transparent',
+                shrinkToFit: true,
+            });
+        }
+
+        async function endWordCloud() {
+            if (!confirm('確定結束文字雲？')) return;
+            document.getElementById('word-cloud-display-modal').classList.add('hidden');
+            ListenerManager.unregister('wordCloudResponses');
+            await setInteractionMode('waiting');
+            wordCloudSettings = null;
+            showMessage('文字雲已結束！', 'info');
+        }
+
+        // 學生端：設置文字雲
+        function setupWordCloudStudent(controlData) {
+            const settings = controlData?.wordCloudSettings;
+            if (!settings) return;
+            wordCloudSettings = settings;
+            document.getElementById('word-cloud-topic-display').textContent = `主題：${settings.topic}`;
+            // 檢查是否已提交
+            const subKey = `wordCloud_${classroomCode}_${settings.topic}`;
+            if (localStorage.getItem(subKey)) {
+                document.getElementById('word-cloud-input-phase').classList.add('hidden');
+                document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
+                document.getElementById('word-cloud-submitted-word').textContent = localStorage.getItem(subKey);
+            }
+        }
+
+        async function submitWordCloudWord() {
+            const input = document.getElementById('word-cloud-student-input');
+            const word = input.value.trim();
+            if (!word) { showMessage('請輸入詞彙', 'error'); return; }
+
+            try {
+                const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
+                await setDoc(respRef, { word, studentName, timestamp: serverTimestamp(), interactionMode: 'word_cloud' });
+                const subKey = `wordCloud_${classroomCode}_${wordCloudSettings?.topic || ''}`;
+                localStorage.setItem(subKey, word);
+                document.getElementById('word-cloud-input-phase').classList.add('hidden');
+                document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
+                document.getElementById('word-cloud-submitted-word').textContent = word;
+                if (navigator.vibrate) navigator.vibrate(100);
+                showMessage('詞彙已送出！', 'success');
+            } catch (e) {
+                console.error('Error submitting word:', e);
+                showMessage('送出失敗，請重試', 'error');
+            }
+        }
+
+        // ==========================================================
+        // 🆕 NEW [v3.8.25] MODE-4：相片牆（Photo Wall）
+        // ==========================================================
+
+        async function loadPhotoWallGallery(target = 'teacher') {
+            const gridId = target === 'teacher' ? 'photo-wall-grid-teacher' : 'photo-wall-grid-student';
+            const grid = document.getElementById(gridId);
+            if (!grid) return;
+
+            grid.innerHTML = '<p class="text-gray-400 text-center col-span-full animate-pulse">載入作品中...</p>';
+
+            try {
+                const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+                const snapshot = await getDocs(respRef);
+
+                const drawings = [];
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    if (data.answer && typeof data.answer === 'string' && data.answer.startsWith('data:image')) {
+                        drawings.push({ name: d.id, image: data.answer, timestamp: data.timestamp });
+                    }
+                });
+
+                if (drawings.length === 0) {
+                    grid.innerHTML = '<p class="text-gray-400 text-center col-span-full">尚無繪圖作品。<br>請先使用「繪圖題」收集學生作品。</p>';
+                    return;
+                }
+
+                grid.innerHTML = '';
+                drawings.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all';
+                    card.innerHTML = `
+                        <div class="aspect-square overflow-hidden bg-gray-100">
+                            <img src="${item.image}" alt="${item.name}" class="w-full h-full object-contain" loading="lazy">
+                        </div>
+                        <div class="p-2 text-center">
+                            <p class="text-sm font-semibold text-gray-700 truncate">${item.name}</p>
+                        </div>`;
+                    card.addEventListener('click', () => {
+                        // 放大檢視
+                        const modal = document.getElementById('magnified-image-modal');
+                        document.getElementById('magnified-image').src = item.image;
+                        modal.classList.remove('hidden');
+                    });
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                console.error('Error loading photo wall:', e);
+                grid.innerHTML = '<p class="text-red-500 text-center col-span-full">載入失敗，請重試</p>';
+            }
+        }
+
+        async function startPhotoWall() {
+            showView('teacherMonitor');
+            await setInteractionMode('photo_wall');
+            document.getElementById('photo-wall-modal').classList.remove('hidden');
+            await loadPhotoWallGallery('teacher');
+            showMessage('相片牆已開啟！', 'success');
+        }
+
+        async function endPhotoWall() {
+            document.getElementById('photo-wall-modal').classList.add('hidden');
+            await setInteractionMode('waiting');
+            showMessage('相片牆已結束', 'info');
+        }
+
+        // ==========================================================
+        // 🆕 NEW [v3.8.25] MODE-5：課後回饋（Course Feedback）
+        // ==========================================================
+
+        let feedbackUnsubscribe = null;
+
+        function setupCourseFeedbackStudent() {
+            // 檢查是否已提交
+            const fbKey = `feedback_${classroomCode}_${new Date().toDateString()}`;
+            if (localStorage.getItem(fbKey)) {
+                document.getElementById('feedback-input-phase').classList.add('hidden');
+                document.getElementById('feedback-submitted-status').classList.remove('hidden');
+            }
+        }
+
+        async function submitCourseFeedback() {
+            const rating = window._selectedFeedbackRating;
+            if (!rating || rating < 1) { showMessage('請先點擊星星評分', 'error'); return; }
+
+            const comment = document.getElementById('feedback-comment-input').value.trim();
+
+            try {
+                // 匿名提交：使用隨機 ID
+                const anonId = `anon_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', anonId);
+                await setDoc(respRef, {
+                    rating,
+                    comment: comment || null,
+                    interactionMode: 'course_feedback',
+                    timestamp: serverTimestamp(),
+                    anonymous: true
+                });
+
+                const fbKey = `feedback_${classroomCode}_${new Date().toDateString()}`;
+                localStorage.setItem(fbKey, rating.toString());
+
+                document.getElementById('feedback-input-phase').classList.add('hidden');
+                document.getElementById('feedback-submitted-status').classList.remove('hidden');
+
+                if (navigator.vibrate) navigator.vibrate(100);
+                showMessage('感謝你的回饋！', 'success');
+            } catch (e) {
+                console.error('Error submitting feedback:', e);
+                showMessage('送出失敗，請重試', 'error');
+            }
+        }
+
+        async function startCourseFeedback() {
+            showView('teacherMonitor');
+            await setInteractionMode('course_feedback');
+            document.getElementById('feedback-stats-modal').classList.remove('hidden');
+            document.getElementById('feedback-online-count').textContent = activeStudentNames.length;
+            listenToFeedbackResponses();
+            showMessage('課後回饋已開始！', 'success');
+        }
+
+        function listenToFeedbackResponses() {
+            if (feedbackUnsubscribe) feedbackUnsubscribe();
+            const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            feedbackUnsubscribe = onSnapshot(respRef, (snapshot) => {
+                const ratings = [];
+                const comments = [];
+                snapshot.forEach(d => {
+                    const data = d.data();
+                    if (data.rating) {
+                        ratings.push(data.rating);
+                        if (data.comment) comments.push(data.comment);
+                    }
+                });
+                updateFeedbackStatsUI(ratings, comments);
+            });
+            ListenerManager.register('feedbackResponses', feedbackUnsubscribe);
+        }
+
+        function updateFeedbackStatsUI(ratings, comments) {
+            // 平均分
+            const avg = ratings.length > 0 ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : '—';
+            document.getElementById('feedback-avg-rating').textContent = avg;
+            document.getElementById('feedback-total-count').textContent = ratings.length;
+
+            // 分布
+            const dist = document.getElementById('feedback-distribution');
+            dist.innerHTML = '';
+            for (let star = 5; star >= 1; star--) {
+                const count = ratings.filter(r => r === star).length;
+                const pct = ratings.length > 0 ? (count / ratings.length * 100) : 0;
+                dist.innerHTML += `
+                    <div class="flex items-center gap-2">
+                        <span class="text-amber-400 w-8 text-right">${'★'.repeat(star)}</span>
+                        <div class="flex-1 bg-gray-200 rounded-full h-5 overflow-hidden">
+                            <div class="bg-amber-400 h-full rounded-full transition-all duration-500" style="width:${pct}%"></div>
+                        </div>
+                        <span class="text-sm text-gray-600 w-16 text-right">${count} (${pct.toFixed(0)}%)</span>
+                    </div>`;
+            }
+
+            // 建議列表
+            const commentsList = document.getElementById('feedback-comments-list');
+            if (comments.length === 0) {
+                commentsList.innerHTML = '<p class="text-gray-400 text-center">暫無文字建議</p>';
+            } else {
+                commentsList.innerHTML = comments.map(c => `
+                    <div class="bg-white p-3 rounded-lg border border-gray-200 text-left">
+                        <p class="text-gray-700 text-sm">"${c}"</p>
+                    </div>`).join('');
+            }
+        }
+
+        function downloadFeedbackCSV() {
+            // 從 UI 中收集數據匯出
+            const avgEl = document.getElementById('feedback-avg-rating');
+            const countEl = document.getElementById('feedback-total-count');
+            let csv = 'BOM\n';
+            csv = '\uFEFF課後回饋統計\n';
+            csv += `平均分數,${avgEl.textContent}\n`;
+            csv += `回饋人數,${countEl.textContent}\n\n`;
+            csv += '學生建議\n';
+            const comments = document.querySelectorAll('#feedback-comments-list .text-gray-700');
+            comments.forEach(c => { csv += `"${c.textContent.replace(/"/g, '""')}"\n`; });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `課後回饋_${classroomCode}_${new Date().toLocaleDateString()}.csv`;
+            a.click(); URL.revokeObjectURL(url);
+        }
+
+        async function endCourseFeedback() {
+            if (!confirm('確定結束課後回饋？')) return;
+            document.getElementById('feedback-stats-modal').classList.add('hidden');
+            if (feedbackUnsubscribe) { feedbackUnsubscribe(); feedbackUnsubscribe = null; }
+            await setInteractionMode('waiting');
+            showMessage('課後回饋已結束', 'info');
         }
 
         // ==========================================================

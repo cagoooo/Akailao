@@ -3,7 +3,7 @@
 ## 專案概述
 - **用途**：國小課堂互動工具（9 種互動模式 + AI 出題 + 即時排行榜）
 - **架構**：單一 HTML 檔（index.html ~24,000 行）+ Firebase Firestore 後端 + GitHub Pages 部署
-- **版本**：V3.8.24+
+- **版本**：V3.8.25+
 - **Firebase 專案 ID**：`class-4719f`
 - **GitHub Pages**：https://cagoooo.github.io/Akailao/
 
