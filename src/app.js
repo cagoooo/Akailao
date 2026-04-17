@@ -15,7 +15,15 @@ const JPEG_QUALITY = 0.8;
 const READING_MIN_DURATION_MS = 5 * 60 * 1000;
 
 // Firebase configuration.
-const firebaseConfig = JSON.parse(__firebase_config);
+// 🆕 [v3.8.25] D-1: 直接內嵌配置（Vite define 會在構建時注入實際 API Key）
+const firebaseConfig = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "__FIREBASE_API_KEY__",
+    authDomain: "class-4719f.firebaseapp.com",
+    projectId: "class-4719f",
+    storageBucket: "class-4719f.firebasestorage.app",
+    messagingSenderId: "528903484088",
+    appId: "1:528903484088:web:340a2300f9a110c02a3a4d"
+};
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
