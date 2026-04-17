@@ -3125,6 +3125,12 @@
                     title="設定派送網址/HTML">
                     <i class="fas fa-link"></i>
                 </button>
+                <!-- 🆕 NEW [v3.8.22] ARCH-5: 出席記錄按鈕 -->
+                <button id="attendance-btn"
+                    class="text-gray-500 hover:text-green-700 transition-colors text-2xl sm:text-3xl"
+                    title="班級出席記錄">
+                    <i class="fas fa-clipboard-check"></i>
+                </button>
             </div>
         </div>
 
@@ -4155,6 +4161,22 @@
     </div>
 
     <!-- 🆕 NEW [v3.8.3] A-4 / MODIFIED v3.8.5：班級歷史互動趨勢 Modal（含 Chart.js 折線圖 + 個人成績 + 列印） -->
+    <!-- 🆕 NEW [v3.8.22] ARCH-5: 班級出席記錄 Modal -->
+    <div id="attendance-modal" class="magnified-image-modal hidden">
+        <div class="magnified-image-modal-content" style="max-width: 700px; max-height: 85vh;">
+            <button id="attendance-close-btn" class="magnified-image-modal-close">×</button>
+            <h4 class="text-2xl font-bold mb-1 text-gray-800">📋 班級出席記錄</h4>
+            <p class="text-sm text-gray-500 mb-3">學生加入教室時自動打卡記錄</p>
+            <div id="attendance-content" class="overflow-y-auto" style="max-height: 60vh;">
+                <p class="text-center text-gray-500 py-8">📋 讀取中...</p>
+            </div>
+            <div class="mt-3 flex gap-2 justify-end">
+                <button id="attendance-export-csv-btn" class="btn bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 whitespace-nowrap">📥 匯出 CSV</button>
+                <button id="attendance-close-bottom-btn" class="btn btn-gray text-sm px-4 py-2">關閉</button>
+            </div>
+        </div>
+    </div>
+
     <div id="historical-quizzes-modal" class="magnified-image-modal hidden">
         <div id="historical-quizzes-content" class="magnified-image-modal-content" style="max-width: 880px; max-height: 92vh;">
             <button id="historical-quizzes-close-btn" class="magnified-image-modal-close">×</button>
@@ -10550,6 +10572,12 @@
                     ...extraFields // 🔥 NEW: Allow adding extra fields like modeResetToken
                 }, { merge: true });
                 console.log(`[Student] ${studentName} submitted answer:`, answer, 'mode:', currentInteractionMode, 'extraFields:', extraFields);
+
+                // 🆕 NEW [v3.8.22] UX-13: 提交成功時震動回饋（手機端）
+                if (navigator.vibrate) {
+                    navigator.vibrate(100); // 輕微震動 100ms
+                }
+
                 return true;
             } catch (error) {
                 console.error("送出答案失敗:", error);
@@ -15262,6 +15290,101 @@
             }, 100);
         }
 
+        // ==========================================================
+        // 🆕 NEW [v3.8.22] ARCH-5: 班級出席記錄
+        // ==========================================================
+        async function showAttendanceModal() {
+            const modal = document.getElementById('attendance-modal');
+            const content = document.getElementById('attendance-content');
+            if (!modal || !content) return;
+            modal.classList.remove('hidden');
+            content.innerHTML = '<p class="text-center text-gray-500 py-8">📋 讀取中...</p>';
+
+            try {
+                const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'attendance');
+                const snap = await getDocs(colRef);
+                const records = [];
+                snap.forEach(d => {
+                    const data = d.data();
+                    records.push({
+                        name: data.name || d.id,
+                        joinedAt: data.joinedAt?.toDate ? data.joinedAt.toDate() : (data.joinedAt ? new Date(data.joinedAt) : null),
+                        date: data.date || ''
+                    });
+                });
+                // 依時間排序
+                records.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+                if (records.length === 0) {
+                    content.innerHTML = '<p class="text-center text-gray-400 py-8">尚無出席記錄。<br>學生加入教室時會自動打卡。</p>';
+                    return;
+                }
+
+                // 統計
+                const today = new Date().toLocaleDateString('zh-TW');
+                const todayCount = records.filter(r => r.date === today).length;
+
+                content.innerHTML = `
+                    <div class="grid grid-cols-2 gap-2 mb-4">
+                        <div class="bg-green-50 p-3 rounded text-center border border-green-200">
+                            <div class="text-2xl font-bold text-green-700">${todayCount}</div>
+                            <div class="text-xs text-gray-600">今日出席</div>
+                        </div>
+                        <div class="bg-blue-50 p-3 rounded text-center border border-blue-200">
+                            <div class="text-2xl font-bold text-blue-700">${records.length}</div>
+                            <div class="text-xs text-gray-600">總出席人次</div>
+                        </div>
+                    </div>
+                    <div class="space-y-1.5">
+                        ${records.map((r, idx) => {
+                            const time = r.joinedAt ? r.joinedAt.toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '—';
+                            const date = r.date || '—';
+                            const isToday = r.date === today;
+                            return `
+                                <div class="flex items-center gap-2 p-2 ${isToday ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'} rounded border">
+                                    <span class="text-xs font-bold text-gray-500 w-6">${idx + 1}</span>
+                                    <span class="font-semibold text-sm flex-1">${r.name}</span>
+                                    <span class="text-xs text-gray-500">${date}</span>
+                                    <span class="text-xs font-mono text-blue-600">${time}</span>
+                                    ${isToday ? '<span class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold">今日</span>' : ''}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+
+                // 儲存到 window 供 CSV 匯出
+                window.__attendanceRecords = records;
+            } catch (err) {
+                console.error('[Attendance] 讀取失敗:', err);
+                content.innerHTML = '<p class="text-center text-red-500">❌ 讀取失敗：' + err.message + '</p>';
+            }
+        }
+
+        function hideAttendanceModal() {
+            document.getElementById('attendance-modal')?.classList.add('hidden');
+        }
+
+        function exportAttendanceCsv() {
+            const records = window.__attendanceRecords;
+            if (!records || records.length === 0) {
+                showMessage('沒有出席記錄可匯出', 'info');
+                return;
+            }
+            let csv = '\uFEFF座號,姓名,日期,打卡時間\n';
+            records.forEach((r, idx) => {
+                const time = r.joinedAt ? r.joinedAt.toLocaleTimeString('zh-TW') : '';
+                csv += `${idx + 1},${r.name},${r.date},${time}\n`;
+            });
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `出席記錄_${classroomCode}_${new Date().toISOString().slice(0, 10)}.csv`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 100);
+            showMessage('📥 出席記錄 CSV 已下載', 'success');
+        }
+
         function hideHistoricalQuizzesModal() {
             document.getElementById('historical-quizzes-modal')?.classList.add('hidden');
             // 銷毀圖表釋放記憶體
@@ -15734,6 +15857,19 @@
                             isDistracted: false,
                             distractionCount: 0
                         }, { merge: true });
+
+                        // 🆕 NEW [v3.8.22] ARCH-5: 自動記錄出席打卡
+                        try {
+                            const attendanceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'attendance', studentName);
+                            await setDoc(attendanceRef, {
+                                name: studentName,
+                                joinedAt: new Date(),
+                                date: new Date().toLocaleDateString('zh-TW')
+                            }, { merge: true });
+                            console.log('[Attendance] ✅ 出席記錄已寫入:', studentName);
+                        } catch (attErr) {
+                            console.warn('[Attendance] 出席記錄寫入失敗（不影響課堂）:', attErr);
+                        }
                     } else {
                         showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
                     }
@@ -16456,6 +16592,11 @@
             });
             document.getElementById('ai-summary-modal-close-btn').addEventListener('click', () => document.getElementById('ai-summary-modal').classList.add('hidden'));
             document.getElementById('ai-settings-btn').addEventListener('click', showAISettingsModal);
+            // 🆕 NEW [v3.8.22] ARCH-5: 出席記錄
+            document.getElementById('attendance-btn')?.addEventListener('click', showAttendanceModal);
+            document.getElementById('attendance-close-btn')?.addEventListener('click', hideAttendanceModal);
+            document.getElementById('attendance-close-bottom-btn')?.addEventListener('click', hideAttendanceModal);
+            document.getElementById('attendance-export-csv-btn')?.addEventListener('click', exportAttendanceCsv);
             aiSettingsModalCloseBtn.addEventListener('click', hideAISettingsModal);
             saveAiSettingsBtn.addEventListener('click', saveAISettings);
             aiSourceSelect.addEventListener('change', (e) => geminiApiKeyGroup.classList.toggle('hidden', e.target.value !== 'gemini-custom'));
@@ -18696,6 +18837,11 @@
 
                 // 🎉 Mark this student as the winner
                 quickAnswerWinner = studentName;
+
+                // 🆕 NEW [v3.8.22] UX-13: 搶答成功震動（比一般提交更長 300ms）
+                if (navigator.vibrate) {
+                    navigator.vibrate([100, 50, 200]); // 短-停-長 節奏感
+                }
 
                 // Show success message
                 document.getElementById('quick-answer-result').classList.remove('hidden');
@@ -20977,15 +21123,36 @@
                                 `🎉 你是第 ${myRank} 位完成的同學！`;
 
                     // 🎊 confetti 動畫
+                    // 🆕 MODIFIED [v3.8.22]: 滿分時觸發更華麗的長版 confetti
                     if (typeof confetti === 'function') {
+                        const isPerfect = baseScore === 100;
                         const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
-                        confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.3, y: 0.6 } }));
-                        confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.7, y: 0.6 } }));
+
+                        if (isPerfect) {
+                            // 🏆 滿分：3 秒持續彩帶雨
+                            const endTime = Date.now() + 3000;
+                            const interval = setInterval(() => {
+                                if (Date.now() > endTime) return clearInterval(interval);
+                                confetti(Object.assign({}, defaults, {
+                                    particleCount: 50,
+                                    origin: { x: Math.random() * 0.4 + 0.1, y: Math.random() * 0.4 }
+                                }));
+                                confetti(Object.assign({}, defaults, {
+                                    particleCount: 50,
+                                    origin: { x: Math.random() * 0.4 + 0.5, y: Math.random() * 0.4 }
+                                }));
+                            }, 200);
+                        } else {
+                            // 一般：雙發 confetti
+                            confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.3, y: 0.6 } }));
+                            confetti(Object.assign({}, defaults, { particleCount: 80, origin: { x: 0.7, y: 0.6 } }));
+                        }
                     }
 
-                    // 彈出名次提示（用 showMessage）
+                    // 彈出名次提示
+                    const perfectHint = baseScore === 100 ? ' 🏆 滿分！太厲害了！' : ` 📊 得分：${baseScore}%`;
                     setTimeout(() => {
-                        showMessage(`✅ 答案已提交！${rankMsg}`, 'success', 5000);
+                        showMessage(`✅ 答案已提交！${rankMsg}${perfectHint}`, 'success', 5000);
                     }, 400);
                     console.log(`[confetti] 已顯示慶祝，名次: ${myRank}`);
                 } catch (rankErr) {
@@ -21160,6 +21327,24 @@
                 const pct = total > 0 ? Math.round((answered / total) * 100) : 0;
                 fill.style.width = `${pct}%`;
                 label.textContent = `班級進度 ${answered}/${total}`;
+
+                // 🆕 NEW [v3.8.22] UX-11: 更新「N 人作答中」氣泡
+                const indicator = document.getElementById('live-answering-indicator');
+                const textEl = document.getElementById('live-answering-text');
+                if (indicator && textEl) {
+                    const unanswered = total - answered;
+                    if (unanswered > 0 && total > 0) {
+                        textEl.textContent = `${unanswered} 人作答中`;
+                        indicator.style.display = 'flex';
+                    } else if (total > 0 && answered === total) {
+                        textEl.textContent = '全班已完成 ✓';
+                        indicator.style.display = 'flex';
+                        // 3 秒後隱藏
+                        setTimeout(() => { indicator.style.display = 'none'; }, 3000);
+                    } else {
+                        indicator.style.display = 'none';
+                    }
+                }
             });
 
             ListenerManager.register('classProgressBar', unsubscribeProgress);
@@ -24031,6 +24216,23 @@ ${existingText}
         </div>
         <span id="class-progress-bar-label">班級進度 0/0</span>
     </div>
+
+    <!-- 🆕 NEW [v3.8.22] UX-11: 「N 人正在作答中」浮動氣泡（學生端左下角） -->
+    <div id="live-answering-indicator"
+        style="position:fixed; bottom:50px; left:12px; z-index:900;
+               background:rgba(99,102,241,0.9); color:#fff; padding:4px 12px;
+               border-radius:999px; font-size:12px; font-weight:600;
+               backdrop-filter:blur(4px); box-shadow:0 2px 8px rgba(99,102,241,0.3);
+               display:none; align-items:center; gap:4px; transition:opacity 0.3s;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;animation:live-pulse 1.5s infinite;"></span>
+        <span id="live-answering-text">0 人作答中</span>
+    </div>
+    <style>
+        @keyframes live-pulse {
+            0%,100% { opacity:1; transform:scale(1); }
+            50% { opacity:0.5; transform:scale(1.3); }
+        }
+    </style>
 
     <!-- 💬 教師快速評語 Toast（學生端全局浮動） -->
     <div id="teacher-comment-toast">
