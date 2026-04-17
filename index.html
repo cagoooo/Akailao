@@ -20155,14 +20155,16 @@
             // Set mode and dispatch to Firebase
             const mode = 'reading_comprehension';
             try {
+                // 🐛 FIXED [v3.8.21]: showView 必須在 setInteractionMode 之前呼叫！
+                // 因為 showView('teacherMonitor') 內會呼叫 hideAllOptionalButtons()，
+                // 如果放在 setInteractionMode 之後，會把 Step 2 精準顯示的按鈕全部蓋掉。
+                // 所有其他模式都是 showView → setInteractionMode，只有閱讀測驗是反的。
+                console.log('[startReadingComprehension] ✓ Showing teacherMonitor view first...');
+                showView('teacherMonitor');
+
                 console.log('[startReadingComprehension] ✓ Calling setInteractionMode with reading data...');
                 await setInteractionMode(mode, { readingData: readingComprehensionData });
-                console.log('[startReadingComprehension] ✓ setInteractionMode completed successfully');
-
-                // 🚀 OPTIMIZED: 教師端應顯示監控視圖，不是學生讀題視圖
-                console.log('[startReadingComprehension] ✓ Showing teacherMonitor view...');
-                showView('teacherMonitor');
-                console.log('[startReadingComprehension] ✅ COMPLETE - Teacher monitor view displayed');
+                console.log('[startReadingComprehension] ✅ COMPLETE');
             } catch (error) {
                 console.error('[startReadingComprehension] ❌ ERROR during setInteractionMode:', error);
                 showMessage('啟動互動時出錯：' + error.message, 'error');
