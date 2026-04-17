@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.21** ｜ 更新時間：2026-04-17
+> **版本：V3.8.24** ｜ 更新時間：2026-04-17
 
 ---
 
@@ -51,6 +51,8 @@
 - [x] **[v3.8.8] 📋 題目品質統計（太難/太簡單自動分類 + 智慧建議）**
 - [x] **[v3.8.11] 👁️ 閱讀題目結構化即時預覽（卡片式 + 正解綠色高亮）**
 - [x] **[v3.8.12] 🐛 解析器核心修復：題目含逗號不再壞掉（從右邊解析）**
+- [x] **[V3.8.22] 🎉 作答中即時氣泡指標（學生端可見「N 人正在作答中」浮動提示）**
+- [x] **[V3.8.24] 🔒 答案防偷看（closure 封閉答案 + 渲染後 delete correctAnswer）**
 
 ---
 
@@ -68,6 +70,9 @@
 - [x] **[v3.7.7] 🔍 題目圖片可縮放檢視器（雙指 / 滑鼠滾輪 / 拖曳平移 / 雙擊切換 1x↔2x）**
 - [x] **[v3.7.9] ⏳ 「等待作答中…」視覺強化（漏斗動畫 + 斜紋背景）**
 - [x] **[v3.7.15] 🏆 等待頁配對遊戲升級為班級即時排行榜（Toast 通知 + 自我排名 + 再挑戰）**
+- [x] **[V3.8.22] 🎉 滿分 confetti 慶祝動畫（閱讀測驗滿分時觸發 canvas-confetti）**
+- [x] **[V3.8.22] 📳 答案提交震動回饋（Vibration API，正確/錯誤不同模式）**
+- [x] **[V3.8.24] 🔒 防重複提交（`_hasSubmittedThisRound` 前端 flag + Firestore Rules 細粒度規則）**
 
 ---
 
@@ -87,6 +92,12 @@
 - [x] **[v3.8.7] 🛠️ Tailwind CDN → 本地預編譯（69KB minified，省 97% + 消除 console 警告）**
 - [x] **[v3.8.9/V3.8.17] 🐛 .hidden CSS 衝突終極修復（`[class~="hidden"]` !important 方案）**
 - [x] **[v3.8.21] 🐛 閱讀測驗 showView/setInteractionMode 呼叫順序修復**
+- [x] **[V3.8.22] 📋 出席自動記錄（學生加入課堂時自動打卡 attendance sub-collection）**
+- [x] **[V3.8.23] ⚡ CSS `content-visibility: auto` 虛擬渲染（50+ 學生卡片零 JS 效能優化）**
+- [x] **[V3.8.23] ⚡ 繪圖壓縮迴圈（quality 0.8→0.2 + 50% 縮圖，確保 < 900KB）**
+- [x] **[V3.8.23] ⚡ Firestore 離線快取（`enableIndexedDbPersistence` 減少讀取次數）**
+- [x] **[V3.8.24] 🔒 Firestore Rules 細粒度安全規則（7 個子集合獨立權限）**
+- [x] **[V3.8.24] 📄 CLAUDE.md 專案開發指南（部署流程 + CSS 注意事項 + 安全設計）**
 
 ---
 
@@ -126,10 +137,11 @@
 - 建議：在 QR Code 中央嵌入學校 logo 或 Akailao 圖標，並加上彩色邊框
 - 貼在教室門口 / 印在講義上更美觀，提升掃碼率
 
-**UX-3. 閱讀測驗送出後的慶祝動畫** ✅ **已部分完成（V3.7.15 配對遊戲使用 confetti.js）**
+**UX-3. 閱讀測驗送出後的慶祝動畫** ✅ **已完成（V3.8.22）**
 - ~~目前送出後只顯示文字確認~~
 - ~~建議：加入 confetti 動畫（可用 canvas-confetti.js）+ 顯示「你是第 N 位完成的同學！」~~
-- 進階建議：將 confetti 也應用到閱讀測驗本體（提交滿分時觸發）+ 顯示「你是第 N 位完成的同學」
+- ~~進階建議：將 confetti 也應用到閱讀測驗本體（提交滿分時觸發）+ 顯示「你是第 N 位完成的同學」~~
+- ✅ V3.8.22 已實作：閱讀測驗滿分時觸發 canvas-confetti 慶祝動畫
 
 **UX-4. 倒數計時視覺警告（最後 30 秒）** ✅ **已完成於 V3.7.1**
 - ~~閱讀測驗最後 30 秒時，計時器自動變紅色 + 輕微 pulse 動畫~~
@@ -168,20 +180,22 @@
 - Firebase Functions 或前端 setTimeout 均可實作
 - 讓教師更專注於巡視學生
 
-**UX-11. 學生作答時「看到其他人正在輸入」提示**
-- 類似 Mentimeter 的「N 人正在作答中」浮動提示
-- presence 計數已有，稍加展示即可
-- 製造班級互動感與氛圍
+**UX-11. 學生作答時「看到其他人正在輸入」提示** ✅ **已完成（V3.8.22）**
+- ~~類似 Mentimeter 的「N 人正在作答中」浮動提示~~
+- ~~presence 計數已有，稍加展示即可~~
+- ~~製造班級互動感與氛圍~~
+- ✅ V3.8.22 已實作：學生端即時顯示「N 人正在作答中」浮動氣泡指標
 
 **UX-12. 教師端互動模式「最近使用」記錄**
 - 九宮格按鈕依使用頻率排序，或在常用模式顯示「最近使用」標籤
 - 避免每次都要找相同按鈕
 - 設定存 localStorage
 
-**UX-13. 學生手機端「震動回饋」**
-- 學生提交答案成功時，手機輕微震動（Vibration API）
-- 快速搶答時抵達第一名也震動
-- 簡單的感官回饋，體驗差異大
+**UX-13. 學生手機端「震動回饋」** ✅ **已完成（V3.8.22）**
+- ~~學生提交答案成功時，手機輕微震動（Vibration API）~~
+- ~~快速搶答時抵達第一名也震動~~
+- ~~簡單的感官回饋，體驗差異大~~
+- ✅ V3.8.22 已實作：答題正確 200ms 短震、答錯 [100,50,100] 雙震模式
 
 ---
 
@@ -280,54 +294,60 @@
 - 可分享題庫給其他老師（產生分享連結）
 - 資料存 Firestore `teachers/{uid}/questionBanks`
 
-**ARCH-5. 班級出席記錄**
-- 學生掃 QR Code 加入課堂，同時自動記錄出席打卡時間
-- 教師端可查看今日/歷次課堂的出勤統計
-- 支援遲到記錄（設定上課時間，N 分鐘後加入計為遲到）
-- 一鍵匯出出席 CSV
+**ARCH-5. 班級出席記錄** ✅ **已部分完成（V3.8.22 自動打卡，統計/匯出待做）**
+- ~~學生掃 QR Code 加入課堂，同時自動記錄出席打卡時間~~
+- 教師端可查看今日/歷次課堂的出勤統計 — 待做
+- 支援遲到記錄（設定上課時間，N 分鐘後加入計為遲到）— 待做
+- 一鍵匯出出席 CSV — 待做
+- ✅ V3.8.22 已實作：學生加入課堂時自動記錄 `attendance/{studentId}` 文件（含 joinedAt timestamp）
 
 ---
 
 ### ⚡ 效能優化
 
-**PERF-1. 虛擬清單渲染（Virtual Scroll）**
-- 當班級人數超過 50 人時，卡片渲染效能明顯下降
-- 實作 Virtual Scroll：只渲染可視範圍內的卡片（±5 張緩衝）
-- 可用 Intersection Observer API 實作，無需引入外部套件
+**PERF-1. 虛擬清單渲染（Virtual Scroll）** ✅ **已完成（V3.8.23）**
+- ~~當班級人數超過 50 人時，卡片渲染效能明顯下降~~
+- ~~實作 Virtual Scroll：只渲染可視範圍內的卡片（±5 張緩衝）~~
+- ~~可用 Intersection Observer API 實作，無需引入外部套件~~
+- ✅ V3.8.23 改用 CSS `content-visibility: auto` + `contain-intrinsic-size: 0 180px`，零 JS 方案，瀏覽器自動跳過不可見卡片的渲染
 
-**PERF-2. 繪圖模式圖片壓縮 + Firebase Storage**
-- 目前繪圖直接存 base64 到 Firestore，超過 1MB 會報錯
-- 上傳前自動壓縮到 200KB 以下（現有 canvas toDataURL 已有壓縮）
-- 改用 Firebase Storage 存圖片，Firestore 只存 download URL（更穩定）
+**PERF-2. 繪圖模式圖片壓縮 + Firebase Storage** ✅ **已部分完成（V3.8.23 壓縮完成，Storage 待做）**
+- ~~目前繪圖直接存 base64 到 Firestore，超過 1MB 會報錯~~
+- ~~上傳前自動壓縮到 200KB 以下（現有 canvas toDataURL 已有壓縮）~~
+- 改用 Firebase Storage 存圖片，Firestore 只存 download URL（更穩定）— 待 Blaze 方案
+- ✅ V3.8.23 已實作：自動壓縮迴圈（quality 0.8→0.2 逐步降低 + 50% canvas 縮圖），確保 < 900KB 寫入 Firestore
 
 **PERF-3. 程式碼分割（Code Splitting）**
 - `index.html` 目前約 984KB（19,000+ 行），所有邏輯混在一起
 - 建議：考慮遷移到 Vite + ES Module 架構，按功能懶載入
 - 首頁載入時間可從 3-5 秒縮短至 1 秒以內
 
-**PERF-4. Firestore 讀取成本控制**
-- 目前部分資料每次進入都重新讀取
-- 使用 Firestore 離線快取（`enableIndexedDbPersistence`）
-- 在免費方案（50,000 次/日）下支援更大規模使用
+**PERF-4. Firestore 讀取成本控制** ✅ **已完成（V3.8.23）**
+- ~~目前部分資料每次進入都重新讀取~~
+- ~~使用 Firestore 離線快取（`enableIndexedDbPersistence`）~~
+- ~~在免費方案（50,000 次/日）下支援更大規模使用~~
+- ✅ V3.8.23 已實作：Firestore init 後立即呼叫 `enableIndexedDbPersistence(db)`，自動快取已讀文件
 
 ---
 
 ### 🔒 安全性強化
 
-**SEC-1. 閱讀測驗答案防偷看（後端計分）**
-- 正確答案目前可在前端 JS 中讀取（開 DevTools 即可看到）
-- 建議：正確答案存 Firestore 私有路徑（`private/answers`），只有 Firebase Functions 可讀
-- 學生提交後由 Functions 後端比對計分，前端看不到正確答案
+**SEC-1. 閱讀測驗答案防偷看（後端計分）** ✅ **已部分完成（V3.8.24 前端防護，後端待 Blaze）**
+- ~~正確答案目前可在前端 JS 中讀取（開 DevTools 即可看到）~~
+- 完全防護需 Firebase Functions（Blaze 方案）：正確答案存 Firestore 私有路徑，後端比對計分
+- ✅ V3.8.24 已實作前端防護：答案存入閉包 `_secureAnswerKey`，渲染後 1 秒 `delete` 掉 `correctAnswer`，DevTools Console 看不到
 
-**SEC-2. 速率限制（防刷分作弊）**
-- 目前學生理論上可重複提交
-- Firestore Rules 限制：每個 `studentResponse` 文件若 `answer` 欄位已存在，禁止覆寫
-- 搭配前端鎖定按鈕，雙重防護
+**SEC-2. 速率限制（防刷分作弊）** ✅ **已完成（V3.8.24）**
+- ~~目前學生理論上可重複提交~~
+- ~~Firestore Rules 限制：每個 `studentResponse` 文件若 `answer` 欄位已存在，禁止覆寫~~
+- ~~搭配前端鎖定按鈕，雙重防護~~
+- ✅ V3.8.24 已實作：前端 `_hasSubmittedThisRound` flag（模式切換時重置）+ Firestore Rules 細粒度權限
 
-**SEC-3. 分心監控資料隱私保護**
-- 目前分心記錄存在 Firestore 公開路徑，學生理論上可自行清除
-- 建議：分心資料存入教師私有路徑，學生無寫入/刪除權限
-- 更新 Firestore 安全規則
+**SEC-3. 分心監控資料隱私保護** ✅ **已完成（V3.8.24）**
+- ~~目前分心記錄存在 Firestore 公開路徑，學生理論上可自行清除~~
+- ~~建議：分心資料存入教師私有路徑，學生無寫入/刪除權限~~
+- ~~更新 Firestore 安全規則~~
+- ✅ V3.8.24 已實作：`firestore.rules` 升級為 7 個子集合獨立權限（settings / studentResponses / presence / attendance / waitingGameScores / historicalQuizzes / quickPoll），已透過 Firebase CLI 部署
 
 ---
 
