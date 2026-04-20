@@ -14219,7 +14219,10 @@ async function endQuickPoll() {
             quickPollVotesUnsubscribe = null;
         }
 
-        showMessage('快速投票已結束！', 'info');
+        // 🆕 [v3.8.27] 結束後跳回九宮格
+        showView('teacherMenu');
+        manualRefreshCounts();
+        showMessage('快速投票已結束 ✓', 'success');
     } catch (error) {
         console.error('Error ending quick poll:', error);
         showMessage('結束投票時發生錯誤，請稍後再試。', 'error');
@@ -15124,12 +15127,15 @@ function listenToTeamScores() {
 }
 
 async function endTeamBattle() {
-    if (!confirm('確定結束分組競賽？')) return;
+    // 🆕 [v3.8.27] 結束後跳回九宮格
+    if (!confirm('確定結束分組競賽？所有隊伍分數會被清除。')) return;
     document.getElementById('team-scoreboard-modal').classList.add('hidden');
     if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); teamScoresUnsubscribe = null; }
     await setInteractionMode('waiting');
     teamBattleData = null;
-    showMessage('分組競賽已結束！', 'info');
+    showView('teacherMenu');
+    manualRefreshCounts();
+    showMessage('分組競賽已結束 ✓', 'success');
 }
 
 // 學生端：設置分組競賽
@@ -15386,12 +15392,72 @@ function renderWordCloud(words) {
 }
 
 async function endWordCloud() {
-    if (!confirm('確定結束文字雲？')) return;
-    document.getElementById('word-cloud-display-modal').classList.add('hidden');
-    ListenerManager.unregister('wordCloudResponses');
-    await setInteractionMode('waiting');
-    wordCloudSettings = null;
-    showMessage('文字雲已結束！', 'info');
+    // 🆕 [v3.8.27] 結束前提醒下載資料 + 確認後跳回九宮格
+    const totalWords = wordCloudAllResponses?.length || 0;
+    const topic = wordCloudSettings?.topic || '文字雲';
+
+    // 建立帶下載按鈕的確認對話框
+    const dialog = document.createElement('div');
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4';
+    dialog.style.zIndex = '3000';
+    dialog.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div class="text-center mb-4">
+                <div class="text-5xl mb-3">☁️</div>
+                <h3 class="text-xl font-bold text-gray-800 mb-2">確定結束文字雲？</h3>
+                <p class="text-gray-600 text-sm">
+                    主題「<span class="font-bold text-cyan-600">${topic}</span>」共收集 <span class="font-bold text-cyan-600">${totalWords}</span> 個詞彙
+                </p>
+            </div>
+            ${totalWords > 0 ? `
+            <div class="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-3 mb-4">
+                <p class="text-sm text-yellow-800 font-semibold mb-2">
+                    <i class="fas fa-exclamation-triangle mr-1"></i> 結束後將清除學生回應，建議先下載：
+                </p>
+                <div class="flex gap-2 flex-wrap">
+                    <button id="end-wc-download-csv" class="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-3 rounded-lg text-sm flex items-center justify-center gap-1 min-w-[120px]">
+                        <i class="fas fa-file-csv"></i> 下載 CSV
+                    </button>
+                    <button id="end-wc-download-img" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-3 rounded-lg text-sm flex items-center justify-center gap-1 min-w-[120px]">
+                        <i class="fas fa-image"></i> 下載圖片
+                    </button>
+                </div>
+            </div>
+            ` : `
+            <div class="bg-gray-50 rounded-xl p-3 mb-4 text-center text-gray-500 text-sm">
+                <i class="fas fa-info-circle mr-1"></i> 尚無學生提交詞彙，無資料可下載
+            </div>
+            `}
+            <div class="flex gap-2">
+                <button id="end-wc-cancel" class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 px-4 rounded-lg">
+                    <i class="fas fa-times mr-1"></i> 取消
+                </button>
+                <button id="end-wc-confirm" class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg">
+                    <i class="fas fa-check mr-1"></i> 確定結束
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+
+    // 事件處理
+    document.getElementById('end-wc-download-csv')?.addEventListener('click', () => downloadWordCloudCSV());
+    document.getElementById('end-wc-download-img')?.addEventListener('click', () => downloadWordCloudImage());
+    document.getElementById('end-wc-cancel').addEventListener('click', () => dialog.remove());
+    document.getElementById('end-wc-confirm').addEventListener('click', async () => {
+        dialog.remove();
+        // 關閉文字雲展示模態框
+        document.getElementById('word-cloud-display-modal').classList.add('hidden');
+        // 取消監聽
+        ListenerManager.unregister('wordCloudResponses');
+        // 切換為 waiting + 跳回九宮格選單
+        await setInteractionMode('waiting');
+        wordCloudSettings = null;
+        wordCloudAllResponses = [];
+        showView('teacherMenu');
+        manualRefreshCounts();
+        showMessage('文字雲已結束 ✓', 'success');
+    });
 }
 
 // 🆕 [v3.8.26] 支援多詞彙：學生本地暫存陣列
@@ -15571,9 +15637,12 @@ async function startPhotoWall() {
 }
 
 async function endPhotoWall() {
+    // 🆕 [v3.8.27] 結束後跳回九宮格
     document.getElementById('photo-wall-modal').classList.add('hidden');
     await setInteractionMode('waiting');
-    showMessage('相片牆已結束', 'info');
+    showView('teacherMenu');
+    manualRefreshCounts();
+    showMessage('相片牆已結束 ✓', 'success');
 }
 
 // ==========================================================
@@ -15704,11 +15773,20 @@ function downloadFeedbackCSV() {
 }
 
 async function endCourseFeedback() {
-    if (!confirm('確定結束課後回饋？')) return;
+    // 🆕 [v3.8.27] 結束前提醒下載 + 跳回九宮格
+    const totalCount = parseInt(document.getElementById('feedback-total-count')?.textContent || '0');
+    if (totalCount > 0) {
+        const confirmed = confirm(`目前已有 ${totalCount} 位學生回饋。\n\n確定結束嗎？建議先按「下載 CSV」保存資料。`);
+        if (!confirmed) return;
+    } else {
+        if (!confirm('確定結束課後回饋？')) return;
+    }
     document.getElementById('feedback-stats-modal').classList.add('hidden');
     if (feedbackUnsubscribe) { feedbackUnsubscribe(); feedbackUnsubscribe = null; }
     await setInteractionMode('waiting');
-    showMessage('課後回饋已結束', 'info');
+    showView('teacherMenu');
+    manualRefreshCounts();
+    showMessage('課後回饋已結束 ✓', 'success');
 }
 
 // ==========================================================
