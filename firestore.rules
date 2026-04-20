@@ -73,6 +73,11 @@ service cloud.firestore {
       match /teamScores/{teamId} {
         allow read, write: if request.auth != null;
       }
+
+      // 🆕 [v3.8.27] 相片牆歸檔（繪圖作品持久保存）
+      match /photoWall/{studentName} {
+        allow read, write: if request.auth != null;
+      }
     }
 
     // 其他 artifacts 路徑：通用規則（保持向後相容）

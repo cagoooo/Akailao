@@ -10972,11 +10972,24 @@ function setupEventListeners() {
             console.log(`[Drawing] 最終大小: ${(dataUrl.length / 1024).toFixed(0)}KB, quality=${quality.toFixed(1)}`);
             await submitAnswer(dataUrl);
 
+            // 🆕 [v3.8.27] 同時寫入 photoWall 集合（持久保存供相片牆使用，不受模式切換影響）
+            try {
+                const photoWallRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall', studentName);
+                await setDoc(photoWallRef, {
+                    studentName,
+                    imageData: dataUrl,
+                    submittedAt: new Date(),
+                    sessionId: window.lastModeResetToken || Date.now()
+                });
+                console.log('[PhotoWall] ✅ 作品已歸檔:', studentName);
+            } catch (archiveErr) {
+                console.warn('[PhotoWall] 歸檔失敗（不影響課堂作答）:', archiveErr);
+            }
+
             // 🆕 [v3.8.27] 改良：允許繼續修改繪圖（不鎖定畫布和按鈕）
             submitBtn.classList.remove('btn-primary');
             submitBtn.classList.add('btn-green');
             submitBtn.innerHTML = '<i class="fas fa-check-circle mr-2"></i>已送出（可繼續編輯後再送出）';
-            // 不 disable 按鈕，不鎖定畫布
 
             showMessage('✓ 繪圖已送出！如要修改，可繼續編輯畫面後再次送出', 'success');
         } catch (error) {
@@ -11795,6 +11808,9 @@ function setupEventListeners() {
         const grid = document.getElementById('photo-wall-grid-teacher')?.parentElement;
         if (grid?.requestFullscreen) grid.requestFullscreen();
     });
+    // 🆕 [v3.8.27] 重新整理和清空相片牆
+    document.getElementById('photo-wall-refresh-btn')?.addEventListener('click', () => loadPhotoWallGallery('teacher'));
+    document.getElementById('photo-wall-clear-btn')?.addEventListener('click', clearPhotoWallArchive);
     document.getElementById('end-photo-wall-btn').addEventListener('click', endPhotoWall);
 
     // 🆕 NEW [v3.8.25] MODE-5：課後回饋 Event Listeners
@@ -15813,19 +15829,54 @@ async function loadPhotoWallGallery(target = 'teacher') {
     grid.innerHTML = '<p class="text-gray-400 text-center col-span-full animate-pulse">載入作品中...</p>';
 
     try {
-        const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
-        const snapshot = await getDocs(respRef);
-
         const drawings = [];
-        snapshot.forEach(d => {
+        const seenNames = new Set();
+
+        // 🆕 [v3.8.27] 優先從 photoWall 集合讀取（持久保存，不受模式切換影響）
+        const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+        const photoWallSnap = await getDocs(photoWallRef);
+        photoWallSnap.forEach(d => {
             const data = d.data();
-            if (data.answer && typeof data.answer === 'string' && data.answer.startsWith('data:image')) {
-                drawings.push({ name: d.id, image: data.answer, timestamp: data.timestamp });
+            if (data.imageData && typeof data.imageData === 'string' && data.imageData.startsWith('data:image')) {
+                const name = data.studentName || d.id;
+                drawings.push({
+                    name,
+                    image: data.imageData,
+                    timestamp: data.submittedAt,
+                    sessionId: data.sessionId
+                });
+                seenNames.add(name);
             }
         });
 
+        // 備援：從 studentResponses 讀取（繪圖模式進行中時）
+        const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const snapshot = await getDocs(respRef);
+        snapshot.forEach(d => {
+            const data = d.data();
+            if (data.answer && typeof data.answer === 'string' && data.answer.startsWith('data:image')) {
+                const name = d.id;
+                // 如果 photoWall 沒有這個學生，才從 studentResponses 補
+                if (!seenNames.has(name)) {
+                    drawings.push({ name, image: data.answer, timestamp: data.timestamp });
+                }
+            }
+        });
+
+        // 依時間排序（最新在前）
+        drawings.sort((a, b) => {
+            const ta = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp || 0);
+            const tb = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp || 0);
+            return tb - ta;
+        });
+
         if (drawings.length === 0) {
-            grid.innerHTML = '<p class="text-gray-400 text-center col-span-full">尚無繪圖作品。<br>請先使用「繪圖題」收集學生作品。</p>';
+            grid.innerHTML = `
+                <div class="col-span-full text-center py-8">
+                    <p class="text-5xl mb-3">🖼️</p>
+                    <p class="text-gray-500 mb-2">尚無繪圖作品</p>
+                    <p class="text-sm text-gray-400">請先使用「繪圖題」收集學生作品<br>學生送出後會自動保存到相片牆</p>
+                </div>`;
             return;
         }
 
@@ -15841,16 +15892,34 @@ async function loadPhotoWallGallery(target = 'teacher') {
                     <p class="text-sm font-semibold text-gray-700 truncate">${item.name}</p>
                 </div>`;
             card.addEventListener('click', () => {
-                // 放大檢視
                 const modal = document.getElementById('magnified-image-modal');
                 document.getElementById('magnified-image').src = item.image;
                 modal.classList.remove('hidden');
             });
             grid.appendChild(card);
         });
+        console.log(`[PhotoWall] 載入 ${drawings.length} 件作品（photoWall: ${seenNames.size}, responses: ${drawings.length - seenNames.size}）`);
     } catch (e) {
         console.error('Error loading photo wall:', e);
         grid.innerHTML = '<p class="text-red-500 text-center col-span-full">載入失敗，請重試</p>';
+    }
+}
+
+// 🆕 [v3.8.27] 清空相片牆作品（讓老師可以開始新一輪）
+async function clearPhotoWallArchive() {
+    if (!classroomCode) return;
+    if (!confirm('確定要清空相片牆的所有作品嗎？\n\n此操作無法復原。')) return;
+    try {
+        const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+        const snap = await getDocs(photoWallRef);
+        const deletes = [];
+        snap.forEach(d => deletes.push(deleteDoc(d.ref)));
+        await Promise.all(deletes);
+        showMessage(`已清空 ${deletes.length} 件作品`, 'success');
+        await loadPhotoWallGallery('teacher');
+    } catch (e) {
+        console.error('Clear photo wall error:', e);
+        showMessage('清空失敗：' + e.message, 'error');
     }
 }
 
