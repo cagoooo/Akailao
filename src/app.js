@@ -3878,20 +3878,23 @@ function renderQRCodeStudentList() {
             `).join('')}
         </div>`;
 
-    // 綁定踢出按鈕事件
+    // 綁定踢出按鈕事件（直接呼叫 performKickStudent 跳過內建對話框，避免雙重確認 + spinner 卡住）
     list.querySelectorAll('.qrcode-kick-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const studentToKick = btn.dataset.studentName;
             if (!studentToKick) return;
-            // 確認對話框
-            if (!confirm(`確定要踢出「${studentToKick}」？\n\n學生會被斷線並可用正確姓名重新加入。`)) return;
-            // 視覺反饋：按鈕顯示 loading
+            // 確認對話框（簡潔版，不用 kickStudentFromClass 的大彈窗）
+            if (!confirm(`確定要踢出「${studentToKick}」？\n\n該學生會被斷線並可用正確姓名重新加入。`)) return;
+            // 視覺反饋
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
             btn.disabled = true;
             try {
-                await kickStudentFromClass(studentToKick);
+                // 直接執行踢出（跳過 kickStudentFromClass 內建對話框）
+                await performKickStudent(studentToKick);
                 showMessage(`已踢出 ${studentToKick}`, 'success');
+                // 名單會由 listenToClassroomPresence 自動觸發 renderQRCodeStudentList 重繪
+                // 此卡片會直接消失，不需手動還原 btn 狀態
             } catch (err) {
                 console.error('Kick failed:', err);
                 showMessage('踢出失敗，請重試', 'error');
