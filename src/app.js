@@ -10764,11 +10764,60 @@ function setupEventListeners() {
     canvas.addEventListener('touchstart', startDrawing, { passive: false });
     canvas.addEventListener('touchmove', throttledDraw, { passive: false });
     canvas.addEventListener('touchend', stopDrawing);
+
+    // 🆕 [v3.8.26] CRITICAL FIX: iPad 縮放導致學生畫的內容消失
+    // 原因：window resize → setupCanvas() → canvas.width=N 會清空畫布內容（HTML5 canvas 特性）
+    // 修復策略：1) debounce 防止連續清空  2) 保存→重設→還原 drawingCanvas 的內容
+    let _drawingResizeTimeout = null;
+    let _lastCanvasW = 0, _lastCanvasH = 0;
     window.addEventListener('resize', () => {
         if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.drawing.classList.contains('hidden')) {
-            setupCanvas();
-            loadBackgroundImage();
-            loadStudentImage();
+            // Debounce：iPad pinch-zoom 會連續觸發多個 resize 事件
+            clearTimeout(_drawingResizeTimeout);
+            _drawingResizeTimeout = setTimeout(() => {
+                const canvasElement = document.getElementById('drawing-canvas');
+                const newW = canvasElement.clientWidth;
+                const newH = canvasElement.clientHeight;
+
+                // 如果尺寸沒變（純 zoom 而非 layout 變化），完全跳過避免清空
+                if (newW === _lastCanvasW && newH === _lastCanvasH && drawingCanvas.width > 0) {
+                    return;
+                }
+
+                // 保存當前學生畫的內容（drawingCanvas 是純筆跡層，不含背景）
+                let savedDrawing = null;
+                const oldW = drawingCanvas.width;
+                const oldH = drawingCanvas.height;
+                if (oldW > 0 && oldH > 0) {
+                    try {
+                        savedDrawing = drawingCanvas.toDataURL('image/png');
+                    } catch (e) {
+                        console.warn('[Drawing] Failed to save canvas before resize:', e);
+                    }
+                }
+
+                // 重設畫布尺寸（會清空所有 canvas）
+                setupCanvas();
+                loadBackgroundImage();
+                loadStudentImage();
+
+                // 還原學生筆跡（按比例縮放）
+                if (savedDrawing) {
+                    const img = new Image();
+                    img.onload = () => {
+                        drawingCtx.drawImage(img, 0, 0, oldW, oldH, 0, 0, drawingCanvas.width, drawingCanvas.height);
+                        drawCombinedCanvas();
+                    };
+                    img.onerror = () => {
+                        console.warn('[Drawing] Failed to restore canvas after resize');
+                        drawCombinedCanvas();
+                    };
+                    img.src = savedDrawing;
+                }
+
+                _lastCanvasW = drawingCanvas.width;
+                _lastCanvasH = drawingCanvas.height;
+            }, 250);
         }
         // 🎨 Redraw matching lines on window resize
         if (!views.studentInteraction.classList.contains('hidden') && !interactionUIs.matching.classList.contains('hidden')) {
