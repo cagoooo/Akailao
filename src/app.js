@@ -10624,6 +10624,39 @@ function setupEventListeners() {
         }
     });
 
+    // 🆕 [v3.8.26] iPad 還原畫面功能：解決學生 pinch-zoom 後回不去的問題
+    function resetPageZoom() {
+        const meta = document.querySelector('meta[name=viewport]');
+        if (!meta) return;
+        const orig = meta.getAttribute('content') || 'width=device-width, initial-scale=1.0';
+        // 短暫禁止縮放強制重置（iOS Safari/Chrome 接受此 trick）
+        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        setTimeout(() => {
+            meta.setAttribute('content', orig);
+        }, 350);
+        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+        if (navigator.vibrate) navigator.vibrate(50);
+    }
+    // 繪圖工具列上的還原按鈕
+    const drawingResetBtn = document.getElementById('reset-zoom-btn');
+    if (drawingResetBtn) drawingResetBtn.addEventListener('click', resetPageZoom);
+    // 浮動還原按鈕（全域）
+    const floatingResetBtn = document.getElementById('floating-reset-zoom-btn');
+    if (floatingResetBtn) floatingResetBtn.addEventListener('click', resetPageZoom);
+    // 偵測縮放：用 visualViewport API 監聽（學生端適用）
+    if (window.visualViewport) {
+        const checkZoom = () => {
+            const isZoomed = window.visualViewport.scale > 1.05;
+            const isStudent = currentRole === 'student';
+            // 學生端：縮放時自動顯示浮動按鈕
+            if (floatingResetBtn) {
+                floatingResetBtn.style.display = (isZoomed && isStudent) ? 'flex' : 'none';
+            }
+        };
+        window.visualViewport.addEventListener('resize', checkZoom);
+        window.visualViewport.addEventListener('scroll', checkZoom);
+    }
+
     // Drawing submission.
     document.getElementById('submit-drawing-btn').addEventListener('click', async (e) => {
         // NEW: Check pause state before submitting
@@ -15016,23 +15049,78 @@ async function endWordCloud() {
     showMessage('文字雲已結束！', 'info');
 }
 
+// 🆕 [v3.8.26] 支援多詞彙：學生本地暫存陣列
+function _getWordCloudKey() {
+    return `wordCloud_${classroomCode}_${wordCloudSettings?.startedAt || wordCloudSettings?.topic || ''}`;
+}
+function _getMyWords() {
+    try {
+        const stored = localStorage.getItem(_getWordCloudKey());
+        if (!stored) return [];
+        // 兼容舊版（單一字串）
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) ? parsed : [stored];
+    } catch (e) {
+        // 舊版可能直接存字串，JSON.parse 會失敗
+        const stored = localStorage.getItem(_getWordCloudKey());
+        return stored ? [stored] : [];
+    }
+}
+
 // 學生端：設置文字雲
 function setupWordCloudStudent(controlData) {
     const settings = controlData?.wordCloudSettings;
     if (!settings) return;
     wordCloudSettings = settings;
+    const maxWords = settings.maxWords || 1;
     document.getElementById('word-cloud-topic-display').textContent = `主題：${settings.topic}`;
-    // 🆕 FIX: 使用 sessionId（startedAt timestamp）作為 key，每次新啟動都是全新一輪
-    const subKey = `wordCloud_${classroomCode}_${settings.startedAt || settings.topic}`;
-    if (localStorage.getItem(subKey)) {
-        document.getElementById('word-cloud-input-phase').classList.add('hidden');
-        document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
-        document.getElementById('word-cloud-submitted-word').textContent = localStorage.getItem(subKey);
+
+    const myWords = _getMyWords();
+    renderWordCloudStudentUI(myWords, maxWords);
+}
+
+// 🆕 [v3.8.26] 渲染學生端 UI：根據已提交詞數和上限決定狀態
+function renderWordCloudStudentUI(myWords, maxWords) {
+    const inputPhase = document.getElementById('word-cloud-input-phase');
+    const submittedStatus = document.getElementById('word-cloud-submitted-status');
+    const submitBtn = document.getElementById('submit-word-cloud-btn');
+    const wordEl = document.getElementById('word-cloud-submitted-word');
+
+    if (myWords.length >= maxWords) {
+        // 已達上限：完全鎖定
+        inputPhase.classList.add('hidden');
+        submittedStatus.classList.remove('hidden');
+        wordEl.textContent = myWords.join('、');
     } else {
-        // 新一輪：重置 UI 確保顯示輸入框
-        document.getElementById('word-cloud-input-phase').classList.remove('hidden');
-        document.getElementById('word-cloud-submitted-status').classList.add('hidden');
+        // 還可以繼續提交
+        inputPhase.classList.remove('hidden');
+        submittedStatus.classList.add('hidden');
         document.getElementById('word-cloud-student-input').value = '';
+
+        // 動態提示：第 N/M 個
+        if (submitBtn) {
+            const remaining = maxWords - myWords.length;
+            if (maxWords > 1) {
+                submitBtn.innerHTML = `<i class="fas fa-paper-plane mr-2"></i> 送出第 ${myWords.length + 1}/${maxWords} 個詞彙 ✨`;
+            } else {
+                submitBtn.innerHTML = `<i class="fas fa-paper-plane mr-2"></i> 送出詞彙 ✨`;
+            }
+        }
+
+        // 顯示已提交的詞彙列表（在輸入框下方）
+        let listEl = document.getElementById('word-cloud-my-words-list');
+        if (!listEl) {
+            listEl = document.createElement('div');
+            listEl.id = 'word-cloud-my-words-list';
+            listEl.className = 'mt-4 text-sm text-gray-600';
+            inputPhase.appendChild(listEl);
+        }
+        if (myWords.length > 0) {
+            listEl.innerHTML = `<p class="font-semibold mb-2">你已提交 (${myWords.length}/${maxWords})：</p>` +
+                `<div class="flex flex-wrap gap-2 justify-center">${myWords.map(w => `<span class="bg-cyan-100 text-cyan-700 px-3 py-1 rounded-full font-medium">${w}</span>`).join('')}</div>`;
+        } else {
+            listEl.innerHTML = '';
+        }
     }
 }
 
@@ -15041,17 +15129,35 @@ async function submitWordCloudWord() {
     const word = input.value.trim();
     if (!word) { showMessage('請輸入詞彙', 'error'); return; }
 
+    const maxWords = wordCloudSettings?.maxWords || 1;
+    const myWords = _getMyWords();
+
+    if (myWords.length >= maxWords) {
+        showMessage(`你最多只能提交 ${maxWords} 個詞彙`, 'error');
+        return;
+    }
+    if (myWords.includes(word)) {
+        showMessage('你已提交過這個詞彙了', 'error');
+        return;
+    }
+
     try {
+        // 🆕 [v3.8.26] 多詞彙模式：以陣列方式存入 Firestore，教師端 listenToWordCloudResponses 已支援
+        myWords.push(word);
         const respRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses', studentName);
-        await setDoc(respRef, { word, studentName, timestamp: serverTimestamp(), interactionMode: 'word_cloud' });
-        // 🆕 FIX: 使用 sessionId 作為 key，與 setupWordCloudStudent 一致
-        const subKey = `wordCloud_${classroomCode}_${wordCloudSettings?.startedAt || wordCloudSettings?.topic || ''}`;
-        localStorage.setItem(subKey, word);
-        document.getElementById('word-cloud-input-phase').classList.add('hidden');
-        document.getElementById('word-cloud-submitted-status').classList.remove('hidden');
-        document.getElementById('word-cloud-submitted-word').textContent = word;
+        await setDoc(respRef, {
+            word: maxWords === 1 ? word : myWords,  // 單詞時保留字串向下相容
+            studentName,
+            timestamp: serverTimestamp(),
+            interactionMode: 'word_cloud'
+        });
+        // 本地存陣列
+        localStorage.setItem(_getWordCloudKey(), JSON.stringify(myWords));
         if (navigator.vibrate) navigator.vibrate(100);
-        showMessage('詞彙已送出！', 'success');
+        showMessage(`詞彙已送出！（${myWords.length}/${maxWords}）`, 'success');
+
+        // 重新渲染 UI
+        renderWordCloudStudentUI(myWords, maxWords);
     } catch (e) {
         console.error('Error submitting word:', e);
         showMessage('送出失敗，請重試', 'error');
