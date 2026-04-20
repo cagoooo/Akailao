@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>剛好學：課堂互動so easy</title>
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
@@ -753,18 +753,24 @@
                         </button>
                     </div>
                     <div class="flex items-center gap-2 mt-2 md:mt-0 ml-auto">
-                        <!-- 🆕 [v3.8.26] 還原畫面按鈕：iPad 縮放後一鍵恢復 -->
-                        <button id="reset-zoom-btn"
-                            class="btn bg-amber-500 hover:bg-amber-600 !w-auto text-base h-11 px-4 py-2 flex items-center justify-center"
-                            title="iPad 畫面被縮放放大時，點此一鍵還原">
-                            <i class="fas fa-search-minus mr-2"></i> 還原畫面 🔄
-                        </button>
                         <button id="submit-drawing-btn"
                             class="btn btn-primary !w-auto text-base h-11 px-4 py-2 flex items-center justify-center">送出
                             🚀</button>
                     </div>
                 </div>
-                <canvas id="drawing-canvas"></canvas>
+                <div class="relative">
+                    <canvas id="drawing-canvas"></canvas>
+                    <!-- 🆕 [v3.8.27] 畫布縮放重置按鈕（兩指縮放後出現） -->
+                    <button id="canvas-zoom-reset-btn"
+                        style="position:absolute; top:8px; right:8px; z-index:10; display:none; align-items:center; gap:6px; background:#3b82f6; color:#fff; padding:8px 14px; border:none; border-radius:999px; font-size:13px; font-weight:bold; box-shadow:0 4px 12px rgba(59,130,246,0.4); cursor:pointer;"
+                        title="重置畫布縮放">
+                        <i class="fas fa-search-minus"></i>
+                        <span>重置 <span id="canvas-zoom-percent">100%</span></span>
+                    </button>
+                </div>
+                <p class="text-xs text-gray-500 mt-1 text-center md:hidden">
+                    💡 提示：在畫布上用兩指可以縮放/平移畫面
+                </p>
             </div>
             <div id="interaction-url-dispatch" class="hidden">
             </div>
@@ -3029,24 +3035,6 @@
         </div>
         <span id="class-progress-bar-label">班級進度 0/0</span>
     </div>
-
-    <!-- 🆕 [v3.8.26] iPad 縮放偵測：浮動還原按鈕（zoomed > 1.05 時自動顯示） -->
-    <button id="floating-reset-zoom-btn"
-        style="position:fixed; bottom:80px; right:12px; z-index:1500;
-               background:#f59e0b; color:#fff; padding:10px 16px;
-               border:none; border-radius:999px; font-size:14px; font-weight:bold;
-               box-shadow:0 4px 12px rgba(245,158,11,0.5); cursor:pointer;
-               display:none; align-items:center; gap:6px; transition:all 0.3s;
-               animation: float-pulse 2s ease-in-out infinite;">
-        <i class="fas fa-search-minus"></i>
-        <span>還原畫面</span>
-    </button>
-    <style>
-        @keyframes float-pulse {
-            0%,100% { transform: scale(1); }
-            50% { transform: scale(1.08); }
-        }
-    </style>
 
     <!-- 🆕 NEW [v3.8.22] UX-11: 「N 人正在作答中」浮動氣泡（學生端左下角） -->
     <div id="live-answering-indicator"

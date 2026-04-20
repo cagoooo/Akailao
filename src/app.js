@@ -4480,10 +4480,10 @@ function listenToInteractionMode() {
         const modeResetTokenChanged = (window.lastStudentModeResetToken !== newModeResetToken && newModeResetToken !== 0);
 
 
-        // 🆕 [v3.8.26] 離開繪圖模式時解除 viewport 鎖定
+        // 🆕 [v3.8.27] 離開繪圖模式時重置畫布縮放
         if (modeChanged && currentInteractionMode === 'drawing' && newMode !== 'drawing'
-            && currentRole === 'student' && window._unlockViewportForDrawing) {
-            window._unlockViewportForDrawing();
+            && currentRole === 'student' && window._resetCanvasTransform) {
+            window._resetCanvasTransform();
         }
 
         // Update global states *before* acting on them
@@ -4604,10 +4604,6 @@ function listenToInteractionMode() {
 
             // Specific UI updates that need to happen on every snapshot change
             if (currentInteractionMode === 'drawing') {
-                // 🆕 [v3.8.26] 進入繪圖模式時鎖定 viewport（防止 iPad pinch-zoom 造成混亂）
-                if (modeChanged && currentRole === 'student' && window._lockViewportForDrawing) {
-                    window._lockViewportForDrawing();
-                }
                 requestAnimationFrame(() => {
                     // BUG FIX: Only call setupCanvas (which resizes and clears the drawing canvas)
                     // when the mode truly changes to 'drawing'.
@@ -4616,12 +4612,14 @@ function listenToInteractionMode() {
                     // preserving the student's existing drawing.
                     if (modeChanged) {
                         setupCanvas();
+                        // 🆕 [v3.8.27] 進入繪圖模式時重置畫布縮放（防止上次殘留）
+                        if (window._resetCanvasTransform) window._resetCanvasTransform();
                     }
                     loadBackgroundImage(); // Reload background in case teacher changed it
                     loadStudentImage();    // Reload student-uploaded image
                     drawCombinedCanvas();  // Redraw all layers
 
-                    // 🆕 [v3.8.26 v2] 還原 reset 前的繪圖內容
+                    // 保留：未來擴充繪圖還原機制
                     if (window._pendingDrawingRestore && modeChanged) {
                         const restore = window._pendingDrawingRestore;
                         window._pendingDrawingRestore = null;
@@ -10893,178 +10891,9 @@ function setupEventListeners() {
         }
     });
 
-    // 🆕 [v3.8.26 v2] iPad 還原畫面：保存狀態 → 重載頁面 → 自動還原
-    // iOS 限制：JS 無法可靠地撤銷已發生的 pinch-zoom（visualViewport 是用戶控制）
-    // 唯一 100% 可靠的方法：reload 頁面（viewport 從新載入會回到 scale=1）
-    // 為避免 reload 失去學生畫的內容，我們在 reload 前用 sessionStorage 保存
-    let _originalViewport = null;
-    function _saveOriginalViewport() {
-        if (!_originalViewport) {
-            const meta = document.querySelector('meta[name=viewport]');
-            _originalViewport = meta?.getAttribute('content') || 'width=device-width, initial-scale=1.0, maximum-scale=3.0';
-        }
-    }
-
-    function resetPageZoom() {
-        _saveOriginalViewport();
-        const meta = document.querySelector('meta[name=viewport]');
-        if (!meta) return;
-
-        // 偵測是否真的有 zoom（避免不必要的 reload）
-        const isZoomed = window.visualViewport && window.visualViewport.scale > 1.05;
-
-        // === 策略 1（輕量）：先嘗試 viewport meta tag trick ===
-        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
-
-        // 觸發 layout 重算
-        try {
-            const tempInput = document.createElement('input');
-            tempInput.type = 'text';
-            tempInput.style.cssText = 'position:fixed;top:50%;left:50%;width:1px;height:1px;font-size:16px;opacity:0;pointer-events:none;';
-            document.body.appendChild(tempInput);
-            tempInput.focus();
-            setTimeout(() => { tempInput.blur(); tempInput.remove(); }, 100);
-        } catch (e) {}
-
-        // 滾動到畫布
-        setTimeout(() => {
-            const drawingView = document.getElementById('interaction-drawing');
-            const cv = document.getElementById('drawing-canvas');
-            const target = (drawingView && !drawingView.classList.contains('hidden')) ? cv || drawingView : document.body;
-            try { target.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); } catch (e) {}
-        }, 50);
-
-        // === 策略 2（核武）：500ms 後檢查還是縮放，啟動「保存→重載」流程 ===
-        if (isZoomed) {
-            setTimeout(() => {
-                const stillZoomed = window.visualViewport && window.visualViewport.scale > 1.05;
-                if (stillZoomed) {
-                    _doFullReset();
-                } else {
-                    showMessage('已重置畫面 ✓', 'success');
-                    if (navigator.vibrate) navigator.vibrate([50, 50, 100]);
-                }
-            }, 600);
-        } else {
-            showMessage('畫面已置中 ✓', 'success');
-            if (navigator.vibrate) navigator.vibrate(50);
-        }
-    }
-
-    // 🆕 [v3.8.26 v2] 核武級重置：保存所有狀態 → reload → 自動還原
-    function _doFullReset() {
-        try {
-            const inDrawingMode = !document.getElementById('interaction-drawing').classList.contains('hidden');
-
-            // 保存學生姓名 + 課堂代碼 + 角色
-            const sessionData = {
-                role: currentRole,
-                studentName: studentName,
-                classroomCode: classroomCode,
-                timestamp: Date.now(),
-                inDrawingMode: inDrawingMode
-            };
-
-            // 保存當前畫布內容（如果在繪圖模式）
-            if (inDrawingMode && drawingCanvas && drawingCanvas.width > 0) {
-                try {
-                    sessionData.drawingDataURL = drawingCanvas.toDataURL('image/png');
-                    sessionData.drawingW = drawingCanvas.width;
-                    sessionData.drawingH = drawingCanvas.height;
-                } catch (e) {
-                    console.warn('[Reset] Failed to save drawing:', e);
-                }
-            }
-
-            sessionStorage.setItem('akailao_resetState', JSON.stringify(sessionData));
-
-            // 顯示載入提示
-            showMessage('正在還原畫面，請稍候...', 'info');
-
-            // 短暫延遲後 reload（讓 user 看到提示）
-            setTimeout(() => {
-                // 將 classroomCode 加到 URL 確保自動回到該課堂
-                const url = new URL(window.location.href);
-                if (classroomCode) url.searchParams.set('classroom', classroomCode);
-                window.location.href = url.toString();
-            }, 400);
-        } catch (e) {
-            console.error('[Reset] Full reset failed:', e);
-            // 失敗的話直接 reload
-            window.location.reload();
-        }
-    }
-
-    // 🆕 [v3.8.26 v2] 頁面載入時檢查是否有待還原的狀態
-    function _checkPendingReset() {
-        try {
-            const raw = sessionStorage.getItem('akailao_resetState');
-            if (!raw) return;
-            sessionStorage.removeItem('akailao_resetState');
-            const data = JSON.parse(raw);
-            // 只還原最近 30 秒內的狀態
-            if (Date.now() - data.timestamp > 30000) return;
-
-            // 自動填入姓名（學生端）
-            if (data.role === 'student' && data.studentName) {
-                const nameInput = document.getElementById('student-name-input');
-                if (nameInput) nameInput.value = data.studentName;
-                const codeInput = document.getElementById('student-classroom-code-input');
-                if (codeInput && data.classroomCode) codeInput.value = data.classroomCode;
-            }
-
-            // 還原繪圖內容（等學生重新進入課堂後）
-            if (data.drawingDataURL) {
-                window._pendingDrawingRestore = data;
-                console.log('[Reset] 待還原繪圖內容已暫存');
-            }
-
-            showMessage('畫面已還原，請繼續作答', 'success');
-        } catch (e) {
-            console.warn('[Reset] Check pending failed:', e);
-        }
-    }
-    // 頁面載入時立即檢查
-    _checkPendingReset();
-
-    // 🆕 [v3.8.26] 進入繪圖模式時自動鎖定 viewport（避免 pinch-zoom 造成混亂）
-    // 離開時恢復
-    function lockViewportForDrawing() {
-        _saveOriginalViewport();
-        const meta = document.querySelector('meta[name=viewport]');
-        if (meta) {
-            meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
-        }
-    }
-    function unlockViewportForDrawing() {
-        const meta = document.querySelector('meta[name=viewport]');
-        if (meta && _originalViewport) {
-            meta.setAttribute('content', _originalViewport);
-        }
-    }
-    // 暴露給其他模組使用
-    window._lockViewportForDrawing = lockViewportForDrawing;
-    window._unlockViewportForDrawing = unlockViewportForDrawing;
-
-    // 繪圖工具列上的還原按鈕
-    const drawingResetBtn = document.getElementById('reset-zoom-btn');
-    if (drawingResetBtn) drawingResetBtn.addEventListener('click', resetPageZoom);
-    // 浮動還原按鈕（全域）
-    const floatingResetBtn = document.getElementById('floating-reset-zoom-btn');
-    if (floatingResetBtn) floatingResetBtn.addEventListener('click', resetPageZoom);
-    // 偵測縮放：用 visualViewport API 監聽（學生端適用）
-    if (window.visualViewport) {
-        const checkZoom = () => {
-            const isZoomed = window.visualViewport.scale > 1.05;
-            const isStudent = currentRole === 'student';
-            // 學生端：縮放時自動顯示浮動按鈕
-            if (floatingResetBtn) {
-                floatingResetBtn.style.display = (isZoomed && isStudent) ? 'flex' : 'none';
-            }
-        };
-        window.visualViewport.addEventListener('resize', checkZoom);
-        window.visualViewport.addEventListener('scroll', checkZoom);
-    }
+    // 🚮 [v3.8.27] 移除 iPad 還原畫面功能（reload 會踢出學生，UX 太差）
+    // 注意：reset-zoom-btn 是閱讀測驗的縮放重置按鈕（不同功能），不要刪
+    // 預防勝於治療：HTML viewport meta 已設 maximum-scale=3.0 限制最大縮放
 
     // Drawing submission.
     document.getElementById('submit-drawing-btn').addEventListener('click', async (e) => {
@@ -11203,9 +11032,114 @@ function setupEventListeners() {
     canvas.addEventListener('mousemove', throttledDraw);
     canvas.addEventListener('mouseup', stopDrawing);
     canvas.addEventListener('mouseleave', stopDrawing);
-    canvas.addEventListener('touchstart', startDrawing, { passive: false });
-    canvas.addEventListener('touchmove', throttledDraw, { passive: false });
-    canvas.addEventListener('touchend', stopDrawing);
+
+    // 🆕 [v3.8.27] 兩指縮放/平移畫布（單指仍為繪圖）
+    // 用 CSS transform 縮放畫布元素本身（不影響繪圖座標計算，因 getBoundingClientRect 含 transform）
+    let _canvasScale = 1;
+    let _canvasTranslateX = 0;
+    let _canvasTranslateY = 0;
+    let _gestureActive = false;
+    let _gestureStartDistance = 0;
+    let _gestureStartScale = 1;
+    let _gestureStartCenterX = 0;
+    let _gestureStartCenterY = 0;
+    let _gestureStartTranslateX = 0;
+    let _gestureStartTranslateY = 0;
+
+    function _applyCanvasTransform() {
+        canvas.style.transform = `translate(${_canvasTranslateX}px, ${_canvasTranslateY}px) scale(${_canvasScale})`;
+        canvas.style.transformOrigin = 'center center';
+        // 顯示縮放重置按鈕
+        const resetBtn = document.getElementById('canvas-zoom-reset-btn');
+        if (resetBtn) {
+            const showBtn = Math.abs(_canvasScale - 1) > 0.01 || Math.abs(_canvasTranslateX) > 1 || Math.abs(_canvasTranslateY) > 1;
+            resetBtn.style.display = showBtn ? 'flex' : 'none';
+            const pctSpan = document.getElementById('canvas-zoom-percent');
+            if (pctSpan) pctSpan.textContent = Math.round(_canvasScale * 100) + '%';
+        }
+    }
+
+    function _resetCanvasTransform() {
+        _canvasScale = 1;
+        _canvasTranslateX = 0;
+        _canvasTranslateY = 0;
+        canvas.style.transform = '';
+        const resetBtn = document.getElementById('canvas-zoom-reset-btn');
+        if (resetBtn) resetBtn.style.display = 'none';
+    }
+    window._resetCanvasTransform = _resetCanvasTransform;
+
+    function _getTouchCenter(touches) {
+        return {
+            x: (touches[0].clientX + touches[1].clientX) / 2,
+            y: (touches[0].clientY + touches[1].clientY) / 2
+        };
+    }
+    function _getTouchDistance(touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length >= 2) {
+            // 兩指：啟動 gesture，停止繪圖
+            e.preventDefault();
+            _gestureActive = true;
+            _gestureStartDistance = _getTouchDistance(e.touches);
+            _gestureStartScale = _canvasScale;
+            const center = _getTouchCenter(e.touches);
+            _gestureStartCenterX = center.x;
+            _gestureStartCenterY = center.y;
+            _gestureStartTranslateX = _canvasTranslateX;
+            _gestureStartTranslateY = _canvasTranslateY;
+            // 取消當前繪圖
+            try { stopDrawing(); } catch (err) {}
+            return;
+        }
+        // 單指：正常繪圖
+        if (!_gestureActive) startDrawing(e);
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+        if (e.touches.length >= 2 && _gestureActive) {
+            // 兩指：縮放 + 平移
+            e.preventDefault();
+            const distance = _getTouchDistance(e.touches);
+            const ratio = distance / (_gestureStartDistance || 1);
+            _canvasScale = Math.max(0.5, Math.min(5, _gestureStartScale * ratio));
+            const center = _getTouchCenter(e.touches);
+            _canvasTranslateX = _gestureStartTranslateX + (center.x - _gestureStartCenterX);
+            _canvasTranslateY = _gestureStartTranslateY + (center.y - _gestureStartCenterY);
+            _applyCanvasTransform();
+            return;
+        }
+        // 單指：正常繪圖
+        if (!_gestureActive) throttledDraw(e);
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (e) => {
+        if (e.touches.length === 0) {
+            _gestureActive = false;
+        }
+        if (!_gestureActive) {
+            try { stopDrawing(); } catch (err) {}
+        }
+    });
+    canvas.addEventListener('touchcancel', (e) => {
+        _gestureActive = false;
+        try { stopDrawing(); } catch (err) {}
+    });
+
+    // 縮放重置按鈕
+    const canvasZoomResetBtn = document.getElementById('canvas-zoom-reset-btn');
+    if (canvasZoomResetBtn) {
+        canvasZoomResetBtn.addEventListener('click', () => {
+            _resetCanvasTransform();
+            if (navigator.vibrate) navigator.vibrate(50);
+            showMessage('畫布已重置 ✓', 'success');
+        });
+    }
 
     // 🆕 [v3.8.26] CRITICAL FIX: iPad 縮放導致學生畫的內容消失
     // 原因：window resize → setupCanvas() → canvas.width=N 會清空畫布內容（HTML5 canvas 特性）
