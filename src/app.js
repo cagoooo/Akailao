@@ -15047,6 +15047,9 @@ const TEAM_PRESETS = [
 ];
 let teamBattleData = null;
 let teamScoresUnsubscribe = null;
+// 🆕 [v3.8.27] 即時監聽各隊學生名單
+let teamMembersUnsubscribe = null;
+let teamMembersMap = {};  // { teamName: [studentName, ...] }
 
 function renderTeamNameInputs() {
     const count = parseInt(document.getElementById('team-count-select').value);
@@ -15091,6 +15094,7 @@ async function startTeamBattle() {
     // 顯示積分板
     showTeamScoreboard();
     listenToTeamScores();
+    listenToTeamMembers();  // 🆕 [v3.8.27] 即時監聽學生加入隊伍
     showMessage('分組競賽已開始！', 'success');
 }
 
@@ -15103,20 +15107,36 @@ function updateTeamScoreboardUI() {
     if (!teamBattleData) return;
     const container = document.getElementById('team-scoreboard-container');
     const sorted = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
-    container.innerHTML = sorted.map((team, i) => `
-        <div class="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
-            <span class="text-3xl sm:text-4xl">${i === 0 ? '👑' : team.emoji}</span>
-            <div class="flex-1 min-w-0">
-                <h3 class="text-lg sm:text-2xl font-bold truncate" style="color:${team.color}">${team.name}</h3>
-            </div>
-            <div class="text-4xl sm:text-5xl font-black" style="color:${team.color}">${team.score}</div>
-            <div class="flex gap-1">
-                <button data-team="${team.name}" data-delta="1" class="team-score-btn btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
-                <button data-team="${team.name}" data-delta="-1" class="team-score-btn btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
-            </div>
-        </div>`).join('');
 
-    // 🆕 FIX: 使用事件委派取代 onclick（ES Module 中 onclick 無法訪問模組作用域函數）
+    // 🆕 [v3.8.27] 顯示每隊學生名單
+    container.innerHTML = sorted.map((team, i) => {
+        const members = teamMembersMap[team.name] || [];
+        const memberBadges = members.length > 0
+            ? members.map(name => `<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium" style="background-color:${team.color}25; color:${team.color}; border:1px solid ${team.color}50;">${name}</span>`).join(' ')
+            : '<span class="text-xs text-gray-400 italic">尚無成員</span>';
+        return `
+        <div class="p-3 sm:p-4 rounded-xl shadow-md border-2" style="border-color:${team.color}; background: linear-gradient(135deg, ${team.color}15, ${team.color}05);">
+            <!-- 上排：emoji + 隊名 + 分數 + +/- 按鈕 -->
+            <div class="flex items-center gap-3 sm:gap-4 mb-2">
+                <span class="text-3xl sm:text-4xl">${i === 0 ? '👑' : team.emoji}</span>
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-lg sm:text-2xl font-bold truncate" style="color:${team.color}">${team.name}</h3>
+                    <p class="text-xs text-gray-500">${members.length} 位成員</p>
+                </div>
+                <div class="text-4xl sm:text-5xl font-black" style="color:${team.color}">${team.score}</div>
+                <div class="flex gap-1">
+                    <button data-team="${team.name}" data-delta="1" class="team-score-btn btn btn-green !w-10 !h-10 text-xl !p-0">+</button>
+                    <button data-team="${team.name}" data-delta="-1" class="team-score-btn btn btn-red !w-10 !h-10 text-xl !p-0">−</button>
+                </div>
+            </div>
+            <!-- 下排：學生姓名標籤 -->
+            <div class="flex flex-wrap gap-1.5 ml-1">
+                ${memberBadges}
+            </div>
+        </div>`;
+    }).join('');
+
+    // 事件委派：+/- 按鈕
     container.querySelectorAll('.team-score-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const teamName = btn.dataset.team;
@@ -15124,6 +15144,32 @@ function updateTeamScoreboardUI() {
             adjustTeamScore(teamName, delta);
         });
     });
+}
+
+// 🆕 [v3.8.27] 即時監聽 studentResponses 取得各隊學生名單
+function listenToTeamMembers() {
+    if (teamMembersUnsubscribe) { teamMembersUnsubscribe(); teamMembersUnsubscribe = null; }
+    const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+    teamMembersUnsubscribe = onSnapshot(respRef, (snapshot) => {
+        const newMap = {};
+        snapshot.forEach(d => {
+            const data = d.data();
+            const teamName = data.team;
+            const studentNm = data.studentName || d.id;
+            if (teamName && studentNm) {
+                if (!newMap[teamName]) newMap[teamName] = [];
+                if (!newMap[teamName].includes(studentNm)) {
+                    newMap[teamName].push(studentNm);
+                }
+            }
+        });
+        teamMembersMap = newMap;
+        // 即時更新 UI
+        if (!document.getElementById('team-scoreboard-modal').classList.contains('hidden')) {
+            updateTeamScoreboardUI();
+        }
+    });
+    ListenerManager.register('teamMembers', teamMembersUnsubscribe);
 }
 
 async function adjustTeamScore(teamName, delta) {
@@ -15173,20 +15219,33 @@ async function downloadTeamBattleCSV() {
     }
 
     try {
-        // 從 Firestore 抓所有學生加入記錄（含 team 欄位）
+        // 🆕 FIX: 從 Firestore 重新抓取最新資料 + 結合 teamMembersMap（雙重保險）
         const studentsRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
         const snapshot = await getDocs(studentsRef);
-        const studentRecords = [];
+        const studentMap = {};  // { studentName: { team, joinedAt } } - 用 Map 去重
         snapshot.forEach(d => {
             const data = d.data();
             if (data.team) {
-                studentRecords.push({
-                    name: data.studentName || d.id,
+                const name = data.studentName || d.id;
+                studentMap[name] = {
                     team: data.team,
                     joinedAt: data.timestamp?.toDate ? data.timestamp.toDate().toLocaleString('zh-TW') : ''
-                });
+                };
             }
         });
+
+        // 🆕 補充：從 teamMembersMap 補上可能漏掉的學生（即時監聽快取）
+        Object.entries(teamMembersMap).forEach(([teamName, members]) => {
+            members.forEach(name => {
+                if (!studentMap[name]) {
+                    studentMap[name] = { team: teamName, joinedAt: '(即時資料)' };
+                }
+            });
+        });
+
+        const studentRecords = Object.entries(studentMap).map(([name, info]) => ({
+            name, team: info.team, joinedAt: info.joinedAt
+        }));
 
         // 排名（依分數）
         const sortedTeams = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
@@ -15201,15 +15260,17 @@ async function downloadTeamBattleCSV() {
 
         // === 隊伍積分排行 ===
         csv += '【隊伍積分排行】\n';
-        csv += '名次,隊伍,Emoji,得分,人數\n';
+        csv += '名次,隊伍,Emoji,得分,人數,成員\n';
         sortedTeams.forEach((team, i) => {
-            const memberCount = studentRecords.filter(s => s.team === team.name).length;
+            const members = studentRecords.filter(s => s.team === team.name);
+            const memberCount = members.length;
+            const memberNames = members.map(m => m.name).join('、') || '(無)';
             const rank = i === 0 ? '🥇 1' : i === 1 ? '🥈 2' : i === 2 ? '🥉 3' : `${i + 1}`;
-            csv += `"${rank}","${team.name.replace(/"/g, '""')}","${team.emoji || ''}",${team.score},${memberCount}\n`;
+            csv += `"${rank}","${team.name.replace(/"/g, '""')}","${team.emoji || ''}",${team.score},${memberCount},"${memberNames.replace(/"/g, '""')}"\n`;
         });
 
         // === 各隊學生名單 ===
-        csv += '\n【各隊學生名單】\n';
+        csv += '\n【各隊學生名單詳情】\n';
         csv += '隊伍,學生姓名,加入時間\n';
         sortedTeams.forEach(team => {
             const members = studentRecords.filter(s => s.team === team.name);
@@ -15259,8 +15320,10 @@ async function endTeamBattle() {
     }
     document.getElementById('team-scoreboard-modal').classList.add('hidden');
     if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); teamScoresUnsubscribe = null; }
+    if (teamMembersUnsubscribe) { teamMembersUnsubscribe(); teamMembersUnsubscribe = null; }
     await setInteractionMode('waiting');
     teamBattleData = null;
+    teamMembersMap = {};
     showView('teacherMenu');
     manualRefreshCounts();
     showMessage('分組競賽已結束 ✓', 'success');
