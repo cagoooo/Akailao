@@ -10662,7 +10662,44 @@ function setupEventListeners() {
         showView('studentName');
         // 🆕 [v3.8.26] 學生選擇角色時偵測 WebView
         WebViewDetector.init();
+        // 🆕 [v3.8.27] 自動 focus：若教室碼已填（從 URL），跳到姓名；否則 focus 教室碼
+        setTimeout(() => {
+            const codeInput = document.getElementById('student-classroom-code-input');
+            const nameInput = document.getElementById('student-name-input');
+            const lastName = localStorage.getItem('lastStudentName');
+            if (codeInput?.value && nameInput) {
+                if (lastName) { nameInput.value = lastName; nameInput.select(); }
+                else nameInput.focus();
+            } else if (codeInput) {
+                codeInput.focus();
+            }
+        }, 200);
     });
+
+    // 🆕 [v3.8.27] 學生端 Enter 鍵快速進入（教室代碼或姓名欄位按 Enter 直接送出）
+    const _codeInput = document.getElementById('student-classroom-code-input');
+    const _nameInput = document.getElementById('student-name-input');
+    const _submitNameBtn = document.getElementById('submit-name-btn');
+    if (_codeInput) {
+        _codeInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (_codeInput.value.trim() && _nameInput && !_nameInput.value.trim()) {
+                    _nameInput.focus();  // 跳到姓名欄位
+                } else {
+                    _submitNameBtn?.click();  // 直接送出
+                }
+            }
+        });
+    }
+    if (_nameInput) {
+        _nameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                _submitNameBtn?.click();
+            }
+        });
+    }
 
     // 🚀 NEW: Back button to return to role selection from student name input view
     // 🆕 MODIFIED [v3.8.10]: 按鈕已從 DOM 移除，用 ?. 防止 null error
@@ -13977,6 +14014,22 @@ async function initialize() {
                     currentRole = 'student';
                     showView('studentName');
                     console.log('[Auth] ✅ 偵測到 classroom URL 參數，自動跳轉至學生姓名輸入頁:', _classroomParam);
+
+                    // 🆕 [v3.8.27] 自動 focus 到姓名輸入框 + 帶入上次姓名（UX 提升）
+                    setTimeout(() => {
+                        const nameInput = document.getElementById('student-name-input');
+                        if (nameInput) {
+                            // 嘗試帶入上次使用的姓名
+                            const lastName = localStorage.getItem('lastStudentName');
+                            if (lastName) {
+                                nameInput.value = lastName;
+                                nameInput.select();  // 選取所有文字方便修改
+                            } else {
+                                nameInput.focus();  // 直接 focus 讓鍵盤彈出（手機端）
+                            }
+                        }
+                    }, 300);
+
                     // 🆕 [v3.8.26] QR 掃碼直達學生模式時，立即偵測 WebView
                     WebViewDetector.init();
                 } else {
