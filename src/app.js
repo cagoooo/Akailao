@@ -4388,6 +4388,12 @@ function listenToInteractionMode() {
         const modeResetTokenChanged = (window.lastStudentModeResetToken !== newModeResetToken && newModeResetToken !== 0);
 
 
+        // 🆕 [v3.8.26] 離開繪圖模式時解除 viewport 鎖定
+        if (modeChanged && currentInteractionMode === 'drawing' && newMode !== 'drawing'
+            && currentRole === 'student' && window._unlockViewportForDrawing) {
+            window._unlockViewportForDrawing();
+        }
+
         // Update global states *before* acting on them
         currentInteractionMode = newMode;
         // 🆕 SEC-2: 模式切換時重置提交 flag
@@ -4506,6 +4512,10 @@ function listenToInteractionMode() {
 
             // Specific UI updates that need to happen on every snapshot change
             if (currentInteractionMode === 'drawing') {
+                // 🆕 [v3.8.26] 進入繪圖模式時鎖定 viewport（防止 iPad pinch-zoom 造成混亂）
+                if (modeChanged && currentRole === 'student' && window._lockViewportForDrawing) {
+                    window._lockViewportForDrawing();
+                }
                 requestAnimationFrame(() => {
                     // BUG FIX: Only call setupCanvas (which resizes and clears the drawing canvas)
                     // when the mode truly changes to 'drawing'.
@@ -10770,19 +10780,84 @@ function setupEventListeners() {
         }
     });
 
-    // 🆕 [v3.8.26] iPad 還原畫面功能：解決學生 pinch-zoom 後回不去的問題
+    // 🆕 [v3.8.26 改良] iPad 還原畫面：多策略強力重置
+    // iOS pinch-zoom 用 visualViewport 而非 layout viewport，
+    // 純改 viewport meta tag 在某些 iOS 版本無效，需要組合多重策略。
+    let _originalViewport = null;
+    function _saveOriginalViewport() {
+        if (!_originalViewport) {
+            const meta = document.querySelector('meta[name=viewport]');
+            _originalViewport = meta?.getAttribute('content') || 'width=device-width, initial-scale=1.0';
+        }
+    }
     function resetPageZoom() {
+        _saveOriginalViewport();
         const meta = document.querySelector('meta[name=viewport]');
         if (!meta) return;
-        const orig = meta.getAttribute('content') || 'width=device-width, initial-scale=1.0';
-        // 短暫禁止縮放強制重置（iOS Safari/Chrome 接受此 trick）
-        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+
+        // === 策略 1：徹底鎖定 viewport（含 minimum-scale）強制 visualViewport.scale → 1 ===
+        meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
+
+        // === 策略 2：滾動到繪圖畫布（而非頁面左上角）===
         setTimeout(() => {
-            meta.setAttribute('content', orig);
-        }, 350);
-        window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-        if (navigator.vibrate) navigator.vibrate(50);
+            const drawingView = document.getElementById('interaction-drawing');
+            const canvas = document.getElementById('drawing-canvas');
+            const target = (drawingView && !drawingView.classList.contains('hidden')) ? canvas || drawingView : document.body;
+            try {
+                target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+            } catch (e) {
+                window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+            }
+        }, 50);
+
+        // === 策略 3：強制觸發 layout 重算（iOS Safari 偶爾需要）===
+        // 隱藏的 input focus/blur 觸發 layout，幫助 visualViewport 復位
+        try {
+            const tempInput = document.createElement('input');
+            tempInput.type = 'text';
+            tempInput.style.cssText = 'position:fixed;top:50%;left:50%;width:1px;height:1px;font-size:16px;opacity:0;pointer-events:none;';
+            document.body.appendChild(tempInput);
+            tempInput.focus();
+            setTimeout(() => {
+                tempInput.blur();
+                tempInput.remove();
+            }, 100);
+        } catch (e) {}
+
+        // === 策略 4：1.5 秒後恢復原 viewport（允許用戶再次縮放）===
+        // 在繪圖模式中保持鎖定（避免再次發生），其他模式恢復縮放權
+        setTimeout(() => {
+            const drawingView = document.getElementById('interaction-drawing');
+            const inDrawingMode = drawingView && !drawingView.classList.contains('hidden');
+            if (!inDrawingMode && _originalViewport) {
+                meta.setAttribute('content', _originalViewport);
+            }
+            // 在繪圖模式中保持鎖定，由 lockViewportForDrawing 控制恢復時機
+        }, 1500);
+
+        if (navigator.vibrate) navigator.vibrate([50, 50, 100]);
+        showMessage('已重置畫面 ✓', 'success');
     }
+
+    // 🆕 [v3.8.26] 進入繪圖模式時自動鎖定 viewport（避免 pinch-zoom 造成混亂）
+    // 離開時恢復
+    function lockViewportForDrawing() {
+        _saveOriginalViewport();
+        const meta = document.querySelector('meta[name=viewport]');
+        if (meta) {
+            meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        }
+    }
+    function unlockViewportForDrawing() {
+        const meta = document.querySelector('meta[name=viewport]');
+        if (meta && _originalViewport) {
+            meta.setAttribute('content', _originalViewport);
+        }
+    }
+    // 暴露給其他模組使用
+    window._lockViewportForDrawing = lockViewportForDrawing;
+    window._unlockViewportForDrawing = unlockViewportForDrawing;
+
     // 繪圖工具列上的還原按鈕
     const drawingResetBtn = document.getElementById('reset-zoom-btn');
     if (drawingResetBtn) drawingResetBtn.addEventListener('click', resetPageZoom);
