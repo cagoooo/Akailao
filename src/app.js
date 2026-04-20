@@ -82,6 +82,150 @@ let attentionVisibilityHandler = null;
 let attentionBlurHandler = null;
 let attentionFocusHandler = null;
 
+// 🆕 [v3.8.26] WebView 偵測：學生用社群 App 內建瀏覽器（LINE/FB/IG）掃 QR 進入時警告
+const WebViewDetector = (() => {
+    function detect() {
+        const ua = navigator.userAgent || '';
+        // 已知 in-app browser 的 UA 特徵
+        const patterns = {
+            'LINE': /Line\//i,
+            'Facebook Messenger': /FBAN|FBAV|FB_IAB/i,
+            'Instagram': /Instagram/i,
+            'Threads': /Barcelona/i,
+            'WeChat': /MicroMessenger/i,
+            'Snapchat': /Snapchat/i,
+            'TikTok': /BytedanceWebview|musical_ly/i,
+            'WhatsApp': /WhatsApp/i,
+            'Twitter/X': /Twitter/i,
+            'KakaoTalk': /KAKAOTALK/i,
+        };
+        for (const [name, regex] of Object.entries(patterns)) {
+            if (regex.test(ua)) return { isWebView: true, app: name };
+        }
+        // iOS WKWebView（無 Safari 字串但有 AppleWebKit）
+        const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+        const isStandaloneSafari = /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+        if (isIOS && !isStandaloneSafari && /AppleWebKit/.test(ua)) {
+            return { isWebView: true, app: 'iOS WebView' };
+        }
+        // Android WebView
+        const isAndroidWebView = /Android/.test(ua) && /Version\/[\d.]+/.test(ua) && /wv/.test(ua);
+        if (isAndroidWebView) return { isWebView: true, app: 'Android WebView' };
+
+        return { isWebView: false, app: null };
+    }
+
+    function checkCapabilities() {
+        const issues = [];
+        // Service Worker（PWA 離線）
+        if (!('serviceWorker' in navigator)) issues.push('PWA 離線快取');
+        // 相機權限（拍照 AI 出題）
+        if (!navigator.mediaDevices?.getUserMedia) issues.push('相機/麥克風（錄音題、拍照）');
+        // Vibration（震動回饋）
+        if (!navigator.vibrate) issues.push('震動回饋');
+        // Visual Viewport（iPad 還原畫面）
+        if (!window.visualViewport) issues.push('iPad 縮放偵測');
+        // Clipboard
+        if (!navigator.clipboard) issues.push('剪貼簿');
+        // Fullscreen
+        if (!document.fullscreenEnabled) issues.push('全螢幕');
+        return issues;
+    }
+
+    function showWarning(detection) {
+        // 已警告過就不再顯示（每次課堂只一次）
+        const dismissKey = `webviewWarn_${classroomCode || 'global'}`;
+        if (sessionStorage.getItem(dismissKey)) return;
+
+        const issues = checkCapabilities();
+        const url = window.location.href;
+
+        const modal = document.createElement('div');
+        modal.id = 'webview-warning-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(4px);';
+        modal.innerHTML = `
+            <div style="background:#fff;border-radius:16px;max-width:480px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="text-align:center;margin-bottom:16px;">
+                    <div style="font-size:48px;margin-bottom:8px;">⚠️</div>
+                    <h3 style="font-size:20px;font-weight:bold;color:#dc2626;margin:0;">偵測到 ${detection.app}</h3>
+                    <p style="color:#6b7280;font-size:14px;margin-top:4px;">為了確保所有功能正常運作，建議你用瀏覽器開啟</p>
+                </div>
+                ${issues.length > 0 ? `
+                <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px;margin-bottom:16px;">
+                    <p style="font-size:13px;color:#92400e;font-weight:bold;margin:0 0 6px 0;">⚠ 在此瀏覽器中可能無法使用：</p>
+                    <ul style="font-size:13px;color:#92400e;margin:0;padding-left:20px;">
+                        ${issues.map(i => `<li>${i}</li>`).join('')}
+                    </ul>
+                </div>` : ''}
+                <div style="background:#dbeafe;border:1px solid #60a5fa;border-radius:8px;padding:12px;margin-bottom:16px;">
+                    <p style="font-size:13px;color:#1e40af;font-weight:bold;margin:0 0 6px 0;">💡 建議步驟：</p>
+                    <ol style="font-size:13px;color:#1e40af;margin:0;padding-left:20px;">
+                        <li>點擊下方「複製連結」</li>
+                        <li>開啟 Safari 或 Chrome</li>
+                        <li>貼上連結並前往</li>
+                    </ol>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button id="webview-copy-link" style="flex:1;background:#3b82f6;color:#fff;font-weight:bold;padding:12px;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-width:140px;">
+                        📋 複製連結
+                    </button>
+                    <button id="webview-open-safari" style="flex:1;background:#10b981;color:#fff;font-weight:bold;padding:12px;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-width:140px;">
+                        🌐 嘗試在瀏覽器開
+                    </button>
+                </div>
+                <button id="webview-dismiss" style="margin-top:12px;width:100%;background:transparent;color:#6b7280;padding:8px;border:none;font-size:13px;cursor:pointer;text-decoration:underline;">
+                    我知道了，繼續使用（部分功能可能異常）
+                </button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        // 事件處理
+        document.getElementById('webview-copy-link').addEventListener('click', async () => {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(url);
+                    showMessage('連結已複製！請在 Safari 貼上', 'success');
+                } else {
+                    // Fallback：使用 textarea + execCommand
+                    const ta = document.createElement('textarea');
+                    ta.value = url;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    showMessage('連結已複製！請在 Safari 貼上', 'success');
+                }
+            } catch (e) {
+                // 最終 fallback：alert 顯示連結
+                alert('請手動複製此連結：\n\n' + url);
+            }
+        });
+        document.getElementById('webview-open-safari').addEventListener('click', () => {
+            // iOS 嘗試打開 Safari
+            window.open(url, '_blank');
+            // 也嘗試 x-safari URL scheme（部分 in-app browser 支援）
+            try { window.location.href = 'x-safari-' + url; } catch (e) {}
+        });
+        document.getElementById('webview-dismiss').addEventListener('click', () => {
+            modal.remove();
+            sessionStorage.setItem(dismissKey, '1');
+        });
+    }
+
+    function init() {
+        const detection = detect();
+        if (detection.isWebView) {
+            console.warn('[WebView] Detected:', detection.app);
+            // 延遲顯示，等其他 UI 載入完成
+            setTimeout(() => showWarning(detection), 800);
+        }
+        return detection;
+    }
+
+    return { detect, checkCapabilities, init };
+})();
+
 // Quick Poll variables
 let quickPollActive = false;
 let quickPollData = null; // Stores current poll configuration
@@ -10242,6 +10386,8 @@ function setupEventListeners() {
     document.getElementById('student-entry-btn').addEventListener('click', () => {
         currentRole = 'student';
         showView('studentName');
+        // 🆕 [v3.8.26] 學生選擇角色時偵測 WebView
+        WebViewDetector.init();
     });
 
     // 🚀 NEW: Back button to return to role selection from student name input view
@@ -13393,6 +13539,8 @@ async function initialize() {
                     currentRole = 'student';
                     showView('studentName');
                     console.log('[Auth] ✅ 偵測到 classroom URL 參數，自動跳轉至學生姓名輸入頁:', _classroomParam);
+                    // 🆕 [v3.8.26] QR 掃碼直達學生模式時，立即偵測 WebView
+                    WebViewDetector.init();
                 } else {
                     showView('entry');
                 }
