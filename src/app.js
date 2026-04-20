@@ -8997,7 +8997,133 @@ function resetRecording() {
 /**
  * (Teacher) Ends the entire class session, clears all student data and presence for the current classroom code.
  */
+// 🆕 [v3.8.27] 下課前提醒：相片牆作品下載對話框
+function _showPhotoWallWarningDialog(count) {
+    return new Promise((resolve) => {
+        const dialog = document.createElement('div');
+        dialog.className = 'fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4';
+        dialog.style.zIndex = '3000';
+        dialog.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+                <div class="text-center mb-4">
+                    <div class="text-5xl mb-3">🖼️</div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-2">相片牆有 ${count} 件學生作品</h3>
+                    <p class="text-gray-600 text-sm">
+                        下課會<span class="font-bold text-red-600">永久刪除</span>雲端所有資料。<br>
+                        建議先下載作品到本地端保存紀錄。
+                    </p>
+                </div>
+                <div class="bg-orange-50 border-2 border-orange-300 rounded-xl p-3 mb-4">
+                    <p class="text-sm text-orange-800 font-semibold mb-2">
+                        <i class="fas fa-exclamation-triangle mr-1"></i> 建議操作：
+                    </p>
+                    <ol class="text-sm text-orange-800 list-decimal list-inside space-y-1">
+                        <li>點下方「📦 下載全部作品 (ZIP)」打包下載</li>
+                        <li>確認本地端已儲存後再按「繼續下課」</li>
+                    </ol>
+                </div>
+                <div class="flex flex-col gap-2">
+                    <button id="pw-download-all-btn" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2">
+                        <i class="fas fa-file-archive"></i> 下載全部作品 (ZIP)
+                    </button>
+                    <div class="flex gap-2">
+                        <button id="pw-cancel-end-btn" class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-3 px-4 rounded-lg">
+                            <i class="fas fa-arrow-left mr-1"></i> 取消下課
+                        </button>
+                        <button id="pw-continue-end-btn" class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-lg">
+                            <i class="fas fa-check mr-1"></i> 繼續下課
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(dialog);
+
+        document.getElementById('pw-download-all-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('pw-download-all-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 打包中，請稍候...';
+            await downloadAllPhotoWallAsZip();
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-file-archive"></i> 下載全部作品 (ZIP)';
+        });
+        document.getElementById('pw-cancel-end-btn').addEventListener('click', () => {
+            dialog.remove();
+            resolve(false);
+        });
+        document.getElementById('pw-continue-end-btn').addEventListener('click', () => {
+            dialog.remove();
+            resolve(true);
+        });
+    });
+}
+
+// 🆕 [v3.8.27] 打包下載所有相片牆作品為 ZIP
+async function downloadAllPhotoWallAsZip() {
+    if (!classroomCode) return;
+    try {
+        if (typeof JSZip === 'undefined') {
+            showMessage('ZIP 套件未載入，改為逐張下載', 'error');
+            return;
+        }
+        const zip = new JSZip();
+        const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+        const snap = await getDocs(photoWallRef);
+        let count = 0;
+        snap.forEach(d => {
+            const data = d.data();
+            const name = (data.studentName || d.id).replace(/[\/\\:?*"<>|]/g, '_');
+            if (data.imageData && data.imageData.startsWith('data:image')) {
+                // 從 dataURL 提取 base64 資料
+                const base64Data = data.imageData.split(',')[1];
+                const mimeMatch = data.imageData.match(/^data:(image\/\w+);/);
+                const ext = mimeMatch ? mimeMatch[1].split('/')[1] : 'png';
+                zip.file(`${name}.${ext}`, base64Data, { base64: true });
+                count++;
+            }
+        });
+        if (count === 0) {
+            showMessage('沒有作品可下載', 'error');
+            return;
+        }
+        const content = await zip.generateAsync({ type: 'blob' });
+        const dateStr = new Date().toISOString().slice(0, 10);
+        if (typeof saveAs !== 'undefined') {
+            saveAs(content, `相片牆_${classroomCode}_${dateStr}.zip`);
+        } else {
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `相片牆_${classroomCode}_${dateStr}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        showMessage(`✓ 已下載 ${count} 件作品`, 'success');
+    } catch (e) {
+        console.error('ZIP download error:', e);
+        showMessage('下載失敗：' + e.message, 'error');
+    }
+}
+
 async function endClassSession() {
+    // 🆕 [v3.8.27] 先檢查是否有相片牆作品，若有則提醒下載
+    if (classroomCode) {
+        try {
+            const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+            const photoSnap = await getDocs(photoWallRef);
+            const photoCount = photoSnap.size;
+            if (photoCount > 0) {
+                const proceed = await _showPhotoWallWarningDialog(photoCount);
+                if (!proceed) {
+                    showMessage('已取消下課，請先下載相片牆作品', 'info');
+                    return;
+                }
+            }
+        } catch (e) {
+            console.warn('[EndClass] 檢查相片牆失敗（不阻擋下課流程）:', e);
+        }
+    }
+
     // 使用自訂模態框取代原生 confirm()
     const confirmed = await new Promise((resolve) => {
         const modal = document.getElementById('end-class-confirm-modal');
@@ -9103,7 +9229,31 @@ async function endClassSession() {
                 console.log('[Teacher] ✓ Control document deleted');
             } catch (error) {
                 console.error('[Teacher] ✗ Failed to delete control document:', error);
-                // 繼續執行，不中斷
+            }
+
+            // 🆕 [v3.8.27] 清除相片牆歸檔（節省雲端空間）
+            try {
+                const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+                const photoSnap = await getDocs(photoWallRef);
+                console.log(`[Teacher] Deleting ${photoSnap.size} photo wall archives...`);
+                for (const docSnap of photoSnap.docs) {
+                    await deleteDoc(docSnap.ref);
+                }
+                console.log('[Teacher] ✓ Photo wall archives deleted');
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to delete photo wall archives:', error);
+            }
+
+            // 🆕 [v3.8.27] 清除隊伍分數
+            try {
+                const teamScoresRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores');
+                const teamSnap = await getDocs(teamScoresRef);
+                for (const docSnap of teamSnap.docs) {
+                    await deleteDoc(docSnap.ref);
+                }
+                console.log(`[Teacher] ✓ Deleted ${teamSnap.size} team scores`);
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to delete team scores:', error);
             }
 
             console.log(`[Teacher] ✓ Cleanup completed for classroom: ${classroomCode}`);
@@ -11808,8 +11958,9 @@ function setupEventListeners() {
         const grid = document.getElementById('photo-wall-grid-teacher')?.parentElement;
         if (grid?.requestFullscreen) grid.requestFullscreen();
     });
-    // 🆕 [v3.8.27] 重新整理和清空相片牆
+    // 🆕 [v3.8.27] 重新整理 / 下載 ZIP / 清空相片牆
     document.getElementById('photo-wall-refresh-btn')?.addEventListener('click', () => loadPhotoWallGallery('teacher'));
+    document.getElementById('photo-wall-download-zip-btn')?.addEventListener('click', downloadAllPhotoWallAsZip);
     document.getElementById('photo-wall-clear-btn')?.addEventListener('click', clearPhotoWallArchive);
     document.getElementById('end-photo-wall-btn').addEventListener('click', endPhotoWall);
 
