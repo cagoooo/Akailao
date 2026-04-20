@@ -11726,6 +11726,7 @@ function setupEventListeners() {
     document.getElementById('team-count-select').addEventListener('change', renderTeamNameInputs);
     document.getElementById('team-scoreboard-close-btn').addEventListener('click', () => document.getElementById('team-scoreboard-modal').classList.add('hidden'));
     document.getElementById('team-reset-scores-btn').addEventListener('click', resetTeamScores);
+    document.getElementById('team-battle-download-btn').addEventListener('click', downloadTeamBattleCSV);
     document.getElementById('end-team-battle-btn').addEventListener('click', endTeamBattle);
 
     // 🆕 NEW [v3.8.25] MODE-3：文字雲 Event Listeners
@@ -15164,9 +15165,98 @@ function listenToTeamScores() {
     ListenerManager.register('teamScores', teamScoresUnsubscribe);
 }
 
+// 🆕 [v3.8.27] 下載分組競賽 CSV：含隊伍積分、學生名單、排名
+async function downloadTeamBattleCSV() {
+    if (!teamBattleData || !classroomCode) {
+        showMessage('目前沒有競賽資料可下載', 'error');
+        return;
+    }
+
+    try {
+        // 從 Firestore 抓所有學生加入記錄（含 team 欄位）
+        const studentsRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+        const snapshot = await getDocs(studentsRef);
+        const studentRecords = [];
+        snapshot.forEach(d => {
+            const data = d.data();
+            if (data.team) {
+                studentRecords.push({
+                    name: data.studentName || d.id,
+                    team: data.team,
+                    joinedAt: data.timestamp?.toDate ? data.timestamp.toDate().toLocaleString('zh-TW') : ''
+                });
+            }
+        });
+
+        // 排名（依分數）
+        const sortedTeams = [...teamBattleData.teams].sort((a, b) => b.score - a.score);
+        const dateStr = new Date().toLocaleString('zh-TW');
+
+        let csv = '\uFEFF';  // BOM for Excel UTF-8
+        csv += `分組競賽成績單\n`;
+        csv += `匯出時間,${dateStr}\n`;
+        csv += `教室代碼,${classroomCode}\n`;
+        csv += `隊伍數,${teamBattleData.teams.length}\n`;
+        csv += `總人數,${studentRecords.length}\n\n`;
+
+        // === 隊伍積分排行 ===
+        csv += '【隊伍積分排行】\n';
+        csv += '名次,隊伍,Emoji,得分,人數\n';
+        sortedTeams.forEach((team, i) => {
+            const memberCount = studentRecords.filter(s => s.team === team.name).length;
+            const rank = i === 0 ? '🥇 1' : i === 1 ? '🥈 2' : i === 2 ? '🥉 3' : `${i + 1}`;
+            csv += `"${rank}","${team.name.replace(/"/g, '""')}","${team.emoji || ''}",${team.score},${memberCount}\n`;
+        });
+
+        // === 各隊學生名單 ===
+        csv += '\n【各隊學生名單】\n';
+        csv += '隊伍,學生姓名,加入時間\n';
+        sortedTeams.forEach(team => {
+            const members = studentRecords.filter(s => s.team === team.name);
+            if (members.length === 0) {
+                csv += `"${team.name.replace(/"/g, '""')}","(無成員)",""\n`;
+            } else {
+                members.forEach(m => {
+                    csv += `"${team.name.replace(/"/g, '""')}","${m.name.replace(/"/g, '""')}","${m.joinedAt}"\n`;
+                });
+            }
+        });
+
+        // === 統計摘要 ===
+        csv += '\n【統計摘要】\n';
+        const totalScore = teamBattleData.teams.reduce((sum, t) => sum + (t.score || 0), 0);
+        const avgScore = teamBattleData.teams.length > 0 ? (totalScore / teamBattleData.teams.length).toFixed(1) : 0;
+        csv += `總得分,${totalScore}\n`;
+        csv += `平均得分,${avgScore}\n`;
+        csv += `第一名,"${sortedTeams[0]?.name || ''}"\n`;
+        csv += `最高分,${sortedTeams[0]?.score || 0}\n`;
+        csv += `最低分,${sortedTeams[sortedTeams.length - 1]?.score || 0}\n`;
+
+        // 下載
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const fileDate = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `分組競賽_${classroomCode}_${fileDate}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showMessage('CSV 已下載！', 'success');
+    } catch (e) {
+        console.error('Download team battle CSV error:', e);
+        showMessage('下載失敗：' + e.message, 'error');
+    }
+}
+
 async function endTeamBattle() {
-    // 🆕 [v3.8.27] 結束後跳回九宮格
-    if (!confirm('確定結束分組競賽？所有隊伍分數會被清除。')) return;
+    // 🆕 [v3.8.27] 結束前提醒下載 + 跳回九宮格
+    const totalScore = teamBattleData?.teams.reduce((sum, t) => sum + (t.score || 0), 0) || 0;
+    if (totalScore > 0) {
+        const confirmed = confirm(`目前總得分 ${totalScore}。\n\n結束後分數會被清除，建議先按「下載 CSV」保存成績。\n\n確定結束嗎？`);
+        if (!confirmed) return;
+    } else {
+        if (!confirm('確定結束分組競賽？')) return;
+    }
     document.getElementById('team-scoreboard-modal').classList.add('hidden');
     if (teamScoresUnsubscribe) { teamScoresUnsubscribe(); teamScoresUnsubscribe = null; }
     await setInteractionMode('waiting');
