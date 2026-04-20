@@ -707,15 +707,25 @@
             <div id="interaction-drawing" class="hidden text-center flex flex-col h-full min-h-screen">
                 <h3 class="text-2xl font-bold text-center mb-4">繪圖題</h3>
                 <div
-                    class="flex flex-wrap justify-center md:justify-start items-center gap-4 mb-4 p-2 bg-gray-50 rounded-lg shadow-sm flex-shrink-0">
+                    class="flex flex-wrap justify-center md:justify-start items-center gap-2 sm:gap-4 mb-4 p-2 bg-gray-50 rounded-lg shadow-sm flex-shrink-0">
+                    <!-- 🆕 [v3.8.27] 筆類選擇（一般/螢光/馬克/鉛筆）取代原單一畫筆按鈕 -->
                     <button id="pen-tool-btn"
-                        class="p-2 rounded-lg border-2 border-blue-500 transition-all duration-150 ease-in-out h-11 flex items-center"
-                        title="畫筆">
-                        <i class="fas fa-paint-brush mr-1"></i> 畫筆 ✏️
+                        class="p-2 rounded-lg border-2 border-blue-500 bg-white transition-all duration-150 ease-in-out h-11 flex items-center"
+                        title="切換為畫筆模式">
+                        <i class="fas fa-paint-brush mr-1"></i> 畫筆
                     </button>
-                    <div class="flex items-center gap-2">
-                        <label class="text-gray-700 font-medium flex items-center" for="color-select">
-                            <span id="current-color-swatch" class="color-swatch mr-2 bg-black"></span> 顏色:
+                    <div class="flex items-center gap-1.5">
+                        <label class="text-gray-700 font-medium text-sm" for="pen-type-select">筆類:</label>
+                        <select id="pen-type-select" class="drawing-tool-select">
+                            <option value="pen" selected>✏️ 一般筆</option>
+                            <option value="highlighter">🖍️ 螢光筆</option>
+                            <option value="marker">🖊️ 馬克筆</option>
+                            <option value="pencil">📝 鉛筆</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <label class="text-gray-700 font-medium text-sm flex items-center" for="color-select">
+                            <span id="current-color-swatch" class="color-swatch mr-1 bg-black"></span>顏色:
                         </label>
                         <select id="color-select" class="drawing-tool-select">
                             <option value="black" style="background-color: black; color: white;">黑色</option>
@@ -723,14 +733,18 @@
                             <option value="blue" style="background-color: blue; color: white;">藍色</option>
                             <option value="green" style="background-color: green; color: white;">綠色</option>
                             <option value="yellow" style="background-color: yellow; color: black;">黃色</option>
+                            <option value="orange" style="background-color: orange; color: white;">橘色</option>
+                            <option value="purple" style="background-color: purple; color: white;">紫色</option>
+                            <option value="pink" style="background-color: pink; color: black;">粉色</option>
                         </select>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <label class="text-gray-700 font-medium" for="size-select">粗細:</label>
+                    <div class="flex items-center gap-1.5">
+                        <label class="text-gray-700 font-medium text-sm" for="size-select">粗細:</label>
                         <select id="size-select" class="drawing-tool-select">
                             <option value="2">細</option>
-                            <option value="5">中</option>
+                            <option value="5" selected>中</option>
                             <option value="10">粗</option>
+                            <option value="20">超粗</option>
                         </select>
                     </div>
                     <div class="flex items-center gap-2">

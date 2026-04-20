@@ -11206,24 +11206,62 @@ function setupEventListeners() {
     const sizeSelect = document.getElementById('size-select');
     const penToolBtn = document.getElementById('pen-tool-btn');
     const eraserBtn = document.getElementById('eraser-btn');
-    colorSelect.addEventListener('change', (e) => {
-        drawingCtx.strokeStyle = e.target.value;
-        drawingCtx.globalCompositeOperation = 'source-over';
-        updateColorSwatch(e.target.value);
-        penToolBtn.classList.add('border-blue-500');
-        eraserBtn.classList.remove('border-blue-500');
-    });
-    sizeSelect.addEventListener('change', (e) => { drawingCtx.lineWidth = parseInt(e.target.value); });
-    penToolBtn.addEventListener('click', () => {
-        drawingCtx.globalCompositeOperation = 'source-over';
+    const penTypeSelect = document.getElementById('pen-type-select');
+
+    // 🆕 [v3.8.27] 套用筆類效果（一般/螢光/馬克/鉛筆）
+    function applyPenSettings() {
+        const baseSize = parseInt(sizeSelect.value) || 5;
+        const type = penTypeSelect?.value || 'pen';
         drawingCtx.strokeStyle = colorSelect.value;
-        drawingCtx.lineWidth = parseInt(sizeSelect.value);
+        drawingCtx.globalCompositeOperation = 'source-over';
+        switch (type) {
+            case 'highlighter':
+                drawingCtx.globalAlpha = 0.35;
+                drawingCtx.lineWidth = baseSize * 3;
+                drawingCtx.lineCap = 'square';
+                break;
+            case 'marker':
+                drawingCtx.globalAlpha = 0.95;
+                drawingCtx.lineWidth = baseSize * 2;
+                drawingCtx.lineCap = 'round';
+                break;
+            case 'pencil':
+                drawingCtx.globalAlpha = 0.6;
+                drawingCtx.lineWidth = Math.max(1, Math.floor(baseSize * 0.6));
+                drawingCtx.lineCap = 'round';
+                break;
+            case 'pen':
+            default:
+                drawingCtx.globalAlpha = 1.0;
+                drawingCtx.lineWidth = baseSize;
+                drawingCtx.lineCap = 'round';
+                break;
+        }
+        // 切換為畫筆模式（非橡皮擦）
         penToolBtn.classList.add('border-blue-500');
         eraserBtn.classList.remove('border-blue-500');
+    }
+
+    colorSelect.addEventListener('change', () => {
+        applyPenSettings();
+        updateColorSwatch(colorSelect.value);
+    });
+    sizeSelect.addEventListener('change', () => applyPenSettings());
+    penTypeSelect?.addEventListener('change', () => {
+        applyPenSettings();
+        // 視覺反饋：閃爍提示已切換
+        penToolBtn.classList.add('border-blue-500');
+        const labels = { pen: '一般筆', highlighter: '螢光筆', marker: '馬克筆', pencil: '鉛筆' };
+        showMessage(`已切換為 ${labels[penTypeSelect.value] || '畫筆'}`, 'success');
+    });
+    penToolBtn.addEventListener('click', () => {
+        applyPenSettings();
     });
     eraserBtn.addEventListener('click', () => {
         drawingCtx.globalCompositeOperation = 'destination-out';
-        drawingCtx.lineWidth = 15;
+        drawingCtx.globalAlpha = 1.0;
+        drawingCtx.lineWidth = 20;
+        drawingCtx.lineCap = 'round';
         penToolBtn.classList.remove('border-blue-500');
         eraserBtn.classList.add('border-blue-500');
     });
