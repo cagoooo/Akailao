@@ -16136,11 +16136,20 @@ async function startPhotoWall() {
 }
 
 async function endPhotoWall() {
-    // 🆕 [v3.8.27] 結束後跳回九宮格
+    // 🆕 [v3.8.27] 結束後跳回九宮格 — 順序很重要：先關 modal + 切換到 menu，再 async 改模式
     document.getElementById('photo-wall-modal').classList.add('hidden');
-    await setInteractionMode('waiting');
+
+    // 立即跳回九宮格（不等待 setInteractionMode 完成）
     showView('teacherMenu');
     manualRefreshCounts();
+
+    // 背景處理模式切換 + 清理（不阻擋 UI 跳轉）
+    try {
+        await setInteractionMode('waiting');
+    } catch (e) {
+        console.error('[endPhotoWall] setInteractionMode failed:', e);
+    }
+
     showMessage('相片牆已結束 ✓', 'success');
 }
 
