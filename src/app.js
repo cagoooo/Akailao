@@ -3836,6 +3836,15 @@ function showQRCodeModal() {
 
     // 🆕 [v3.8.26] 立即渲染當前學生名單（如果已有資料）
     renderQRCodeStudentList();
+
+    // 🆕 [v3.8.27] 重置抽籤 UI 狀態（每次打開模態框都是全新狀態）
+    const lotteryBtn = document.getElementById('qrcode-lottery-btn');
+    const lotteryResult = document.getElementById('qrcode-lottery-result');
+    if (lotteryBtn) {
+        lotteryBtn.disabled = false;
+        lotteryBtn.innerHTML = '<i class="fas fa-dice text-lg"></i><span>🎲 抽籤選學生</span>';
+    }
+    if (lotteryResult) lotteryResult.classList.add('hidden');
 }
 
 /**
@@ -11616,6 +11625,58 @@ function setupEventListeners() {
 
     document.getElementById('close-qrcode-modal').addEventListener('click', closeQRCodeModal);
     document.getElementById('download-qrcode-btn').addEventListener('click', downloadQRCode);
+
+    // 🆕 [v3.8.27] QR Code 模態框內的抽籤按鈕（含動畫效果）
+    document.getElementById('qrcode-lottery-btn')?.addEventListener('click', () => {
+        if (activeStudentNames.length === 0) {
+            showMessage('目前沒有學生在線可供抽籤！', 'info');
+            return;
+        }
+
+        const btn = document.getElementById('qrcode-lottery-btn');
+        const resultBox = document.getElementById('qrcode-lottery-result');
+        const resultName = document.getElementById('qrcode-lottery-name');
+
+        // 鎖定按鈕 + 顯示動畫
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-dice fa-spin text-lg"></i><span>抽籤中...</span>';
+        resultBox.classList.remove('hidden');
+        resultName.textContent = '...';
+
+        // 滾動名字動畫（2 秒內快速切換顯示不同名字）
+        let tickCount = 0;
+        const totalTicks = 20;  // 20 次切換 = 2 秒
+        const shuffleInterval = setInterval(() => {
+            const randomIdx = Math.floor(Math.random() * activeStudentNames.length);
+            resultName.textContent = activeStudentNames[randomIdx];
+            tickCount++;
+            if (tickCount >= totalTicks) {
+                clearInterval(shuffleInterval);
+                // 最終抽出結果
+                const finalIdx = Math.floor(Math.random() * activeStudentNames.length);
+                const selectedStudent = activeStudentNames[finalIdx];
+                resultName.textContent = selectedStudent;
+                resultName.classList.add('animate-bounce');
+                setTimeout(() => resultName.classList.remove('animate-bounce'), 1500);
+
+                // 震動 + 音效回饋
+                if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
+                // 🎉 canvas-confetti 慶祝
+                if (typeof confetti !== 'undefined') {
+                    confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
+                }
+
+                // 廣播抽籤結果給學生端
+                try { announceDrawnStudent(selectedStudent); } catch (e) {}
+
+                // 解鎖按鈕
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-dice text-lg"></i><span>🎲 重新抽籤</span>';
+
+                showMessage(`🎉 抽中：${selectedStudent}`, 'success');
+            }
+        }, 100);
+    });
 
     // 🚀 NEW: Copy classroom link to clipboard
     document.getElementById('copy-classroom-link-btn').addEventListener('click', async () => {
