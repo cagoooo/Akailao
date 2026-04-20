@@ -1,5 +1,18 @@
 /* === Style block 1 (from line 24) === */
 
+/* 🆕 [v3.8.26] QR Code 模態框：學生卡片加入動畫 + 名單過渡 */
+.student-join-item {
+    animation: student-slide-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes student-slide-in {
+    from { opacity: 0; transform: translateY(-8px) scale(0.9); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#qrcode-recent-join {
+    transition: opacity 0.5s ease;
+}
+
+
 /* 🐛 CRITICAL FIX [v3.8.17]: 終極修復 — 確保 .hidden 在任何 CSS 中都能生效
    問題根因：inline <style> 在 <link tailwind-build.css> 之後載入，
    所有在 inline style 裡有 display:* 宣告的 class（如 .btn、.flex 元素等），

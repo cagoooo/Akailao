@@ -3833,6 +3833,67 @@ function showQRCodeModal() {
 
     // 顯示模態框
     modal.classList.remove('hidden');
+
+    // 🆕 [v3.8.26] 立即渲染當前學生名單（如果已有資料）
+    renderQRCodeStudentList();
+}
+
+/**
+ * 🆕 [v3.8.26] 渲染 QR Code 模態框內的學生名單
+ * 從 activeStudentsPresenceMap 讀取並依加入順序顯示
+ */
+function renderQRCodeStudentList() {
+    const list = document.getElementById('qrcode-student-list');
+    const countEl = document.getElementById('qrcode-student-count');
+    if (!list || !countEl) return;
+    // QR Code 模態框未開啟時不更新（節省資源）
+    const modal = document.getElementById('qrcode-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+
+    const names = [...activeStudentNames].sort();
+    countEl.textContent = names.length;
+
+    if (names.length === 0) {
+        list.innerHTML = `
+            <p class="text-gray-400 text-center py-8 text-sm">
+                <i class="fas fa-user-plus text-2xl mb-2 block opacity-50"></i>
+                等待學生掃碼加入...
+            </p>`;
+        return;
+    }
+
+    // 顯示學生卡片網格
+    list.innerHTML = `
+        <div class="grid grid-cols-2 gap-2">
+            ${names.map((name, i) => `
+                <div class="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-lg px-2 py-2 flex items-center gap-2 student-join-item">
+                    <span class="bg-blue-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">${i + 1}</span>
+                    <span class="text-sm font-medium text-gray-700 truncate">${name}</span>
+                </div>
+            `).join('')}
+        </div>`;
+}
+
+/**
+ * 🆕 [v3.8.26] 學生加入時的「最近加入」提示
+ */
+let _lastKnownStudentNames = new Set();
+function notifyQRCodeNewStudent(currentNames) {
+    const recent = document.getElementById('qrcode-recent-join');
+    if (!recent) return;
+    const newSet = new Set(currentNames);
+    const newJoiners = [...newSet].filter(n => !_lastKnownStudentNames.has(n));
+    if (newJoiners.length > 0 && _lastKnownStudentNames.size > 0) {
+        // 只在 modal 開啟時顯示
+        const modal = document.getElementById('qrcode-modal');
+        if (modal && !modal.classList.contains('hidden')) {
+            recent.textContent = `🎉 ${newJoiners.slice(0, 3).join('、')} 剛剛加入！`;
+            recent.style.opacity = '1';
+            // 3 秒後淡出
+            setTimeout(() => { recent.style.opacity = '0.4'; }, 3000);
+        }
+    }
+    _lastKnownStudentNames = newSet;
 }
 
 /**
@@ -6366,6 +6427,12 @@ function listenToClassroomPresence(onInitialSnapshotCallback = null) {
         });
 
         activeStudentCountSpan.textContent = activeStudentNames.length;
+
+        // 🆕 [v3.8.26] 同步更新 QR Code 模態框內的學生名單 + 新加入提示
+        if (typeof renderQRCodeStudentList === 'function') {
+            notifyQRCodeNewStudent(activeStudentNames);
+            renderQRCodeStudentList();
+        }
 
         // Update the student list modal with distraction status.
         modalStudentNamesDiv.innerHTML = '';

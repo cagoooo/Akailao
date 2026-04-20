@@ -464,32 +464,64 @@
             </div>
         </div>
 
-        <!-- 🚀 NEW: 課堂 QR Code 模態框 -->
+        <!-- 🚀 課堂 QR Code 模態框（v3.8.26 升級：左右雙欄 + 即時學生名單） -->
         <div id="qrcode-modal"
-            class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style="z-index: 2000;">
-            <div class="bg-white rounded-lg shadow-2xl p-6 sm:p-8 max-w-lg w-11/12">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-800">📱 課堂 QR Code</h2>
+            class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 sm:p-4" style="z-index: 2000;">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto">
+                <!-- 標題列 -->
+                <div class="flex justify-between items-center p-4 sm:p-5 border-b border-gray-200 sticky top-0 bg-white z-10 rounded-t-xl">
+                    <h2 class="text-xl sm:text-2xl font-bold text-gray-800">📱 課堂 QR Code</h2>
                     <button id="close-qrcode-modal" class="text-gray-500 hover:text-red-600 text-2xl">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="text-center">
-                    <p class="text-gray-700 mb-4 font-semibold">課堂代碼：<span id="qrcode-classroom-code"
-                            class="text-xl text-blue-600"></span></p>
-                    <div id="qrcode-container" class="flex justify-center mb-4">
-                        <!-- QR Code 將動態生成在這裡 -->
+
+                <!-- 雙欄佈局：左 QR Code，右 即時學生名單 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 sm:p-5">
+                    <!-- 左欄：QR Code + 操作按鈕 -->
+                    <div class="text-center">
+                        <p class="text-gray-700 mb-3 font-semibold">課堂代碼：<span id="qrcode-classroom-code"
+                                class="text-2xl text-blue-600"></span></p>
+                        <div id="qrcode-container" class="flex justify-center mb-3">
+                            <!-- QR Code 將動態生成在這裡 -->
+                        </div>
+                        <p class="text-xs sm:text-sm text-gray-600 mb-3">用 iPad 內建相機掃描即可加入</p>
+                        <div class="space-y-2">
+                            <button id="download-qrcode-btn" class="btn btn-green w-full text-sm sm:text-base h-10 sm:h-11">
+                                <i class="fas fa-download mr-2"></i> 下載 QR Code
+                            </button>
+                            <button id="copy-classroom-link-btn"
+                                class="btn bg-blue-600 hover:bg-blue-700 text-white font-semibold w-full flex items-center justify-center gap-2 transition-all hover:shadow-lg text-sm sm:text-base h-10 sm:h-11">
+                                <i class="fas fa-link"></i> <span>複製課堂連結 📋</span>
+                            </button>
+                        </div>
                     </div>
-                    <p class="text-sm text-gray-600 mb-4">學生用平板掃描此 QR Code 快速進入課堂</p>
-                    <!-- 🚀 NEW: Copy classroom link button for computer-based sharing -->
-                    <div class="space-y-2">
-                        <button id="download-qrcode-btn" class="btn btn-green w-full">
-                            <i class="fas fa-download mr-2"></i> 下載 QR Code
-                        </button>
-                        <button id="copy-classroom-link-btn"
-                            class="btn bg-blue-600 hover:bg-blue-700 text-white font-semibold w-full flex items-center justify-center gap-2 transition-all hover:shadow-lg">
-                            <i class="fas fa-link"></i> <span>複製課堂連結 📋</span>
-                        </button>
+
+                    <!-- 右欄：即時學生名單 -->
+                    <div class="bg-gray-50 rounded-xl p-3 sm:p-4 flex flex-col">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-base sm:text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <i class="fas fa-users text-green-600"></i>
+                                <span>已加入學生</span>
+                            </h3>
+                            <span class="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-bold">
+                                <span id="qrcode-student-count">0</span> 人
+                            </span>
+                        </div>
+                        <!-- 即時加入指示器 -->
+                        <div class="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                            <span class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                            <span>即時更新中</span>
+                        </div>
+                        <!-- 學生列表（可滾動） -->
+                        <div id="qrcode-student-list" class="flex-1 overflow-y-auto bg-white rounded-lg p-2 border border-gray-200" style="min-height: 200px; max-height: 320px;">
+                            <p class="text-gray-400 text-center py-8 text-sm">
+                                <i class="fas fa-user-plus text-2xl mb-2 block opacity-50"></i>
+                                等待學生掃碼加入...
+                            </p>
+                        </div>
+                        <!-- 最近加入提示 -->
+                        <p id="qrcode-recent-join" class="text-xs text-center text-green-600 mt-2 font-medium" style="min-height: 18px;"></p>
                     </div>
                 </div>
             </div>
