@@ -2379,7 +2379,7 @@ function resetStudentUIState(mode, isResumingFromPause = false) {
             })();
             break;
         case 'drawing':
-            // 🚀 NEW: 檢查學生是否已提交繪圖答案，永久鎖定已提交的按鈕
+            // 🆕 [v3.8.27] 改良：繪圖題改為允許修改模式（學生可繼續編輯）
             (async () => {
                 let hasSubmitted = false;
                 if (currentRole === 'student' && studentName && classroomCode) {
@@ -2390,7 +2390,7 @@ function resetStudentUIState(mode, isResumingFromPause = false) {
                             const data = docSnap.data();
                             if (data.interactionMode === 'drawing' && data.answer) {
                                 hasSubmitted = true;
-                                console.log('[resetStudentUIState] Student has submitted drawing answer, locking button');
+                                console.log('[resetStudentUIState] Student has submitted drawing - keeping editable for modification');
                             }
                         }
                     } catch (error) {
@@ -2400,13 +2400,13 @@ function resetStudentUIState(mode, isResumingFromPause = false) {
 
                 const submitDrawingBtn = document.getElementById('submit-drawing-btn');
 
-                // 如果已提交，鎖定按鈕和畫布
+                // 🆕 [v3.8.27] 已提交：顯示綠色「已送出（可繼續編輯）」按鈕，但保持可點擊 + 畫布可編輯
                 if (hasSubmitted) {
-                    submitDrawingBtn.disabled = true;
-                    submitDrawingBtn.classList.remove('btn-primary');
-                    submitDrawingBtn.classList.add('btn-gray');
-                    submitDrawingBtn.textContent = '✓ 已送出答案';
-                    canvas.style.pointerEvents = 'none'; // 禁用畫布交互
+                    submitDrawingBtn.disabled = false;
+                    submitDrawingBtn.classList.remove('btn-primary', 'btn-gray');
+                    submitDrawingBtn.classList.add('btn-green');
+                    submitDrawingBtn.innerHTML = '<i class="fas fa-check-circle mr-2"></i>已送出（可繼續編輯後再送出）';
+                    canvas.style.pointerEvents = 'auto'; // 保持畫布可編輯
                 } else {
                     // Only clear the drawing canvas if it's NOT resuming from a pause.
                     if (!isResumingFromPause) {
@@ -2416,9 +2416,9 @@ function resetStudentUIState(mode, isResumingFromPause = false) {
                     }
 
                     submitDrawingBtn.disabled = false;
-                    submitDrawingBtn.classList.remove('btn-gray');
+                    submitDrawingBtn.classList.remove('btn-gray', 'btn-green');
                     submitDrawingBtn.classList.add('btn-primary');
-                    submitDrawingBtn.textContent = '送出答案 ✉️';
+                    submitDrawingBtn.innerHTML = '送出 🚀';
                     canvas.style.pointerEvents = 'auto'; // 啟用畫布交互
 
                     // Reset drawing tools to default values.
@@ -5321,8 +5321,9 @@ async function submitAnswer(answer, extraFields = {}) {
     }
 
     // 🆕 [v3.8.27] 允許學生在特定模式中修改答案（避免誤觸後悔）
-    // 只有需要嚴格防重複的模式才拒絕（如：搶答、繪圖、錄音、閱讀測驗）
-    const STRICT_LOCK_MODES = ['quick_answer', 'drawing', 'recording', 'reading_comprehension'];
+    // 只有需要嚴格防重複的模式才拒絕（如：搶答、錄音、閱讀測驗）
+    // 繪圖題：V3.8.27 改為允許修改（學生可繼續畫，再次送出覆寫舊圖）
+    const STRICT_LOCK_MODES = ['quick_answer', 'recording', 'reading_comprehension'];
     if (_hasSubmittedThisRound && STRICT_LOCK_MODES.includes(currentInteractionMode)) {
         console.warn('[SEC-2] ⚠️ 已提交過，拒絕重複提交（嚴格鎖定模式）');
         showMessage('您已提交過答案，無法重複提交。', 'warning');
@@ -10971,18 +10972,15 @@ function setupEventListeners() {
             console.log(`[Drawing] 最終大小: ${(dataUrl.length / 1024).toFixed(0)}KB, quality=${quality.toFixed(1)}`);
             await submitAnswer(dataUrl);
 
-            // 🎯 NEW: 鎖定按鈕和畫布
-            submitBtn.disabled = true;
+            // 🆕 [v3.8.27] 改良：允許繼續修改繪圖（不鎖定畫布和按鈕）
             submitBtn.classList.remove('btn-primary');
-            submitBtn.classList.add('btn-gray');
-            submitBtn.textContent = '✓ 已送出答案';
-            canvas.style.pointerEvents = 'none';
+            submitBtn.classList.add('btn-green');
+            submitBtn.innerHTML = '<i class="fas fa-check-circle mr-2"></i>已送出（可繼續編輯後再送出）';
+            // 不 disable 按鈕，不鎖定畫布
 
-            // 🎯 NEW: 顯示確認訊息
-            showMessage('✓ 繪圖已送出！', 'success');
+            showMessage('✓ 繪圖已送出！如要修改，可繼續編輯畫面後再次送出', 'success');
         } catch (error) {
             console.error('[Drawing] Submit failed:', error);
-            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
         }
     });
 
