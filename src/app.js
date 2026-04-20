@@ -3862,16 +3862,44 @@ function renderQRCodeStudentList() {
         return;
     }
 
-    // 顯示學生卡片網格
+    // 顯示學生卡片網格（含踢出按鈕）
     list.innerHTML = `
         <div class="grid grid-cols-2 gap-2">
             ${names.map((name, i) => `
-                <div class="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-lg px-2 py-2 flex items-center gap-2 student-join-item">
+                <div class="bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-lg px-2 py-2 flex items-center gap-1.5 student-join-item group">
                     <span class="bg-blue-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">${i + 1}</span>
-                    <span class="text-sm font-medium text-gray-700 truncate">${name}</span>
+                    <span class="text-sm font-medium text-gray-700 truncate flex-1" title="${name}">${name}</span>
+                    <button class="qrcode-kick-btn flex-shrink-0 w-7 h-7 rounded-full bg-white border border-red-300 text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 hover:scale-110 transition-all flex items-center justify-center text-xs"
+                        data-student-name="${name.replace(/"/g, '&quot;')}"
+                        title="踢出此學生（讓他用正確姓名重新進入）">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
             `).join('')}
         </div>`;
+
+    // 綁定踢出按鈕事件
+    list.querySelectorAll('.qrcode-kick-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const studentToKick = btn.dataset.studentName;
+            if (!studentToKick) return;
+            // 確認對話框
+            if (!confirm(`確定要踢出「${studentToKick}」？\n\n學生會被斷線並可用正確姓名重新加入。`)) return;
+            // 視覺反饋：按鈕顯示 loading
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+            try {
+                await kickStudentFromClass(studentToKick);
+                showMessage(`已踢出 ${studentToKick}`, 'success');
+            } catch (err) {
+                console.error('Kick failed:', err);
+                showMessage('踢出失敗，請重試', 'error');
+                btn.innerHTML = '<i class="fas fa-times"></i>';
+                btn.disabled = false;
+            }
+        });
+    });
 }
 
 /**
