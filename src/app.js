@@ -5320,9 +5320,11 @@ async function submitAnswer(answer, extraFields = {}) {
         throw new Error('Response is paused');
     }
 
-    // 🆕 SEC-2: 防重複提交（同一輪只能提交一次）
-    if (_hasSubmittedThisRound && currentInteractionMode !== 'quick_poll') {
-        console.warn('[SEC-2] ⚠️ 已提交過，拒絕重複提交');
+    // 🆕 [v3.8.27] 允許學生在特定模式中修改答案（避免誤觸後悔）
+    // 只有需要嚴格防重複的模式才拒絕（如：搶答、繪圖、錄音、閱讀測驗）
+    const STRICT_LOCK_MODES = ['quick_answer', 'drawing', 'recording', 'reading_comprehension'];
+    if (_hasSubmittedThisRound && STRICT_LOCK_MODES.includes(currentInteractionMode)) {
+        console.warn('[SEC-2] ⚠️ 已提交過，拒絕重複提交（嚴格鎖定模式）');
         showMessage('您已提交過答案，無法重複提交。', 'warning');
         throw new Error('Already submitted');
     }
@@ -10570,9 +10572,27 @@ function setupEventListeners() {
     })();
 
     // Student name and classroom code submission.
+    // 🆕 [v3.8.27] 進入教室進度條更新函數
+    function updateStudentJoinProgress(percent, text, step) {
+        const wrap = document.getElementById('student-join-progress');
+        const bar = document.getElementById('student-join-progress-bar');
+        const txt = document.getElementById('student-join-progress-text');
+        const stepEl = document.getElementById('student-join-progress-steps');
+        if (!wrap) return;
+        wrap.classList.remove('hidden');
+        if (bar) bar.style.width = percent + '%';
+        if (txt) txt.textContent = text;
+        if (stepEl) stepEl.textContent = step || '';
+    }
+    function hideStudentJoinProgress() {
+        const wrap = document.getElementById('student-join-progress');
+        if (wrap) wrap.classList.add('hidden');
+    }
+
     document.getElementById('submit-name-btn').addEventListener('click', async () => {
         const studentClassroomCode = document.getElementById('student-classroom-code-input').value.trim();
         const name = document.getElementById('student-name-input').value.trim();
+        const submitBtn = document.getElementById('submit-name-btn');
 
         // 🚀 NEW: Remember student name for quick re-entry
         if (name) {
@@ -10588,6 +10608,11 @@ function setupEventListeners() {
             return;
         }
 
+        // 🆕 [v3.8.27] 顯示進度條 + 鎖定按鈕
+        submitBtn.disabled = true;
+        submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        updateStudentJoinProgress(20, '🔍 正在查詢教室代碼...', '步驟 1/4');
+
         classroomCode = studentClassroomCode; // Set global classroom code for student
 
         // Check if the classroom exists and is active
@@ -10596,6 +10621,7 @@ function setupEventListeners() {
             const docSnap = await getDoc(controlRef);
             if (docSnap.exists() && docSnap.data().teacherId) { // Check if control document exists and has a teacher ID
                 studentName = name;
+                updateStudentJoinProgress(45, '🧹 清理舊資料...', '步驟 2/4');
 
                 // 🔄 FIX: Clean up any old student records with the same name to prevent duplicates on reconnection
                 try {
@@ -10626,11 +10652,12 @@ function setupEventListeners() {
 
                 document.getElementById('user-id-display').textContent = `${userId} (${studentName})`;
                 document.getElementById('student-welcome-msg').textContent = `你好，${studentName}！`;
+                updateStudentJoinProgress(70, '📡 連接互動服務...', '步驟 3/4');
                 listenToInteractionMode();
                 listenToPeerReviewStatus(); // NEW: Listen for peer review status
                 listenToLottery(); // <-- 在此新增
                 startStudentAttentionMonitoring(); // NEW: 啟動學生注意力監控
-                showView('studentWaiting');
+                updateStudentJoinProgress(90, '✓ 註冊出席...', '步驟 4/4');
                 // 🚀 FIX: Set student presence with distraction monitoring fields
                 const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
                 await setDoc(presenceRef, {
@@ -10652,12 +10679,29 @@ function setupEventListeners() {
                 } catch (attErr) {
                     console.warn('[Attendance] 出席記錄寫入失敗（不影響課堂）:', attErr);
                 }
+
+                // 🆕 [v3.8.27] 完成：100% + 切換到等待頁
+                updateStudentJoinProgress(100, '🎉 進入成功！', '歡迎加入課堂');
+                setTimeout(() => {
+                    showView('studentWaiting');
+                    hideStudentJoinProgress();
+                    // 還原按鈕狀態
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    if (navigator.vibrate) navigator.vibrate(100);
+                }, 400);
             } else {
                 showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
+                hideStudentJoinProgress();
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
             }
         } catch (error) {
             console.error("檢查教室代碼失敗:", error);
             showMessage("進入教室失敗，請檢查網路連線或教室代碼。", "error");
+            hideStudentJoinProgress();
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
     });
 
@@ -10818,21 +10862,22 @@ function setupEventListeners() {
             try {
                 await submitAnswer(answer);
 
-                // 🎯 NEW: 鎖定所有按鈕（包括被點擊的）
+                // 🆕 [v3.8.27] 改良：保持其他按鈕可點選（學生可改答案），只在被選中按鈕加 ✓ 標記
                 if (parentDiv) {
                     parentDiv.querySelectorAll('.answer-btn').forEach(b => {
-                        b.disabled = true;
-                        b.classList.remove('bg-green-500', 'bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-yellow-600', 'bg-green-600', 'bg-red-600');
-                        b.classList.remove('hover:bg-green-600', 'hover:bg-red-600', 'hover:bg-blue-600', 'hover:bg-yellow-600', 'hover:bg-green-600', 'hover:bg-red-600');
-                        b.classList.add('bg-gray-400');
-                        // 🎯 NEW: 為所有按鈕設置提交標記（防止恢復時重新啟用）
-                        b.setAttribute('data-submitted', 'true');
+                        // 不 disable！只清除 ✓ 標記
+                        b.removeAttribute('data-submitted');
+                        // 還原原始 innerHTML（如果有）
+                        const orig = b.getAttribute('data-original-html');
+                        if (orig) b.innerHTML = orig;
                     });
                 }
 
-                // 🎯 IMPROVED: 在被點擊按鈕上添加確認圖標（保留原始答案文字）
-                const originalText = clickedButton.getAttribute('data-original-text') || answerText;
-                clickedButton.setAttribute('data-original-text', originalText);
+                // 在被點擊按鈕上加 ✓ 標記（保留可點選狀態）
+                if (!clickedButton.getAttribute('data-original-html')) {
+                    clickedButton.setAttribute('data-original-html', clickedButton.innerHTML);
+                }
+                clickedButton.setAttribute('data-submitted', 'true');
                 clickedButton.innerHTML = `
                     <div class="flex flex-col items-center justify-center gap-1">
                         <span class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold">${answer}</span>
@@ -10843,11 +10888,9 @@ function setupEventListeners() {
                     </div>
                 `;
 
-                // 🎯 NEW: 顯示確認訊息（類似快速投票）
-                showMessage(`✓ 提交成功！您的答案：${answerText}`, 'success');
+                showMessage(`✓ 已送出：${answerText}（如要修改答案，可直接點選其他選項）`, 'success');
             } catch (error) {
                 console.error('[Answer Button] Submit failed:', error);
-                // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
             }
         });
     });
@@ -10872,22 +10915,16 @@ function setupEventListeners() {
         try {
             await submitAnswer(text);
 
-            // 🎯 NEW: 鎖定按鈕和文字區域
-            submitBtn.disabled = true;
+            // 🆕 [v3.8.27] 改良：保持可修改答案（誤觸後仍能修正）
             submitBtn.classList.remove('btn-primary');
-            submitBtn.classList.add('btn-gray');
-            submitBtn.textContent = '✓ 已送出答案';
+            submitBtn.classList.add('btn-green');
+            submitBtn.innerHTML = '<i class="fas fa-check-circle mr-2"></i>已送出（點此重新送出修改）';
+            // 不 disable，讓學生可以改完後再次送出
 
-            if (textArea) {
-                textArea.disabled = true;
-            }
-
-            // 🎯 NEW: 顯示確認訊息
             const displayText = text.length > 50 ? text.substring(0, 50) + '...' : text;
-            showMessage(`✓ 提交成功！您的答案：${displayText}`, 'success');
+            showMessage(`✓ 已送出！您的答案：${displayText}（如要修改，可直接編輯後再次送出）`, 'success');
         } catch (error) {
             console.error('[Text Input] Submit failed:', error);
-            // submitAnswer 已經顯示了錯誤訊息，這裡不需要重複
         }
     });
 

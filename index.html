@@ -537,6 +537,22 @@
                 <button id="submit-name-btn"
                     class="btn btn-primary w-full mt-4 text-base sm:text-lg px-6 sm:px-8 py-2.5 sm:py-3">進入教室
                     🚪</button>
+
+                <!-- 🆕 [v3.8.27] 進入教室 Loading 進度條（學生看了不會以為故障） -->
+                <div id="student-join-progress" class="hidden mt-4">
+                    <div class="bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
+                        <div class="flex items-center justify-center gap-3 mb-3">
+                            <div class="w-8 h-8 border-4 border-blue-300 border-t-blue-600 rounded-full animate-spin"></div>
+                            <span id="student-join-progress-text" class="text-blue-700 font-bold text-base sm:text-lg">正在連接教室...</span>
+                        </div>
+                        <!-- 進度條 -->
+                        <div class="w-full bg-blue-100 rounded-full h-2.5 overflow-hidden">
+                            <div id="student-join-progress-bar" class="bg-gradient-to-r from-blue-500 to-cyan-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <!-- 步驟列表 -->
+                        <div id="student-join-progress-steps" class="text-xs text-blue-600 mt-2 text-center"></div>
+                    </div>
+                </div>
                 <!-- 🆕 MODIFIED [v3.8.10]: 隱藏「返回切換角色」按鈕，防止學生誤選教師角色
                      原因：學生進入後不應再跳回主畫面（入口頁有「我是教師」按鈕），避免好奇點到需輸入教師密碼的流程 -->
                 <!-- <button id="student-back-to-role-btn" class="hidden"> 移除 </button> -->
