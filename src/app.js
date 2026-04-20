@@ -4589,6 +4589,21 @@ function listenToInteractionMode() {
                     loadBackgroundImage(); // Reload background in case teacher changed it
                     loadStudentImage();    // Reload student-uploaded image
                     drawCombinedCanvas();  // Redraw all layers
+
+                    // 🆕 [v3.8.26 v2] 還原 reset 前的繪圖內容
+                    if (window._pendingDrawingRestore && modeChanged) {
+                        const restore = window._pendingDrawingRestore;
+                        window._pendingDrawingRestore = null;
+                        const img = new Image();
+                        img.onload = () => {
+                            try {
+                                drawingCtx.drawImage(img, 0, 0, restore.drawingW, restore.drawingH, 0, 0, drawingCanvas.width, drawingCanvas.height);
+                                drawCombinedCanvas();
+                                showMessage('已還原你之前的繪圖 ✓', 'success');
+                            } catch (e) { console.warn('[Restore] Failed:', e); }
+                        };
+                        img.src = restore.drawingDataURL;
+                    }
                 });
             } else if (currentInteractionMode === 'url_dispatch') { // This mode now handles both URL and HTML
                 const currentDispatchSettings = data.dispatchSettings; // Get the combined settings
@@ -10847,64 +10862,139 @@ function setupEventListeners() {
         }
     });
 
-    // 🆕 [v3.8.26 改良] iPad 還原畫面：多策略強力重置
-    // iOS pinch-zoom 用 visualViewport 而非 layout viewport，
-    // 純改 viewport meta tag 在某些 iOS 版本無效，需要組合多重策略。
+    // 🆕 [v3.8.26 v2] iPad 還原畫面：保存狀態 → 重載頁面 → 自動還原
+    // iOS 限制：JS 無法可靠地撤銷已發生的 pinch-zoom（visualViewport 是用戶控制）
+    // 唯一 100% 可靠的方法：reload 頁面（viewport 從新載入會回到 scale=1）
+    // 為避免 reload 失去學生畫的內容，我們在 reload 前用 sessionStorage 保存
     let _originalViewport = null;
     function _saveOriginalViewport() {
         if (!_originalViewport) {
             const meta = document.querySelector('meta[name=viewport]');
-            _originalViewport = meta?.getAttribute('content') || 'width=device-width, initial-scale=1.0';
+            _originalViewport = meta?.getAttribute('content') || 'width=device-width, initial-scale=1.0, maximum-scale=3.0';
         }
     }
+
     function resetPageZoom() {
         _saveOriginalViewport();
         const meta = document.querySelector('meta[name=viewport]');
         if (!meta) return;
 
-        // === 策略 1：徹底鎖定 viewport（含 minimum-scale）強制 visualViewport.scale → 1 ===
+        // 偵測是否真的有 zoom（避免不必要的 reload）
+        const isZoomed = window.visualViewport && window.visualViewport.scale > 1.05;
+
+        // === 策略 1（輕量）：先嘗試 viewport meta tag trick ===
         meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no');
 
-        // === 策略 2：滾動到繪圖畫布（而非頁面左上角）===
-        setTimeout(() => {
-            const drawingView = document.getElementById('interaction-drawing');
-            const canvas = document.getElementById('drawing-canvas');
-            const target = (drawingView && !drawingView.classList.contains('hidden')) ? canvas || drawingView : document.body;
-            try {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-            } catch (e) {
-                window.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
-            }
-        }, 50);
-
-        // === 策略 3：強制觸發 layout 重算（iOS Safari 偶爾需要）===
-        // 隱藏的 input focus/blur 觸發 layout，幫助 visualViewport 復位
+        // 觸發 layout 重算
         try {
             const tempInput = document.createElement('input');
             tempInput.type = 'text';
             tempInput.style.cssText = 'position:fixed;top:50%;left:50%;width:1px;height:1px;font-size:16px;opacity:0;pointer-events:none;';
             document.body.appendChild(tempInput);
             tempInput.focus();
-            setTimeout(() => {
-                tempInput.blur();
-                tempInput.remove();
-            }, 100);
+            setTimeout(() => { tempInput.blur(); tempInput.remove(); }, 100);
         } catch (e) {}
 
-        // === 策略 4：1.5 秒後恢復原 viewport（允許用戶再次縮放）===
-        // 在繪圖模式中保持鎖定（避免再次發生），其他模式恢復縮放權
+        // 滾動到畫布
         setTimeout(() => {
             const drawingView = document.getElementById('interaction-drawing');
-            const inDrawingMode = drawingView && !drawingView.classList.contains('hidden');
-            if (!inDrawingMode && _originalViewport) {
-                meta.setAttribute('content', _originalViewport);
-            }
-            // 在繪圖模式中保持鎖定，由 lockViewportForDrawing 控制恢復時機
-        }, 1500);
+            const cv = document.getElementById('drawing-canvas');
+            const target = (drawingView && !drawingView.classList.contains('hidden')) ? cv || drawingView : document.body;
+            try { target.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); } catch (e) {}
+        }, 50);
 
-        if (navigator.vibrate) navigator.vibrate([50, 50, 100]);
-        showMessage('已重置畫面 ✓', 'success');
+        // === 策略 2（核武）：500ms 後檢查還是縮放，啟動「保存→重載」流程 ===
+        if (isZoomed) {
+            setTimeout(() => {
+                const stillZoomed = window.visualViewport && window.visualViewport.scale > 1.05;
+                if (stillZoomed) {
+                    _doFullReset();
+                } else {
+                    showMessage('已重置畫面 ✓', 'success');
+                    if (navigator.vibrate) navigator.vibrate([50, 50, 100]);
+                }
+            }, 600);
+        } else {
+            showMessage('畫面已置中 ✓', 'success');
+            if (navigator.vibrate) navigator.vibrate(50);
+        }
     }
+
+    // 🆕 [v3.8.26 v2] 核武級重置：保存所有狀態 → reload → 自動還原
+    function _doFullReset() {
+        try {
+            const inDrawingMode = !document.getElementById('interaction-drawing').classList.contains('hidden');
+
+            // 保存學生姓名 + 課堂代碼 + 角色
+            const sessionData = {
+                role: currentRole,
+                studentName: studentName,
+                classroomCode: classroomCode,
+                timestamp: Date.now(),
+                inDrawingMode: inDrawingMode
+            };
+
+            // 保存當前畫布內容（如果在繪圖模式）
+            if (inDrawingMode && drawingCanvas && drawingCanvas.width > 0) {
+                try {
+                    sessionData.drawingDataURL = drawingCanvas.toDataURL('image/png');
+                    sessionData.drawingW = drawingCanvas.width;
+                    sessionData.drawingH = drawingCanvas.height;
+                } catch (e) {
+                    console.warn('[Reset] Failed to save drawing:', e);
+                }
+            }
+
+            sessionStorage.setItem('akailao_resetState', JSON.stringify(sessionData));
+
+            // 顯示載入提示
+            showMessage('正在還原畫面，請稍候...', 'info');
+
+            // 短暫延遲後 reload（讓 user 看到提示）
+            setTimeout(() => {
+                // 將 classroomCode 加到 URL 確保自動回到該課堂
+                const url = new URL(window.location.href);
+                if (classroomCode) url.searchParams.set('classroom', classroomCode);
+                window.location.href = url.toString();
+            }, 400);
+        } catch (e) {
+            console.error('[Reset] Full reset failed:', e);
+            // 失敗的話直接 reload
+            window.location.reload();
+        }
+    }
+
+    // 🆕 [v3.8.26 v2] 頁面載入時檢查是否有待還原的狀態
+    function _checkPendingReset() {
+        try {
+            const raw = sessionStorage.getItem('akailao_resetState');
+            if (!raw) return;
+            sessionStorage.removeItem('akailao_resetState');
+            const data = JSON.parse(raw);
+            // 只還原最近 30 秒內的狀態
+            if (Date.now() - data.timestamp > 30000) return;
+
+            // 自動填入姓名（學生端）
+            if (data.role === 'student' && data.studentName) {
+                const nameInput = document.getElementById('student-name-input');
+                if (nameInput) nameInput.value = data.studentName;
+                const codeInput = document.getElementById('student-classroom-code-input');
+                if (codeInput && data.classroomCode) codeInput.value = data.classroomCode;
+            }
+
+            // 還原繪圖內容（等學生重新進入課堂後）
+            if (data.drawingDataURL) {
+                window._pendingDrawingRestore = data;
+                console.log('[Reset] 待還原繪圖內容已暫存');
+            }
+
+            showMessage('畫面已還原，請繼續作答', 'success');
+        } catch (e) {
+            console.warn('[Reset] Check pending failed:', e);
+        }
+    }
+    // 頁面載入時立即檢查
+    _checkPendingReset();
 
     // 🆕 [v3.8.26] 進入繪圖模式時自動鎖定 viewport（避免 pinch-zoom 造成混亂）
     // 離開時恢復
