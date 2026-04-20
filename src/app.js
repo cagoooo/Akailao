@@ -11333,6 +11333,9 @@ function setupEventListeners() {
         const canvas = document.getElementById('word-cloud-canvas');
         if (canvas.requestFullscreen) canvas.requestFullscreen();
     });
+    // 🆕 [v3.8.26] 文字雲下載功能
+    document.getElementById('word-cloud-download-csv-btn').addEventListener('click', downloadWordCloudCSV);
+    document.getElementById('word-cloud-download-img-btn').addEventListener('click', downloadWordCloudImage);
     document.getElementById('end-word-cloud-btn').addEventListener('click', endWordCloud);
     document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
 
@@ -14850,24 +14853,126 @@ async function startWordCloud() {
     showMessage('文字雲收集已開始！', 'success');
 }
 
+// 🆕 [v3.8.26] 保存目前所有文字雲回應（供下載使用）
+let wordCloudAllResponses = [];
+
 function listenToWordCloudResponses() {
     const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
     const unsub = onSnapshot(respRef, (snapshot) => {
         const words = [];
+        const studentRecords = [];  // 🆕 供 CSV 下載使用
         snapshot.forEach(d => {
             const data = d.data();
             if (data.word) {
+                const name = data.studentName || d.id;
+                const ts = data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : '';
                 // 支援多詞彙
                 if (Array.isArray(data.word)) {
-                    data.word.forEach(w => words.push(w));
+                    data.word.forEach(w => {
+                        words.push(w);
+                        studentRecords.push({ studentName: name, word: w, timestamp: ts });
+                    });
                 } else {
                     words.push(data.word);
+                    studentRecords.push({ studentName: name, word: data.word, timestamp: ts });
                 }
             }
         });
+        wordCloudAllResponses = studentRecords;
         renderWordCloud(words);
+
+        // 更新即時統計
+        const countEl = document.getElementById('word-cloud-stat-count');
+        const studentsEl = document.getElementById('word-cloud-stat-students');
+        if (countEl) countEl.textContent = words.length;
+        if (studentsEl) studentsEl.textContent = new Set(studentRecords.map(r => r.studentName)).size;
     });
     ListenerManager.register('wordCloudResponses', unsub);
+}
+
+// 🆕 [v3.8.26] 下載文字雲回應 CSV
+function downloadWordCloudCSV() {
+    if (!wordCloudAllResponses || wordCloudAllResponses.length === 0) {
+        showMessage('尚無學生回應可下載', 'error');
+        return;
+    }
+    const topic = wordCloudSettings?.topic || '文字雲';
+    // CSV header + rows
+    let csv = '\uFEFF';  // BOM for Excel 中文相容
+    csv += `文字雲主題,${topic}\n`;
+    csv += `匯出時間,${new Date().toLocaleString('zh-TW')}\n`;
+    csv += `總詞彙數,${wordCloudAllResponses.length}\n\n`;
+    csv += '學生姓名,詞彙,提交時間\n';
+    wordCloudAllResponses.forEach(r => {
+        const name = (r.studentName || '').replace(/"/g, '""');
+        const word = (r.word || '').replace(/"/g, '""');
+        csv += `"${name}","${word}","${r.timestamp}"\n`;
+    });
+    // 詞頻統計表
+    csv += '\n詞頻統計\n詞彙,出現次數\n';
+    const freq = {};
+    wordCloudAllResponses.forEach(r => { freq[r.word] = (freq[r.word] || 0) + 1; });
+    Object.entries(freq).sort((a, b) => b[1] - a[1]).forEach(([w, c]) => {
+        csv += `"${w.replace(/"/g, '""')}",${c}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `文字雲_${topic}_${classroomCode}_${dateStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showMessage('CSV 已下載！', 'success');
+}
+
+// 🆕 [v3.8.26] 下載文字雲圖片（PNG）
+function downloadWordCloudImage() {
+    const canvas = document.getElementById('word-cloud-canvas');
+    if (!canvas) { showMessage('找不到文字雲畫布', 'error'); return; }
+    if (!wordCloudAllResponses || wordCloudAllResponses.length === 0) {
+        showMessage('尚無學生回應可下載', 'error');
+        return;
+    }
+    try {
+        // 建立一個含標題的合成圖
+        const topic = wordCloudSettings?.topic || '文字雲';
+        const exportCanvas = document.createElement('canvas');
+        const padding = 40;
+        const titleHeight = 80;
+        exportCanvas.width = canvas.width + padding * 2;
+        exportCanvas.height = canvas.height + titleHeight + padding;
+        const ctx = exportCanvas.getContext('2d');
+        // 白色背景
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+        // 標題
+        ctx.fillStyle = '#1f2937';
+        ctx.font = 'bold 32px "Noto Sans TC", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`☁️ ${topic}`, exportCanvas.width / 2, 45);
+        // 副標題（日期 + 詞彙數）
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '16px "Noto Sans TC", sans-serif';
+        ctx.fillText(`${new Date().toLocaleDateString('zh-TW')} · 共 ${wordCloudAllResponses.length} 個詞彙`, exportCanvas.width / 2, 68);
+        // 貼上文字雲
+        ctx.drawImage(canvas, padding, titleHeight);
+
+        exportCanvas.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const dateStr = new Date().toISOString().slice(0, 10);
+            a.href = url;
+            a.download = `文字雲_${topic}_${classroomCode}_${dateStr}.png`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showMessage('圖片已下載！', 'success');
+        }, 'image/png');
+    } catch (e) {
+        console.error('Download word cloud image error:', e);
+        showMessage('下載失敗：' + e.message, 'error');
+    }
 }
 
 function renderWordCloud(words) {
