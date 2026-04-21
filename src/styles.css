@@ -394,12 +394,13 @@ body {
 }
 
 /* 📖 閱讀測驗：answer-box 改為靠上靠左對齊，防止多行內容跑版 */
-/* 🆕 MODIFIED [v3.7.10]: max-height 320 → 500，避免 Q1-Q10 + 時間戳一起顯示時被截斷出現捲軸 */
+/* 🆕 MODIFIED [v3.8.27]: 移除 max-height 限制讓內容自然撐開，flex-1 占滿剩餘空間 */
 .reading-mode-container .student-response-item .answer-box {
     align-items: flex-start;
     justify-content: flex-start;
     overflow-y: auto;
-    max-height: 500px;
+    flex: 1;
+    min-height: 140px;
 }
 
 /* 🆕 NEW [v3.7.9]: 「尚未作答」視覺強化 - 斜紋背景 + 虛線邊框 + 漏斗 icon + 脈動動畫 */
@@ -530,29 +531,44 @@ body {
 }
 
 /* 📖 閱讀測驗模式：教師端容器自適應欄數 */
-/* 🆕 MODIFIED [v3.7.12]: 改用 clamp() 動態計算 minmax，無斷點切換更平滑
-   - 240px 是「絕對最小值」確保任何視窗都能塞下 3 欄（900px 視窗下精準塞 3 欄）
-   - 22vw 隨視窗放大（1280px=281, 1600px=352, 1920px=422）
-   - 380px 是「絕對最大值」避免 4K 螢幕下卡片過寬
-   - 整段公式：minmax(clamp(240px, 22vw, 380px), 1fr)
-
-   實測欄數（含 padding 與 gap）：
-     900px → minmax(240) → 3 欄（每張 ~258px）
-    1280px → minmax(281) → 4 欄（每張 ~290px）
-    1600px → minmax(352) → 4 欄（每張 ~370px）
-    1920px → minmax(380) → 4 欄（每張 ~448px）
-    2560px → minmax(380) → 6 欄（每張 ~415px）
+/* 🆕 MODIFIED [v3.8.27]: 強制三欄 + 卡片更高，提升視覺體驗
+   - 手機端（<640px）：1 欄
+   - 平板/桌機（≥640px）：固定 2 欄
+   - 桌機（≥1024px）：固定 3 欄（使用者需求）
+   - 超寬螢幕（≥1600px）：4 欄
 */
 .reading-mode-container {
-    grid-template-columns: repeat(auto-fill, minmax(clamp(240px, 22vw, 380px), 1fr)) !important;
+    grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+}
+@media (min-width: 640px) {
+    .reading-mode-container {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 14px !important;
+    }
+}
+@media (min-width: 1024px) {
+    .reading-mode-container {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: 16px !important;
+    }
+}
+@media (min-width: 1600px) {
+    .reading-mode-container {
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+        gap: 18px !important;
+    }
 }
 
 /* 閱讀測驗卡片：啟用 container query 精準控制內部排版 */
-/* 🆕 MODIFIED [v3.7.13]: min-height 120 → 180，讓卡片視覺更飽滿不侷促 */
+/* 🆕 MODIFIED [v3.8.27]: min-height 180 → 260，卡片更飽滿 */
 .reading-mode-container .student-response-item {
-    min-height: 180px;
+    min-height: 260px;
     container-type: inline-size;
     container-name: student-card;
+    padding: 1rem !important;
+    display: flex !important;
+    flex-direction: column !important;
 }
 
 /* 🆕 NEW [v3.7.6 / MODIFIED v3.7.10 / v3.7.11]: 用 container query 依「卡片實際寬度」精準調整 badges 排版
@@ -562,12 +578,19 @@ body {
    v3.7.11: 降低所有閾值，讓窄卡片（3 欄佈局）也能有好的內部排版
 */
 
+/* 🆕 [v3.8.27] 預設：Q1-Q10 badges 2 欄（窄卡片時） */
+.reading-mode-container .answer-box > div[style*="grid-template-columns"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px 10px !important;
+    font-size: 13px !important;
+}
+
 /* content-box ≥ 220px（卡片視覺 ~260px）：Q1-Q10 badges 3 欄 */
 @container student-card (min-width: 220px) {
     .answer-box > div[style*="grid-template-columns"] {
         grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-        gap: 4px 8px !important;
-        font-size: 12.5px !important;
+        gap: 6px 10px !important;
+        font-size: 13.5px !important;
     }
 }
 
