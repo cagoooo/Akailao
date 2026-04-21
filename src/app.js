@@ -10922,15 +10922,23 @@ function setupEventListeners() {
                     console.warn('[Attendance] 出席記錄寫入失敗（不影響課堂）:', attErr);
                 }
 
-                // 🆕 [v3.8.27] 完成：100% + 切換到等待頁
+                // 🆕 [v3.8.27] 完成：100% + 切換到正確視圖
+                // 🐛 CRITICAL FIX: 不強制 showView('studentWaiting')
+                // 原本的 bug：listener 已根據 active_mode 切到 interaction view，
+                // 但這個 setTimeout 又強制切回 waiting，導致學生卡在等待頁
+                // 改為「只在 mode=waiting 時顯示等待頁，其他模式由 listener 負責」
                 updateStudentJoinProgress(100, '🎉 進入成功！', '歡迎加入課堂');
                 setTimeout(() => {
-                    showView('studentWaiting');
+                    // 智能切換：只在模式為 waiting 或尚未確定時，才顯示等待頁
+                    if (!currentInteractionMode || currentInteractionMode === 'waiting') {
+                        showView('studentWaiting');
+                    }
+                    // 否則保留 listener 已經設好的 studentInteraction view
                     hideStudentJoinProgress();
-                    // 還原按鈕狀態
                     submitBtn.disabled = false;
                     submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
                     if (navigator.vibrate) navigator.vibrate(100);
+                    console.log('[Student] 加入完成，當前模式:', currentInteractionMode);
                 }, 400);
             } else {
                 showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
