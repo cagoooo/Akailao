@@ -3597,6 +3597,15 @@ async function setInteractionMode(mode, options = {}) {
             // 🚀 KEY FIX: 現在可以安全地建立學生提交監聽器（presence 數據已就緒）
             console.log('[Teacher] 🔍 Step 2: Setting up student submissions listener for reading comprehension');
             listenToStudentSubmissions(mode);
+        } else if (mode === 'photo_wall') {
+            // 🆕 [v3.8.27] 相片牆模式：不註冊 student submissions listener
+            // 原因：相片牆有自己的 loadPhotoWallGallery 從獨立 photoWall 集合讀取
+            // 若再啟動 listenToStudentSubmissions 會用 'photo_wall' 重新渲染學生卡片，
+            // 破壞先前模式（如 reading_comprehension）的格式化顯示
+            if (!ListenerManager.has('classroomPresence')) {
+                listenToClassroomPresence();
+            }
+            console.log('[Teacher] 📷 Photo wall mode: skipping student submissions listener');
         } else { // For other interaction modes (true_false, multiple_choice, text_input, drawing, recording, quick_answer)
             // 🚀 OPTIMIZED: 確保所有模式都有 presence 監聽器（初次進入時註冊，後續模式切換時保持）
             if (!ListenerManager.has('classroomPresence')) {
@@ -12051,7 +12060,8 @@ function setupEventListeners() {
     document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
 
     // 🆕 NEW [v3.8.25] MODE-4：相片牆 Event Listeners
-    document.getElementById('photo-wall-modal-close-btn').addEventListener('click', () => document.getElementById('photo-wall-modal').classList.add('hidden'));
+    // 🆕 [v3.8.27] X 關閉按鈕也走完整 endPhotoWall 流程（避免殘留 photo_wall 模式造成 monitor 顯示混亂）
+    document.getElementById('photo-wall-modal-close-btn').addEventListener('click', endPhotoWall);
     document.getElementById('photo-wall-fullscreen-btn').addEventListener('click', () => {
         const grid = document.getElementById('photo-wall-grid-teacher')?.parentElement;
         if (grid?.requestFullscreen) grid.requestFullscreen();
