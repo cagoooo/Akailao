@@ -132,6 +132,37 @@ const WebViewDetector = (() => {
         return issues;
     }
 
+    // 🆕 [v3.8.29] 依 App 提供「在瀏覽器開啟」的位置與選項文字
+    function getOpenHint(appName) {
+        const BOTTOM_RIGHT = {
+            locationText: '畫面右下角',
+            icon: '⋯',
+            menuText: '在預設瀏覽器中開啟',
+            barPreview: ['‹', '›', '↻', '◻', '⋯']
+        };
+        const TOP_RIGHT = {
+            locationText: '畫面右上角',
+            icon: '⋯',
+            menuText: '在瀏覽器中開啟',
+            barPreview: null
+        };
+        const map = {
+            'LINE': BOTTOM_RIGHT,
+            'Facebook Messenger': TOP_RIGHT,
+            'Instagram': TOP_RIGHT,
+            'Threads': TOP_RIGHT,
+            'WeChat': TOP_RIGHT,
+            'Snapchat': TOP_RIGHT,
+            'TikTok': TOP_RIGHT,
+            'WhatsApp': TOP_RIGHT,
+            'Twitter/X': TOP_RIGHT,
+            'KakaoTalk': TOP_RIGHT,
+            'iOS WebView': { locationText: '畫面底部', icon: '📤', menuText: '在 Safari 開啟', barPreview: null },
+            'Android WebView': TOP_RIGHT
+        };
+        return map[appName] || TOP_RIGHT;
+    }
+
     function showWarning(detection) {
         // 已警告過就不再顯示（每次課堂只一次）
         const dismissKey = `webviewWarn_${classroomCode || 'global'}`;
@@ -139,43 +170,73 @@ const WebViewDetector = (() => {
 
         const issues = checkCapabilities();
         const url = window.location.href;
+        const hint = getOpenHint(detection.app);
 
         const modal = document.createElement('div');
         modal.id = 'webview-warning-modal';
         modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(4px);';
         modal.innerHTML = `
-            <div style="background:#fff;border-radius:16px;max-width:480px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
-                <div style="text-align:center;margin-bottom:16px;">
-                    <div style="font-size:48px;margin-bottom:8px;">⚠️</div>
+            <div style="background:#fff;border-radius:16px;max-width:480px;width:100%;padding:22px 20px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-height:95vh;overflow-y:auto;">
+                <div style="text-align:center;margin-bottom:14px;">
+                    <div style="font-size:44px;margin-bottom:4px;">⚠️</div>
                     <h3 style="font-size:20px;font-weight:bold;color:#dc2626;margin:0;">偵測到 ${detection.app}</h3>
-                    <p style="color:#6b7280;font-size:14px;margin-top:4px;">為了確保所有功能正常運作，建議你用瀏覽器開啟</p>
+                    <p style="color:#6b7280;font-size:13px;margin:6px 0 0 0;line-height:1.5;">建議換成真正的瀏覽器<br>才能完整使用所有功能 ✨</p>
                 </div>
+
+                <!-- 主視覺：2 步驟引導 -->
+                <div style="background:linear-gradient(135deg,#eef2ff 0%,#dbeafe 100%);border:2px solid #6366f1;border-radius:14px;padding:14px 12px 12px;margin-bottom:12px;">
+                    <p style="font-size:14px;color:#4338ca;font-weight:bold;margin:0 0 12px 0;text-align:center;letter-spacing:1px;">
+                        🎯 2 個步驟 · 3 秒搞定
+                    </p>
+                    <div class="webview-step-card">
+                        <div class="webview-step-num">1</div>
+                        <div class="webview-step-text">
+                            點${hint.locationText}的
+                            <span class="webview-hint-btn">${hint.icon}</span>
+                            按鈕
+                        </div>
+                    </div>
+                    <div class="webview-step-card" style="margin-top:8px;">
+                        <div class="webview-step-num">2</div>
+                        <div class="webview-step-text">
+                            選「<span class="webview-menu-hint">🌐 ${hint.menuText}</span>」
+                        </div>
+                    </div>
+                    ${hint.barPreview ? `
+                    <div style="margin-top:10px;padding:8px 10px 6px;background:#fff;border-radius:8px;">
+                        <p style="font-size:11px;color:#6b7280;text-align:center;margin:0 0 4px 0;">📱 ${detection.app} 工具列長這樣：</p>
+                        <div class="webview-bar-preview">
+                            ${hint.barPreview.map((ic, idx) => idx === hint.barPreview.length - 1
+                                ? `<span class="webview-bar-target">${ic}</span>`
+                                : `<span class="webview-bar-item">${ic}</span>`
+                            ).join('')}
+                        </div>
+                        <p style="font-size:11px;color:#ef4444;text-align:right;margin:2px 6px 0 0;font-weight:bold;">↑ 點這個</p>
+                    </div>` : ''}
+                </div>
+
                 ${issues.length > 0 ? `
-                <div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px;margin-bottom:16px;">
-                    <p style="font-size:13px;color:#92400e;font-weight:bold;margin:0 0 6px 0;">⚠ 在此瀏覽器中可能無法使用：</p>
-                    <ul style="font-size:13px;color:#92400e;margin:0;padding-left:20px;">
+                <details style="margin-bottom:12px;">
+                    <summary style="cursor:pointer;font-size:12px;color:#92400e;padding:8px 10px;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;list-style:none;user-select:none;">
+                        ⚠ 不換瀏覽器的話，這些功能會怪怪的（點開看）
+                    </summary>
+                    <ul style="font-size:12px;color:#92400e;margin:6px 0 0 0;padding:8px 10px 8px 28px;background:#fffbeb;border-radius:6px;">
                         ${issues.map(i => `<li>${i}</li>`).join('')}
                     </ul>
-                </div>` : ''}
-                <div style="background:#dbeafe;border:1px solid #60a5fa;border-radius:8px;padding:12px;margin-bottom:16px;">
-                    <p style="font-size:13px;color:#1e40af;font-weight:bold;margin:0 0 6px 0;">💡 建議步驟：</p>
-                    <ol style="font-size:13px;color:#1e40af;margin:0;padding-left:20px;">
-                        <li>點擊下方「複製連結」</li>
-                        <li>開啟 Safari 或 Chrome</li>
-                        <li>貼上連結並前往</li>
-                    </ol>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button id="webview-copy-link" style="flex:1;background:#3b82f6;color:#fff;font-weight:bold;padding:12px;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-width:140px;">
+                </details>` : ''}
+
+                <!-- 主要動作按鈕（一排 3 個） -->
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button id="webview-dismiss" class="webview-btn webview-btn-primary">
+                        ✅ 我知道了
+                    </button>
+                    <button id="webview-copy-link" class="webview-btn webview-btn-ghost">
                         📋 複製連結
                     </button>
-                    <button id="webview-open-safari" style="flex:1;background:#10b981;color:#fff;font-weight:bold;padding:12px;border:none;border-radius:8px;font-size:15px;cursor:pointer;min-width:140px;">
-                        🌐 嘗試在瀏覽器開
+                    <button id="webview-open-safari" class="webview-btn webview-btn-ghost">
+                        🌐 直接試試
                     </button>
                 </div>
-                <button id="webview-dismiss" style="margin-top:12px;width:100%;background:transparent;color:#6b7280;padding:8px;border:none;font-size:13px;cursor:pointer;text-decoration:underline;">
-                    我知道了，繼續使用（部分功能可能異常）
-                </button>
             </div>
         `;
         document.body.appendChild(modal);
