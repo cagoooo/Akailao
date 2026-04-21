@@ -2998,10 +2998,19 @@
             <div class="bg-white border-2 border-gray-200 rounded-xl p-2" style="min-height: 500px;">
                 <canvas id="word-cloud-canvas" width="900" height="500"></canvas>
             </div>
-            <!-- 即時統計：詞彙總數 / 投稿人數 -->
-            <div class="flex justify-center gap-4 mt-3 mb-2 text-sm text-gray-600">
+            <!-- 即時統計：詞彙總數 / 投稿人數 / 未投稿人數（可點擊查看名單） -->
+            <div class="flex justify-center items-center flex-wrap gap-3 sm:gap-5 mt-3 mb-2 text-sm text-gray-600">
                 <span>📝 詞彙：<span id="word-cloud-stat-count" class="font-bold text-cyan-600">0</span></span>
-                <span>👥 投稿：<span id="word-cloud-stat-students" class="font-bold text-cyan-600">0</span> 人</span>
+                <span>✅ 已投稿：<span id="word-cloud-stat-students" class="font-bold text-green-600">0</span> / <span id="word-cloud-stat-total" class="font-bold text-gray-700">0</span> 人</span>
+                <button id="word-cloud-pending-btn" class="cursor-pointer hover:bg-orange-50 rounded-lg px-2 py-1 transition-colors border border-transparent hover:border-orange-300" title="點擊查看尚未投稿的學生名單">
+                    ⏳ 未投稿：<span id="word-cloud-stat-pending" class="font-bold text-orange-600">0</span> 人 <i class="fas fa-eye text-xs text-gray-400 ml-1"></i>
+                </button>
+            </div>
+
+            <!-- 未投稿學生名單（點擊上方按鈕展開） -->
+            <div id="word-cloud-pending-list" class="hidden mb-2 mx-4 sm:mx-8 p-3 bg-orange-50 border border-orange-200 rounded-lg max-h-32 overflow-y-auto">
+                <p class="text-xs text-orange-700 font-semibold mb-1">⏳ 尚未投稿的學生：</p>
+                <div id="word-cloud-pending-names" class="flex flex-wrap gap-1.5"></div>
             </div>
             <div class="flex justify-center gap-2 sm:gap-3 mt-2 flex-wrap">
                 <button id="word-cloud-qrcode-btn" class="btn bg-teal-600 hover:bg-teal-700 !w-auto text-sm sm:text-base h-10 sm:h-11 px-3 sm:px-5"><i class="fas fa-qrcode mr-1 sm:mr-2"></i>QR Code</button>

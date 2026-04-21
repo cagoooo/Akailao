@@ -12099,6 +12099,11 @@ function setupEventListeners() {
     });
     // 🆕 [v3.8.26] 文字雲下載功能
     document.getElementById('word-cloud-download-csv-btn').addEventListener('click', downloadWordCloudCSV);
+    // 🆕 [v3.8.27] 點擊「未投稿」按鈕展開/收合學生名單
+    document.getElementById('word-cloud-pending-btn')?.addEventListener('click', () => {
+        const list = document.getElementById('word-cloud-pending-list');
+        if (list) list.classList.toggle('hidden');
+    });
     document.getElementById('word-cloud-download-img-btn').addEventListener('click', downloadWordCloudImage);
     document.getElementById('end-word-cloud-btn').addEventListener('click', endWordCloud);
     document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
@@ -15819,13 +15824,12 @@ function listenToWordCloudResponses() {
     const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
     const unsub = onSnapshot(respRef, (snapshot) => {
         const words = [];
-        const studentRecords = [];  // 🆕 供 CSV 下載使用
+        const studentRecords = [];
         snapshot.forEach(d => {
             const data = d.data();
             if (data.word) {
                 const name = data.studentName || d.id;
                 const ts = data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : '';
-                // 支援多詞彙
                 if (Array.isArray(data.word)) {
                     data.word.forEach(w => {
                         words.push(w);
@@ -15840,11 +15844,34 @@ function listenToWordCloudResponses() {
         wordCloudAllResponses = studentRecords;
         renderWordCloud(words);
 
-        // 更新即時統計
+        // 🆕 [v3.8.27] 更新即時統計（含未投稿人數與名單）
+        const submittedNames = new Set(studentRecords.map(r => r.studentName));
+        const totalStudents = activeStudentNames.length;
+        const submittedCount = submittedNames.size;
+        const pendingNames = activeStudentNames.filter(n => !submittedNames.has(n));
+        const pendingCount = pendingNames.length;
+
         const countEl = document.getElementById('word-cloud-stat-count');
         const studentsEl = document.getElementById('word-cloud-stat-students');
+        const totalEl = document.getElementById('word-cloud-stat-total');
+        const pendingEl = document.getElementById('word-cloud-stat-pending');
+        const pendingNamesEl = document.getElementById('word-cloud-pending-names');
         if (countEl) countEl.textContent = words.length;
-        if (studentsEl) studentsEl.textContent = new Set(studentRecords.map(r => r.studentName)).size;
+        if (studentsEl) studentsEl.textContent = submittedCount;
+        if (totalEl) totalEl.textContent = totalStudents;
+        if (pendingEl) {
+            pendingEl.textContent = pendingCount;
+            pendingEl.parentElement.style.color = pendingCount > 0 ? '' : '#9ca3af';
+        }
+        if (pendingNamesEl) {
+            if (pendingNames.length === 0) {
+                pendingNamesEl.innerHTML = '<span class="text-green-600 text-xs font-semibold">🎉 全班都已投稿！</span>';
+            } else {
+                pendingNamesEl.innerHTML = pendingNames.map(name =>
+                    `<span class="bg-white border border-orange-300 text-orange-700 px-2 py-0.5 rounded-full text-xs font-medium">${name}</span>`
+                ).join('');
+            }
+        }
     });
     ListenerManager.register('wordCloudResponses', unsub);
 }
