@@ -18447,11 +18447,13 @@ async function generatePIRLSQuestions() {
 - 若原文為直書或橫書，統一輸出為橫書；若有錯字或辨識不清的字，請依上下文合理修正。
 - 若文字不足以形成有意義的文本（例如圖片只是表格、清單或無文章段落），請直接回覆「無法從圖片辨識到足夠的閱讀文本」，不要強行生成題目。
 
-【步驟 2：依 PIRLS 四層次出 10 題選擇題】
+【步驟 2：依 PIRLS 四層次出剛好 10 題選擇題】
+⚠️ 必須生成「剛好 10 題」（不可多不可少），按以下分布：
 - 層次1（直接提取資訊）：3題
 - 層次2（直接推論）：3題
 - 層次3（詮釋整合資訊）：2題
 - 層次4（比較評估內容）：2題
+- 出題前先在心中數一遍：3+3+2+2=10，請務必輸出完整 10 題
 ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
 【輸出格式 — 非常重要，請嚴格遵守】
 1. 不要使用 markdown code fence（\`\`\`）包裝輸出
@@ -18471,11 +18473,12 @@ ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
 - 禁止輸出 JSON、表格或其他結構化格式
 - 禁止用全形逗號（，）分隔欄位`;
         } else if (existingText) {
-            prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+            prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成「剛好 10 題」選擇題（不可多不可少）：
 層次1（直接提取資訊）：3題
 層次2（直接推論）：3題
 層次3（詮釋整合資訊）：2題
 層次4（比較評估內容）：2題
+⚠️ 必須輸出完整 10 題，3+3+2+2=10，缺一不可
 
 文本：
 ${existingText}
@@ -18488,11 +18491,12 @@ ${existingText}
 範例：
 主角的名字是什麼?,2,小明,小華,小美,小強,1`;
         } else {
-            prompt = `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成 10 題選擇題：
+            prompt = `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成「剛好 10 題」選擇題（不可多不可少）：
 層次1（直接提取資訊）：3題
 層次2（直接推論）：3題
 層次3（詮釋整合資訊）：2題
 層次4（比較評估內容）：2題
+⚠️ 必須輸出完整 10 題，3+3+2+2=10，缺一不可
 
 主題：${topic}${curriculumHint}
 
@@ -18585,13 +18589,83 @@ ${existingText}
                         readingTextTextarea.value = '';
                         questionsTextarea.value = generatedText;
                         showMessage('⚠️ AI 未依標準格式回傳（缺少「---題目---」分隔），已放入題目區請老師手動調整', 'warning', 5000);
-                        return; // 避免後面的 success 訊息蓋掉警告
+                        return;
                     }
                 }
             } else {
                 questionsTextarea.value = generatedText;
             }
-            showMessage(hasImages ? '✅ AI 已成功辨識圖片並生成閱讀測驗！' : 'AI 閱讀測驗已成功生成！', 'success');
+
+            // 🆕 [v3.8.27] 自動補齊機制：解析後檢查題數，少於 10 題自動再生成補齊
+            const TARGET_COUNT = 10;
+            let parsedQs = parseReadingQuestions(questionsTextarea.value);
+            let initialCount = parsedQs ? parsedQs.length : 0;
+
+            if (initialCount > 0 && initialCount < TARGET_COUNT) {
+                // 嘗試補齊（最多 2 次重試）
+                const textForRetry = readingTextTextarea.value || existingText || topic;
+                showMessage(`AI 只生成 ${initialCount}/${TARGET_COUNT} 題，自動補齊中...`, 'info', 3000);
+
+                for (let retry = 0; retry < 2 && parsedQs.length < TARGET_COUNT; retry++) {
+                    const missing = TARGET_COUNT - parsedQs.length;
+                    // 計算各層次缺幾題
+                    const levelCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+                    parsedQs.forEach(q => { levelCounts[q.level] = (levelCounts[q.level] || 0) + 1; });
+                    const need = { 1: Math.max(0, 3 - levelCounts[1]), 2: Math.max(0, 3 - levelCounts[2]), 3: Math.max(0, 2 - levelCounts[3]), 4: Math.max(0, 2 - levelCounts[4]) };
+
+                    const supplementPrompt = `根據以下文本，補出 ${missing} 題 PIRLS 閱讀理解選擇題：
+${need[1] > 0 ? `- 層次1（直接提取）：${need[1]} 題\n` : ''}${need[2] > 0 ? `- 層次2（直接推論）：${need[2]} 題\n` : ''}${need[3] > 0 ? `- 層次3（詮釋整合）：${need[3]} 題\n` : ''}${need[4] > 0 ? `- 層次4（比較評估）：${need[4]} 題\n` : ''}
+文本：
+${textForRetry.substring(0, 3000)}
+
+⚠️ 嚴格輸出規則（不可違反）：
+1. 不要輸出文本，不要任何說明文字，只輸出題目
+2. 不要使用 markdown 或標題
+3. 每行一題，固定 7 欄位以半形逗號分隔：題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+4. 選項內若有逗號改用頓號（、）
+5. 不可重複既有題目，新題目要與原題不同
+
+既有題目（請避免重複）：
+${parsedQs.map(q => q.question).join('\n')}`;
+
+                    try {
+                        const retryPayload = { contents: [{ role: "user", parts: [{ text: supplementPrompt }] }] };
+                        const retryRes = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(retryPayload)
+                        });
+                        const retryData = await retryRes.json();
+                        const retryText = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                        if (retryText) {
+                            const newQs = parseReadingQuestions(retryText);
+                            if (newQs && newQs.length > 0) {
+                                // 過濾重複（依題目文字判斷）
+                                const existing = new Set(parsedQs.map(q => q.question));
+                                const uniqueNew = newQs.filter(q => !existing.has(q.question));
+                                parsedQs = [...parsedQs, ...uniqueNew].slice(0, TARGET_COUNT);
+                                console.log(`[AI 補齊] 第 ${retry + 1} 次重試新增 ${uniqueNew.length} 題（總共 ${parsedQs.length}/${TARGET_COUNT}）`);
+                            }
+                        }
+                    } catch (retryErr) {
+                        console.warn('[AI 補齊] 失敗:', retryErr);
+                    }
+                }
+
+                // 將補齊後的題目寫回 textarea
+                if (parsedQs.length > initialCount) {
+                    questionsTextarea.value = parsedQs.map(q =>
+                        `${q.question},${q.correctAnswer},${q.options[0]},${q.options[1]},${q.options[2]},${q.options[3]},${q.level}`
+                    ).join('\n');
+                }
+            }
+
+            const finalCount = parsedQs ? parsedQs.length : initialCount;
+            const successMsg = finalCount === TARGET_COUNT
+                ? (hasImages ? `✅ AI 已成功生成 10 題完整測驗！` : `AI 閱讀測驗已生成 10 題！`)
+                : `⚠️ 已生成 ${finalCount}/${TARGET_COUNT} 題（${finalCount < TARGET_COUNT ? '少於目標，建議手動補充' : '正常'}）`;
+            showMessage(successMsg, finalCount === TARGET_COUNT ? 'success' : 'warning');
+
             // 🆕 v3.8.11: AI 生成完畢自動觸發預覽
             renderReadingQuestionsPreview();
         } else {
