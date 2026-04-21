@@ -12104,6 +12104,10 @@ function setupEventListeners() {
         const list = document.getElementById('word-cloud-pending-list');
         if (list) list.classList.toggle('hidden');
     });
+    // 收合按鈕
+    document.getElementById('word-cloud-pending-collapse-btn')?.addEventListener('click', () => {
+        document.getElementById('word-cloud-pending-list')?.classList.add('hidden');
+    });
     document.getElementById('word-cloud-download-img-btn').addEventListener('click', downloadWordCloudImage);
     document.getElementById('end-word-cloud-btn').addEventListener('click', endWordCloud);
     document.getElementById('submit-word-cloud-btn').addEventListener('click', submitWordCloudWord);
@@ -15863,15 +15867,26 @@ function listenToWordCloudResponses() {
             pendingEl.textContent = pendingCount;
             pendingEl.parentElement.style.color = pendingCount > 0 ? '' : '#9ca3af';
         }
+        // 🆕 [v3.8.27] 改良版：移除滾軸、加大 padding、彩色標籤
         if (pendingNamesEl) {
             if (pendingNames.length === 0) {
-                pendingNamesEl.innerHTML = '<span class="text-green-600 text-xs font-semibold">🎉 全班都已投稿！</span>';
+                pendingNamesEl.innerHTML = `
+                    <div class="w-full text-center py-2">
+                        <span class="text-green-600 text-base font-bold">🎉 全班都已投稿完成！</span>
+                    </div>`;
             } else {
-                pendingNamesEl.innerHTML = pendingNames.map(name =>
-                    `<span class="bg-white border border-orange-300 text-orange-700 px-2 py-0.5 rounded-full text-xs font-medium">${name}</span>`
-                ).join('');
+                pendingNamesEl.innerHTML = pendingNames.map((name, i) => {
+                    // 為每個未投稿學生加上序號膠囊
+                    return `<span class="inline-flex items-center gap-1 bg-white border-2 border-orange-400 text-orange-700 px-3 py-1.5 rounded-full text-sm font-semibold shadow-sm hover:bg-orange-100 hover:scale-105 transition-all cursor-default" title="尚未投稿">
+                        <span class="bg-orange-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">${i + 1}</span>
+                        ${name}
+                    </span>`;
+                }).join('');
             }
         }
+        // 更新展開區的計數徽章
+        const pendingListCount = document.getElementById('word-cloud-pending-list-count');
+        if (pendingListCount) pendingListCount.textContent = pendingCount;
     });
     ListenerManager.register('wordCloudResponses', unsub);
 }
