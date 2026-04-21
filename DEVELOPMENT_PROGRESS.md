@@ -1,10 +1,27 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.29** ｜ 更新時間：2026-04-21
+> **版本：V3.8.30** ｜ 更新時間：2026-04-21
 
 ---
 
-## 🆕 最近更新（V3.8.29）
+## 🆕 最近更新（V3.8.30）
+
+### 🖼️ 品牌識別：Favicon + 社群分享卡
+- [x] **[v3.8.30] 🖼️ 全套品牌圖示（favicon / apple-touch / PWA / OG 社群卡）**
+  - Favicon：SVG（可無限縮放）+ ICO（16/32/48 多尺寸）+ PNG（16/32）
+  - Apple Touch Icon：180×180（iOS 主畫面加入捷徑用）
+  - PWA Icon：192×192 / 512×512（含 maskable purpose）
+  - 📱 OG 社群分享圖：1200×630（LINE / Facebook / Slack / Twitter 通用）
+    - 品牌漸層底（indigo → purple）+「剛好學」180px 主標 + 黃色副標「課堂互動 so easy」
+    - 下方膠囊：版本號 + 網址
+    - 像素風方塊裝飾呼應 v3.8.28 設計語言
+  - 新增 `manifest.json`（PWA 標準）+ `<head>` 全套 `og:*` / `twitter:*` meta
+  - 圖示產生器 `.github/scripts/generate_assets.py`（Python + Pillow，可重複產出）
+  - GitHub Pages 部署驗證：`.github/workflows/deploy.yml` 已複製 `icons/` 與 `manifest.json` 到 `dist/`
+
+---
+
+## 🆕 V3.8.29 更新
 
 ### 🧭 WebView 警告 Modal 體驗全面升級
 - [x] **[v3.8.29] 🧭 WebView 警告改為「點 ⋯ 選在瀏覽器開啟」視覺化引導**

@@ -1,0 +1,31 @@
+{
+  "name": "剛好學 — 課堂互動 so easy",
+  "short_name": "剛好學",
+  "description": "國小課堂互動工具：13 種互動模式 + AI 出題 + 即時排行榜",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#6366f1",
+  "theme_color": "#6366f1",
+  "orientation": "any",
+  "lang": "zh-Hant",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
