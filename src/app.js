@@ -4806,7 +4806,12 @@ function listenToInteractionMode() {
                     setupTeamBattleStudent(data);
                 }
             } else if (currentInteractionMode === 'word_cloud') {
+                console.log(`[Student] Word cloud mode — modeChanged: ${modeChanged}, settings:`, data?.wordCloudSettings);
+                // 🆕 [v3.8.27] mode 改變時重置 UI；settings 已存在則重新設定（容忍 race condition）
                 if (modeChanged) {
+                    setupWordCloudStudent(data);
+                } else if (data?.wordCloudSettings && !wordCloudSettings) {
+                    // 模式相同但 wordCloudSettings 之前是 null（第一次收到 settings）→ 補設定
                     setupWordCloudStudent(data);
                 }
             } else if (currentInteractionMode === 'photo_wall') {
@@ -15658,7 +15663,11 @@ async function endTeamBattle() {
 // 學生端：設置分組競賽
 function setupTeamBattleStudent(controlData) {
     const settings = controlData?.teamBattleSettings;
-    if (!settings || !settings.teams) return;
+    if (!settings || !settings.teams) {
+        console.warn('[Student TeamBattle] ⚠️ teamBattleSettings 為空');
+        return;
+    }
+    console.log(`[Student TeamBattle] ✓ 設定完成 — ${settings.teams.length} 隊`);
 
     teamBattleData = { teams: settings.teams.map(t => ({...t, score: 0})) };
 
@@ -15731,12 +15740,22 @@ async function startWordCloud() {
     if (!topic) { showMessage('請輸入討論主題', 'error'); return; }
     const maxWords = parseInt(document.getElementById('word-cloud-max-words').value) || 1;
 
+    console.log(`[Teacher WordCloud] 🚀 Starting word cloud — topic: "${topic}", maxWords: ${maxWords}, classroom: "${classroomCode}"`);
+
     // 🆕 FIX: 使用 timestamp 作為 sessionId，每次啟動都是新的一輪
     const sessionId = Date.now();
     wordCloudSettings = { topic, maxWords, startedAt: sessionId };
     document.getElementById('word-cloud-settings-modal').classList.add('hidden');
     showView('teacherMonitor');
-    await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords, startedAt: sessionId } });
+
+    try {
+        await setInteractionMode('word_cloud', { wordCloudSettings: { topic, maxWords, startedAt: sessionId } });
+        console.log('[Teacher WordCloud] ✓ setInteractionMode 完成，模式已切換為 word_cloud');
+    } catch (e) {
+        console.error('[Teacher WordCloud] ✗ setInteractionMode 失敗:', e);
+        showMessage('啟動文字雲失敗：' + e.message, 'error');
+        return;
+    }
 
     // 顯示文字雲展示模態框
     document.getElementById('word-cloud-display-modal').classList.remove('hidden');
@@ -15751,7 +15770,7 @@ async function startWordCloud() {
 
     // 監聽學生回應
     listenToWordCloudResponses();
-    showMessage('文字雲收集已開始！', 'success');
+    showMessage(`✅ 文字雲已開始！主題：「${topic}」，學生最多可提交 ${maxWords} 個詞彙`, 'success');
 }
 
 // 🆕 [v3.8.26] 保存目前所有文字雲回應（供下載使用）
@@ -15998,10 +16017,19 @@ function _getMyWords() {
 // 學生端：設置文字雲
 function setupWordCloudStudent(controlData) {
     const settings = controlData?.wordCloudSettings;
-    if (!settings) return;
+    if (!settings) {
+        console.warn('[Student WordCloud] ⚠️ wordCloudSettings 為空，可能教師尚未開始或資料遺失');
+        // 顯示等待提示而非空白畫面
+        const topicEl = document.getElementById('word-cloud-topic-display');
+        if (topicEl) topicEl.textContent = '主題：（等待老師設定中...）';
+        return;
+    }
     wordCloudSettings = settings;
     const maxWords = settings.maxWords || 1;
-    document.getElementById('word-cloud-topic-display').textContent = `主題：${settings.topic}`;
+    const topicEl = document.getElementById('word-cloud-topic-display');
+    if (topicEl) topicEl.textContent = `主題：${settings.topic || '未命名主題'}`;
+
+    console.log(`[Student WordCloud] ✓ 設定完成 — 主題：${settings.topic}，最多可提交：${maxWords} 個詞彙`);
 
     const myWords = _getMyWords();
     renderWordCloudStudentUI(myWords, maxWords);
