@@ -10739,15 +10739,25 @@ function setupEventListeners() {
     document.getElementById('teacher-classroom-code-submit-btn').addEventListener('click', async () => {
         const rawCode = document.getElementById('teacher-classroom-code-input').value.trim();
 
-        // 🆕 [v3.8.27] 教室代碼驗證（避免中文/特殊字元造成 Firestore 路徑與 URL 編碼問題）
+        // 🆕 [v3.8.27] 教室代碼驗證（柔性策略：允許中文，只擋會破壞 Firestore 路徑的字元）
         if (!rawCode) {
             showMessage('請輸入教室代碼！', 'error');
             return;
         }
-        // 只允許英數字（含底線、減號），長度 3-20
-        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(rawCode)) {
-            showMessage('⚠️ 教室代碼只能用英數字（3-20 字），不可使用中文或特殊符號。建議使用 4-6 位數字（如 6603）方便學生輸入。', 'error', 6000);
+        // 長度限制 1-30 字元
+        if (rawCode.length > 30) {
+            showMessage('⚠️ 教室代碼不可超過 30 字元', 'error');
             return;
+        }
+        // 禁止 Firestore 路徑會崩潰的字元：/ \ . # $ [ ] 與所有控制字元
+        if (/[\/\\#$\[\]\u0000-\u001f]/.test(rawCode) || rawCode === '.' || rawCode === '..') {
+            showMessage('⚠️ 教室代碼不可包含 / \\ . # $ [ ] 等特殊符號', 'error', 5000);
+            return;
+        }
+        // 包含中文時給友善提示（不阻擋）
+        if (/[^\x00-\x7F]/.test(rawCode)) {
+            console.log('[Teacher] 使用非英數教室代碼：', rawCode);
+            // 不擋，但 console 提醒
         }
         const code = rawCode;
         if (code) {
@@ -10826,9 +10836,13 @@ function setupEventListeners() {
             showMessage('請務必輸入教室代碼！', 'error');
             return;
         }
-        // 🆕 [v3.8.27] 教室代碼格式驗證（防止中文/特殊字元造成的 bug）
-        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(studentClassroomCode)) {
-            showMessage('⚠️ 教室代碼格式錯誤！只能是英數字（3-20 字），請向老師確認正確代碼', 'error', 6000);
+        // 🆕 [v3.8.27] 柔性驗證：只擋 Firestore 路徑會崩潰的字元（允許中文）
+        if (studentClassroomCode.length > 30) {
+            showMessage('⚠️ 教室代碼不可超過 30 字元', 'error');
+            return;
+        }
+        if (/[\/\\#$\[\]\u0000-\u001f]/.test(studentClassroomCode)) {
+            showMessage('⚠️ 教室代碼包含不允許的符號，請向老師確認', 'error', 5000);
             return;
         }
         if (!name) {
