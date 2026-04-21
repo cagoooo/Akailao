@@ -10737,7 +10737,19 @@ function setupEventListeners() {
     // NEW: Teacher classroom code input.
     document.getElementById('teacher-classroom-code-back-btn').addEventListener('click', () => showView('entry'));
     document.getElementById('teacher-classroom-code-submit-btn').addEventListener('click', async () => {
-        const code = document.getElementById('teacher-classroom-code-input').value.trim();
+        const rawCode = document.getElementById('teacher-classroom-code-input').value.trim();
+
+        // 🆕 [v3.8.27] 教室代碼驗證（避免中文/特殊字元造成 Firestore 路徑與 URL 編碼問題）
+        if (!rawCode) {
+            showMessage('請輸入教室代碼！', 'error');
+            return;
+        }
+        // 只允許英數字（含底線、減號），長度 3-20
+        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(rawCode)) {
+            showMessage('⚠️ 教室代碼只能用英數字（3-20 字），不可使用中文或特殊符號。建議使用 4-6 位數字（如 6603）方便學生輸入。', 'error', 6000);
+            return;
+        }
+        const code = rawCode;
         if (code) {
             try {
                 classroomCode = code;
@@ -10812,6 +10824,11 @@ function setupEventListeners() {
 
         if (!studentClassroomCode) {
             showMessage('請務必輸入教室代碼！', 'error');
+            return;
+        }
+        // 🆕 [v3.8.27] 教室代碼格式驗證（防止中文/特殊字元造成的 bug）
+        if (!/^[a-zA-Z0-9_-]{3,20}$/.test(studentClassroomCode)) {
+            showMessage('⚠️ 教室代碼格式錯誤！只能是英數字（3-20 字），請向老師確認正確代碼', 'error', 6000);
             return;
         }
         if (!name) {
