@@ -10853,7 +10853,7 @@ function setupEventListeners() {
         // 🆕 [v3.8.27] 顯示進度條 + 鎖定按鈕
         submitBtn.disabled = true;
         submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
-        updateStudentJoinProgress(20, '🔍 正在查詢教室代碼...', '步驟 1/4');
+        updateStudentJoinProgress(20, '🔍 正在查詢教室代碼...', '關卡 1/4');
 
         classroomCode = studentClassroomCode; // Set global classroom code for student
 
@@ -10863,7 +10863,7 @@ function setupEventListeners() {
             const docSnap = await getDoc(controlRef);
             if (docSnap.exists() && docSnap.data().teacherId) { // Check if control document exists and has a teacher ID
                 studentName = name;
-                updateStudentJoinProgress(45, '🧹 清理舊資料...', '步驟 2/4');
+                updateStudentJoinProgress(45, '🧹 清理舊資料...', '關卡 2/4');
 
                 // 🔄 FIX: Clean up any old student records with the same name to prevent duplicates on reconnection
                 try {
@@ -10894,12 +10894,12 @@ function setupEventListeners() {
 
                 document.getElementById('user-id-display').textContent = `${userId} (${studentName})`;
                 document.getElementById('student-welcome-msg').textContent = `你好，${studentName}！`;
-                updateStudentJoinProgress(70, '📡 連接互動服務...', '步驟 3/4');
+                updateStudentJoinProgress(70, '📡 連接互動服務...', '關卡 3/4');
                 listenToInteractionMode();
                 listenToPeerReviewStatus(); // NEW: Listen for peer review status
                 listenToLottery(); // <-- 在此新增
                 startStudentAttentionMonitoring(); // NEW: 啟動學生注意力監控
-                updateStudentJoinProgress(90, '✓ 註冊出席...', '步驟 4/4');
+                updateStudentJoinProgress(90, '✓ 註冊出席...', '關卡 4/4');
                 // 🚀 FIX: Set student presence with distraction monitoring fields
                 const presenceRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence', userId);
                 await setDoc(presenceRef, {
@@ -10927,7 +10927,7 @@ function setupEventListeners() {
                 // 原本的 bug：listener 已根據 active_mode 切到 interaction view，
                 // 但這個 setTimeout 又強制切回 waiting，導致學生卡在等待頁
                 // 改為「只在 mode=waiting 時顯示等待頁，其他模式由 listener 負責」
-                updateStudentJoinProgress(100, '🎉 進入成功！', '歡迎加入課堂');
+                updateStudentJoinProgress(100, '🎉 進入成功！', '🏆 CLEAR!');
                 setTimeout(() => {
                     // 智能切換：只在模式為 waiting 或尚未確定時，才顯示等待頁
                     if (!currentInteractionMode || currentInteractionMode === 'waiting') {
