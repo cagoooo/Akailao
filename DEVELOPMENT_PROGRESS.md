@@ -1,10 +1,25 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.9.2** ｜ 更新時間：2026-04-24
+> **版本：V3.9.3** ｜ 更新時間：2026-04-24
 
 ---
 
-## 🆕 最近更新（V3.9.2）
+## 🆕 最近更新（V3.9.3）
+
+### 🏷️ 版本徽章自動同步 — 一處改 package.json，全站更新
+- [x] **[v3.9.3] 🏷️ 入口頁「NEW · vX.Y.Z」徽章 build-time 自動注入**
+  - `vite.config.mjs` 新增 `__APP_VERSION__` define，直接讀 `package.json.version`
+  - `index.html` 的 badge 加 `id="app-version-badge"`
+  - `src/app.js` 啟動時把徽章文字更新為 `NEW · v${__APP_VERSION__}`
+  - 改 `package.json` 版本後，跑 `npm run build` 或 `npm run dev` 入口頁徽章自動跟著走
+- [x] **[v3.9.3] 🏷️ `set.html` 版本標籤同步**
+  - 把寫死的 `V3.9.0` 改為 sentinel `V__APP_VERSION__`
+  - 加 inline script：偵測到未替換時 fallback 為 `Vdev`（本機開發友善）
+  - `deploy.yml` 新增「🏷️ 注入版本號到 set.html」步驟，build 時用 sed 把 sentinel 替換成 `package.json` 版本
+
+---
+
+## 🆕 V3.9.2 更新
 
 ### 🔌 學生連線中斷彈窗 — 黑板筆記版
 - [x] **[v3.9.2] 🔌 `kicked-out-overlay` 改為黑板筆記版風格**

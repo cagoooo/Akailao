@@ -2,6 +2,9 @@ import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import fs from 'fs';
 
+// 🆕 [V3.9.3] 讀 package.json 版本，build/dev 時注入到 __APP_VERSION__
+const pkgVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+
 // 🆕 [v3.8.25] D-1: Vite 構建配置
 // 讀取 .env 文件（兼容既有格式）
 function loadDotEnv() {
@@ -54,6 +57,8 @@ export default defineConfig(({ mode }) => {
         define: {
             'import.meta.env.VITE_FIREBASE_API_KEY': JSON.stringify(firebaseKey),
             'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(geminiKey),
+            // 🆕 [V3.9.3] 自動同步版本號到入口頁徽章（package.json → __APP_VERSION__）
+            '__APP_VERSION__': JSON.stringify(pkgVersion),
         },
 
         // 插件

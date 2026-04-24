@@ -63,6 +63,13 @@ jobs:
           cp manifest.json dist/manifest.json 2>/dev/null || true
           cp sw.js dist/sw.js 2>/dev/null || true
 
+      # 🆕 [V3.9.3] 把 set.html 裡的 __APP_VERSION__ sentinel 替換成 package.json 版本
+      - name: 🏷️ 注入版本號到 set.html
+        run: |
+          APP_VERSION=$(node -p "require('./package.json').version")
+          sed -i "s/__APP_VERSION__/${APP_VERSION}/g" dist/set.html
+          echo "✓ set.html 版本號已注入：${APP_VERSION}"
+
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
         with:

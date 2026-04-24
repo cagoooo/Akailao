@@ -3,7 +3,7 @@
 ## 專案概述
 - **用途**：國小課堂互動工具（13 種互動模式 + AI 出題 + 即時排行榜）
 - **架構**：Vite 構建 → 單一 HTML 輸出 + Firebase Firestore 後端 + GitHub Pages 部署
-- **版本**：V3.9.2+（V3.9.x 為三大入口頁 + set.html + 學生中斷彈窗「黑板筆記版」全新視覺）
+- **版本**：V3.9.3+（V3.9.x 為三大入口頁 + set.html + 學生中斷彈窗「黑板筆記版」全新視覺；版本徽章 build-time 自動同步）
 - **Firebase 專案 ID**：`class-4719f`
 - **GitHub Pages**：https://cagoooo.github.io/Akailao/
 

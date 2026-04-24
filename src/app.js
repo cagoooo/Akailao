@@ -14232,6 +14232,12 @@ async function initialize() {
 
     document.getElementById('app-id-display').textContent = baseAppId; // Display the base app ID
 
+    // 🆕 [V3.9.3] 入口頁版本徽章自動同步 package.json
+    const _versionBadge = document.getElementById('app-version-badge');
+    if (_versionBadge && typeof __APP_VERSION__ !== 'undefined') {
+        _versionBadge.textContent = `NEW · v${__APP_VERSION__}`;
+    }
+
     try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
