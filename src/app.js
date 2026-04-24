@@ -4406,22 +4406,21 @@ function handleKickedOut() {
     // 🚀 CRITICAL: 立即導航到入口頁面
     showView('entry');
 
-    // 顯示連線中斷提示 overlay（婉轉訊息）
+    // 🆕 [V3.9.2] 顯示連線中斷提示 overlay — 黑板筆記版
     const kickedOverlay = document.createElement('div');
     kickedOverlay.id = 'kicked-out-overlay';
-    kickedOverlay.className = 'fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50';
+    kickedOverlay.className = 'cb-kicked-overlay';
     kickedOverlay.innerHTML = `
-        <div class="bg-white rounded-lg shadow-2xl p-8 max-w-md w-11/12 text-center">
-            <div class="text-6xl mb-4">🔄</div>
-            <h3 class="text-xl font-bold text-blue-700 mb-4">
-                <i class="fas fa-sync-alt mr-2"></i>需要重新加入課堂
-            </h3>
-            <p class="text-gray-700 mb-6">
+        <div class="cb-kicked-card" role="alertdialog" aria-labelledby="kicked-title" aria-describedby="kicked-desc">
+            <span class="cb-kicked-tape">OFFLINE · 連線中斷</span>
+            <div class="cb-kicked-stamp" aria-hidden="true">🔌</div>
+            <h3 id="kicked-title" class="cb-kicked-title">需要重新加入課堂</h3>
+            <p id="kicked-desc" class="cb-kicked-desc">
                 您的課堂連線已中斷。<br/>
                 請重新輸入姓名加入課堂。
             </p>
-            <button id="kicked-return-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition-colors">
-                好的，我知道了
+            <button id="kicked-return-btn" type="button" class="cb-kicked-cta">
+                好的，我知道了 <span class="cb-arrow">→</span>
             </button>
         </div>
     `;

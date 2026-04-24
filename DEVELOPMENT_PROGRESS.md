@@ -1,10 +1,29 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.9.1** ｜ 更新時間：2026-04-24
+> **版本：V3.9.2** ｜ 更新時間：2026-04-24
 
 ---
 
-## 🆕 最近更新（V3.9.1）
+## 🆕 最近更新（V3.9.2）
+
+### 🔌 學生連線中斷彈窗 — 黑板筆記版
+- [x] **[v3.9.2] 🔌 `kicked-out-overlay` 改為黑板筆記版風格**
+  - backdrop：藍灰半透明 + `backdrop-filter: blur(4px)` 玻璃感
+  - 卡片：便條紙風（米色 `#F8F2DE` + 邊框 + 雙陰影 + -0.5° 微傾斜）
+  - 上方朱紅紙膠帶 `OFFLINE · 連線中斷`（取代藍色標題）
+  - 圓形圖章包 🔌 emoji（取代彈跳的 🔄）
+  - 標題改用 Noto Serif TC 26px 粗體
+  - CTA 按鈕：深綠黑板色 + 4px 硬陰影 + hover 浮起
+  - 進場動畫：`scale(0.92) → scale(1)` + 微旋轉
+  - 480px 以下自動縮小卡片內距與字級
+- [x] **[v3.9.2] 🛠️ `app.js` 替換 inline Tailwind 為 `cb-kicked-*` class**
+  - HTML 結構從 ~10 行 inline class 簡化為 8 行語意化 markup
+  - 加上 `role="alertdialog"` + `aria-labelledby` / `aria-describedby` a11y 屬性
+  - 按鈕 ID `#kicked-return-btn` 完整保留，原本的 click handler 不需修改
+
+---
+
+## 🆕 V3.9.1 更新
 
 ### 🛠️ 黑板筆記版微調 — set.html 整體重塑 + 輸入框可見度強化
 - [x] **[v3.9.1] 🛠️ `set.html`（Firebase 配置生成器）改為黑板筆記版**

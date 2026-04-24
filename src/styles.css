@@ -852,6 +852,129 @@ body.initial-view-background #app-container {
     color: #2d2416;
 }
 
+/* ============================================================
+   🆕 [V3.9.2] 學生連線中斷彈窗：黑板筆記版
+   ============================================================ */
+@keyframes cb-modal-pop {
+    from { opacity: 0; transform: scale(0.92) rotate(-2deg); }
+    to   { opacity: 1; transform: scale(1) rotate(-0.5deg); }
+}
+@keyframes cb-modal-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.cb-kicked-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(45, 36, 22, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: cb-modal-fade 0.2s ease-out both;
+    font-family: "Huninn", "Noto Sans TC", system-ui, sans-serif;
+}
+.cb-kicked-card {
+    position: relative;
+    background: #F8F2DE;
+    border: 1.5px solid rgba(45, 36, 22, 0.55);
+    border-radius: 4px;
+    padding: 56px 36px 36px;
+    max-width: 420px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 8px 8px 0 rgba(45, 36, 22, 0.3),
+                0 30px 60px -20px rgba(45, 36, 22, 0.55);
+    transform: rotate(-0.5deg);
+    animation: cb-modal-pop 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    color: #2d2416;
+}
+.cb-kicked-tape {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-2deg);
+    padding: 5px 18px;
+    background: #8b3a2b;
+    color: #F1E9D6;
+    font-size: 10.5px;
+    letter-spacing: 0.24em;
+    font-weight: 800;
+    font-family: "Noto Serif TC", serif;
+    box-shadow: 0 2px 4px rgba(45, 36, 22, 0.2);
+    white-space: nowrap;
+}
+.cb-kicked-stamp {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 76px;
+    height: 76px;
+    border: 2px solid rgba(45, 36, 22, 0.55);
+    border-radius: 50%;
+    background: #F4ECD4;
+    margin: 8px auto 18px;
+    font-size: 36px;
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.15);
+}
+.cb-kicked-title {
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    font-family: "Noto Serif TC", "Huninn", serif;
+    color: #2d2416;
+    margin: 0 0 12px;
+    line-height: 1.25;
+}
+.cb-kicked-desc {
+    font-size: 14.5px;
+    line-height: 1.9;
+    color: #4a4330;
+    margin: 0 0 26px;
+    font-family: "Noto Serif TC", "Noto Sans TC", serif;
+}
+.cb-kicked-cta {
+    padding: 13px 32px;
+    background: #2d3a1f;
+    color: #f0ebdf;
+    border: none;
+    border-radius: 2px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    font-family: "Noto Serif TC", serif;
+    box-shadow: 4px 4px 0 rgba(45, 36, 22, 0.25);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.cb-kicked-cta:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.3);
+}
+.cb-kicked-cta:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 rgba(45, 36, 22, 0.2);
+}
+.cb-kicked-cta .cb-arrow {
+    display: inline-block;
+    transition: transform 0.2s;
+}
+.cb-kicked-cta:hover .cb-arrow { transform: translateX(4px); }
+
+@media (max-width: 480px) {
+    .cb-kicked-card { padding: 48px 24px 28px; }
+    .cb-kicked-stamp { width: 64px; height: 64px; font-size: 30px; }
+    .cb-kicked-title { font-size: 22px; }
+    .cb-kicked-desc { font-size: 14px; }
+    .cb-kicked-cta { padding: 12px 26px; font-size: 14px; }
+}
+
 /* ---------- RWD（響應式） ---------- */
 @media (max-width: 1023px) {
     .cb-wrap { padding: 0 28px; }
