@@ -1,10 +1,45 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.8.30** ｜ 更新時間：2026-04-21
+> **版本：V3.9.0** ｜ 更新時間：2026-04-24
 
 ---
 
-## 🆕 最近更新（V3.8.30）
+## 🆕 最近更新（V3.9.0）
+
+### 🎨 三大入口頁全面重塑：黑板筆記版（Chalkboard Notebook Edition）
+- [x] **[v3.9.0] 🎨 入口首頁（角色選擇）改為黑板＋筆記本雙欄版式**
+  - 牛皮紙底色（`#C9B085`）+ 細直紋紋理 + multiply 噪點疊層（SVG `feTurbulence`）
+  - 左半邊「今日課題」黑板（`#2d3a1f` 深綠 + 米白粉筆字）：
+    - 標題用 Noto Serif TC + Huninn 手寫感字型，桌機 92px / 手機 48px
+    - 黃色「So easy」斜體口號 + 粉筆繪線動畫（`stroke-dasharray` chalkDraw 動畫）
+    - 6 個虛線圓角粉筆標籤：投票 / QA / 閱讀 / 小組 / 點名 / AI
+    - 下方 4 張紙膠帶風格數據卡（13+ 互動模式 / AI 自動出題 / 3″ 進入課堂 / 免安裝 純網頁）
+  - 右半邊「請翻到你的頁 ↓」雙身分卡：
+    - 教師卡（P.01 黃色紙膠帶）：圓形圖章 + 鉛筆／教師 SVG + 4 個功能 chip + 「翻開這一頁 →」深綠 CTA
+    - 學生卡（P.02 朱紅紙膠帶）：圓形圖章 + 學生／背包 SVG + 4 個功能 chip
+    - 卡片左右微傾 ±1°，hover 時抬起 4px、陰影加深、箭頭右移 6px
+  - 浮動「建置手冊」連結（右上深綠紙膠帶風格）：保留原本 `set.html` 入口
+  - 頁尾整合阿剛老師 / 阿凱老師 / GitHub 連結
+- [x] **[v3.9.0] 📝 教師登入頁改為「便條紙卡」表單**
+  - 中央米色便條紙卡（`#F8F2DE`）+ 黃色紙膠帶 `P.01 · TEACHER` + 圓形教師圖章
+  - 標題「請輸入教室代碼」+ 黃色側邊欄提示框（💡 ✅ ⚠️）
+  - 紙感輸入框（無框 + 底線聚焦變朱紅）+ 深綠「進入教師面板 →」CTA
+  - 左上角 `← 返回首頁` 紙膠帶連結
+- [x] **[v3.9.0] 📝 學生登入頁改為「便條紙卡」表單**
+  - 朱紅紙膠帶 `P.02 · STUDENT` + 圓形學生圖章
+  - 標題「翻開你的筆記本」+ 兩個分組輸入框（教室代碼 / 你的名字）
+  - 完整保留 v3.8.28 像素風遊戲化讀取進度條
+- [x] **[v3.9.0] 🛠️ `showView()` 邏輯擴充**
+  - 新增 `entry / teacherClassroomCode / studentName` 三個入口頁共用牛皮紙底
+  - 三個 view 都用 `position: fixed; inset: 0` 突破 `app-container` 的 `max-w-4xl` 限制
+  - 所有原本的 button ID（`teacher-entry-btn` / `student-entry-btn` / `submit-name-btn` / `teacher-classroom-code-submit-btn` / `teacher-classroom-code-back-btn`）完整保留，app.js 的事件綁定無需任何修改
+- [x] **[v3.9.0] 🔤 字型擴充**
+  - 新增 Noto Serif TC（300/400/600/700/900）+ Huninn 手寫字型 Google Fonts 引入
+  - 全部 `cb-` 前綴 CSS class 避免與現有 Tailwind/styles.css 衝突
+
+---
+
+## 🆕 V3.8.30 更新
 
 ### 🖼️ 品牌識別：Favicon + 社群分享卡
 - [x] **[v3.8.30] 🖼️ 全套品牌圖示（favicon / apple-touch / PWA / OG 社群卡）**

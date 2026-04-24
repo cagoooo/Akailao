@@ -2154,7 +2154,8 @@ function showView(viewName) {
     Object.values(views).forEach(view => view.classList.add('hidden'));
     if (views[viewName]) {
         views[viewName].classList.remove('hidden');
-        if (viewName === 'entry') {
+        // 🆕 [V3.9.0] entry / teacherClassroomCode / studentName 三個身分入口頁都套用牛皮紙底
+        if (['entry', 'teacherClassroomCode', 'studentName'].includes(viewName)) {
             body.classList.add('initial-view-background');
         }
         // 🆕 NEW [v3.8.15]: 進入教師監控頁時，先把所有可選按鈕隱藏

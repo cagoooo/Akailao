@@ -77,13 +77,856 @@
 }
 
 /* --- 全新初始畫面美化樣式 --- */
+/* 🆕 [V3.9.0] 入口頁改良：黑板筆記版 — body 改用牛皮紙底色 */
 body.initial-view-background {
-    background-color: #f0f4f8;
-    /* Fallback */
-    background-image:
-        radial-gradient(circle at 1px 1px, #d1d5db 1px, transparent 0),
-        radial-gradient(circle at 20px 20px, #d1d5db 1px, transparent 0);
-    background-size: 40px 40px;
+    background-color: #C9B085;
+    background-image: none;
+    background-size: auto;
+    /* 入口頁不需要 flex 置中，由 .chalkboard-entry 自行排版 */
+    display: block;
+}
+body.initial-view-background #app-container {
+    max-width: none;
+    padding: 0;
+}
+
+/* ============================================================
+   🆕 [V3.9.0] 入口頁：黑板筆記版（chalkboard-notebook entry）
+   ============================================================ */
+.chalkboard-entry {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #C9B085;
+    color: #2d2416;
+    font-family: "Huninn", "Noto Sans TC", system-ui, sans-serif;
+    z-index: 1;
+}
+/* 牛皮紙噪點 + 直紋（兩層 pseudo 處理，避免額外 DOM） */
+.chalkboard-entry::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.8;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='k'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.22 0 0 0 0 0.14 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23k)' opacity='0.5'/%3E%3C/svg%3E");
+}
+.chalkboard-entry::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.15;
+    background-image: repeating-linear-gradient(90deg, rgba(90,60,20,0.08) 0 2px, transparent 2px 4px);
+}
+
+@keyframes cb-floatUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes cb-chalkDraw {
+    from { stroke-dashoffset: 400; }
+    to   { stroke-dashoffset: 0; }
+}
+.cb-fade-in {
+    opacity: 0;
+    animation: cb-floatUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.cb-fade-in.cb-delay-1 { animation-delay: 0.1s; }
+
+.cb-wrap {
+    position: relative;
+    z-index: 2;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 56px;
+}
+
+/* ---------- HEADER ---------- */
+.cb-header {
+    padding: 24px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1.5px dashed rgba(45, 36, 22, 0.35);
+    flex-wrap: wrap;
+}
+.cb-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.cb-brand-title {
+    font-size: 19px;
+    font-weight: 800;
+    font-family: "Noto Serif TC", serif;
+    letter-spacing: 0.02em;
+    line-height: 1.1;
+}
+.cb-brand-sub {
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    color: #6b5428;
+    font-weight: 700;
+    margin-top: 2px;
+}
+.cb-nav {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    font-size: 13px;
+    color: #5a4a28;
+    font-weight: 600;
+}
+.cb-nav a {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+.cb-nav a:hover { color: #2d2416; }
+.cb-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+}
+.cb-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #6b7f3a;
+}
+.cb-badge-new {
+    padding: 5px 12px;
+    background: #8b3a2b;
+    color: #F1E9D6;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    border-radius: 2px;
+    transform: rotate(-2deg);
+    white-space: nowrap;
+}
+
+/* ---------- MAIN ---------- */
+.cb-main {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    padding: 44px 0 32px;
+    gap: 48px;
+    align-items: start;
+}
+.cb-left, .cb-right {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.cb-right { gap: 26px; padding-top: 12px; }
+
+/* eyebrow */
+.cb-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.cb-eyebrow-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #8b3a2b;
+    color: #F1E9D6;
+    font-size: 13px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Noto Serif TC", serif;
+}
+.cb-eyebrow-text {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    color: #6b5428;
+}
+
+/* blackboard */
+.cb-blackboard {
+    background: #2d3a1f;
+    padding: 36px 40px 40px;
+    position: relative;
+    box-shadow: 10px 10px 0 rgba(45, 36, 22, 0.25);
+    border-radius: 6px;
+    border: 4px solid #8a6632;
+    overflow: hidden;
+}
+.cb-blackboard::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    opacity: 0.35;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.25 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23c)'/%3E%3C/svg%3E");
+}
+.cb-chalk-swirl {
+    position: absolute;
+    top: 20px;
+    right: 28px;
+    opacity: 0.55;
+    pointer-events: none;
+}
+.cb-blackboard-content { position: relative; z-index: 1; }
+.cb-headline {
+    font-size: 92px;
+    line-height: 0.96;
+    margin: 0;
+    font-weight: 900;
+    color: #f0ebdf;
+    letter-spacing: -0.03em;
+    font-family: "Noto Serif TC", "Huninn", serif;
+    text-shadow: 2px 0 0 rgba(240, 235, 223, 0.18);
+}
+.cb-headline-yellow {
+    font-size: 68px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    color: #e8b84f;
+    font-style: italic;
+    font-family: "Noto Serif TC", serif;
+    margin-top: 12px;
+    line-height: 1;
+}
+.cb-chalk-underline {
+    display: block;
+    margin-top: -4px;
+}
+.cb-chalk-underline path {
+    stroke-dasharray: 400;
+    animation: cb-chalkDraw 1.4s ease-out 0.5s both;
+}
+.cb-description {
+    font-size: 15.5px;
+    line-height: 1.85;
+    margin: 28px 0 0;
+    max-width: 440px;
+    color: rgba(240, 235, 223, 0.82);
+    font-family: "Noto Serif TC", "Noto Sans TC", serif;
+}
+.cb-tags {
+    display: flex;
+    gap: 10px;
+    margin-top: 24px;
+    flex-wrap: wrap;
+}
+.cb-tag {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border: 1px dashed rgba(240, 235, 223, 0.5);
+    color: #f0ebdf;
+    border-radius: 999px;
+    font-family: "Noto Serif TC", serif;
+    transition: background 0.2s, transform 0.2s;
+    background: transparent;
+}
+.cb-tag:hover {
+    background: rgba(240, 235, 223, 0.08);
+    transform: translateY(-1px);
+}
+
+/* stats strip */
+.cb-stats {
+    margin-top: 28px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+.cb-stat-card {
+    padding: 16px 16px 14px;
+    background: #F4ECD4;
+    border: 1.5px solid rgba(45, 36, 22, 0.45);
+    position: relative;
+    border-radius: 2px;
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.12);
+    transition: transform 0.25s;
+}
+.cb-stat-card:nth-child(odd)  { transform: rotate(-0.4deg); }
+.cb-stat-card:nth-child(even) { transform: rotate(0.4deg); }
+.cb-stat-card:hover { transform: translateY(-3px) rotate(-0.8deg); }
+.cb-tape {
+    position: absolute;
+    top: -6px;
+    left: 14px;
+    width: 42px;
+    height: 14px;
+    opacity: 0.85;
+    transform: rotate(-2deg);
+}
+.cb-stat-num {
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    font-family: "Noto Serif TC", serif;
+    color: #2d2416;
+    line-height: 1;
+}
+.cb-stat-label {
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    color: #6b5428;
+    font-weight: 700;
+    margin-top: 6px;
+}
+
+/* page hint */
+.cb-page-hint {
+    font-size: 12px;
+    letter-spacing: 0.24em;
+    font-weight: 700;
+    color: #6b5428;
+    text-align: right;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+}
+.cb-question-mark {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #2d3a1f;
+    color: #f0ebdf;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+/* notebook cards (acts as button) */
+.cb-note-card {
+    position: relative;
+    background: #F8F2DE;
+    border: 1.5px solid rgba(45, 36, 22, 0.5);
+    padding: 28px 32px 24px 108px;
+    cursor: pointer;
+    border-radius: 2px;
+    box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.2),
+                0 20px 40px -16px rgba(45, 36, 22, 0.35);
+    text-align: left;
+    color: inherit;
+    font-family: inherit;
+    width: 100%;
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 0.3s;
+}
+.cb-note-card.cb-rotate-left  { transform: rotate(-1.2deg); }
+.cb-note-card.cb-rotate-right { transform: rotate(1deg); }
+.cb-note-card:hover {
+    transform: rotate(0deg) translateY(-4px);
+    box-shadow: 10px 10px 0 rgba(45, 36, 22, 0.25),
+                0 24px 40px -16px rgba(45, 36, 22, 0.4);
+}
+.cb-note-card:focus-visible {
+    outline: 3px dashed #8b3a2b;
+    outline-offset: 4px;
+}
+.cb-note-tape {
+    position: absolute;
+    top: -10px;
+    left: 42%;
+    width: 120px;
+    height: 22px;
+    opacity: 0.88;
+    transform: rotate(-3deg);
+    box-shadow: 0 2px 4px rgba(45, 36, 22, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    font-weight: 800;
+    color: #2d2416;
+}
+.cb-note-rules {
+    position: absolute;
+    inset: 16px 24px 16px 104px;
+    pointer-events: none;
+    background-image: repeating-linear-gradient(to bottom, transparent 0 28px, rgba(45, 36, 22, 0.1) 28px 29px);
+    opacity: 0.7;
+}
+.cb-note-margin {
+    position: absolute;
+    left: 92px;
+    top: 16px;
+    bottom: 16px;
+    width: 1px;
+    background: rgba(139, 58, 43, 0.45);
+}
+.cb-note-stamp {
+    position: absolute;
+    left: 18px;
+    top: 22px;
+    width: 68px;
+    height: 68px;
+    border: 1.5px solid rgba(45, 36, 22, 0.55);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #F4ECD4;
+}
+.cb-note-content { position: relative; z-index: 1; }
+.cb-note-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    font-weight: 700;
+    color: #6b5428;
+    font-family: "Noto Serif TC", serif;
+}
+.cb-note-title {
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    font-family: "Noto Serif TC", "Huninn", serif;
+    color: #2d2416;
+    line-height: 1.1;
+    margin-top: 2px;
+}
+.cb-note-desc {
+    font-size: 13.5px;
+    color: #4a4330;
+    margin-top: 8px;
+    line-height: 1.7;
+}
+.cb-note-items {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+.cb-note-item {
+    font-size: 11.5px;
+    padding: 3px 10px;
+    font-weight: 600;
+    background: rgba(45, 36, 22, 0.06);
+    color: #5a4a28;
+    border-radius: 999px;
+    font-family: "Noto Serif TC", serif;
+}
+.cb-note-cta {
+    margin-top: 16px;
+    padding: 11px 22px;
+    background: #2d3a1f;
+    color: #f0ebdf;
+    border: none;
+    border-radius: 2px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: "Noto Serif TC", serif;
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.25);
+}
+.cb-arrow {
+    display: inline-block;
+    transition: transform 0.3s;
+}
+.cb-note-card:hover .cb-arrow { transform: translateX(6px); }
+
+.cb-quote {
+    margin-top: 6px;
+    font-size: 12.5px;
+    color: #6b5428;
+    text-align: right;
+    font-style: italic;
+    font-family: "Noto Serif TC", serif;
+}
+
+/* ---------- FOOTER ---------- */
+.cb-footer {
+    padding: 20px 0 28px;
+    border-top: 1.5px dashed rgba(45, 36, 22, 0.3);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    font-size: 11.5px;
+    color: #6b5428;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    flex-wrap: wrap;
+}
+.cb-footer-links {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.cb-footer-links a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+.cb-footer-links a:hover { color: #2d2416; }
+.cb-footer-sep { color: rgba(107, 84, 40, 0.5); }
+
+/* ---------- 設置手冊浮標（保留入口） ---------- */
+.cb-handbook-fab {
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    z-index: 20;
+    background: #2d3a1f;
+    color: #f0ebdf;
+    padding: 8px 14px;
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-decoration: none;
+    border: 1.5px solid #2d2416;
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.25);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: transform 0.2s;
+    font-family: "Noto Serif TC", serif;
+}
+.cb-handbook-fab:hover { transform: translateY(-2px); }
+
+/* ============================================================
+   🆕 [V3.9.0] 教師 / 學生登入頁：黑板筆記版表單卡
+   ============================================================ */
+.cb-form-page {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #C9B085;
+    color: #2d2416;
+    font-family: "Huninn", "Noto Sans TC", system-ui, sans-serif;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 24px;
+}
+.cb-form-page::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.8;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='k'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.22 0 0 0 0 0.14 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23k)' opacity='0.5'/%3E%3C/svg%3E");
+}
+.cb-form-page::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.15;
+    background-image: repeating-linear-gradient(90deg, rgba(90,60,20,0.08) 0 2px, transparent 2px 4px);
+}
+
+/* 左上回首頁連結 */
+.cb-back-link {
+    position: fixed;
+    top: 18px;
+    left: 22px;
+    z-index: 20;
+    color: #5a4a28;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-decoration: none;
+    background: rgba(241, 233, 214, 0.85);
+    padding: 8px 14px;
+    border-radius: 2px;
+    border: 1.5px solid rgba(45, 36, 22, 0.4);
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.18);
+    transition: transform 0.2s;
+    font-family: "Noto Serif TC", serif;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.cb-back-link:hover { transform: translateY(-2px); }
+
+/* 中央表單卡片（一張便條紙） */
+.cb-form-wrap {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    max-width: 520px;
+    animation: cb-floatUp 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.cb-form-card {
+    position: relative;
+    background: #F8F2DE;
+    border: 1.5px solid rgba(45, 36, 22, 0.5);
+    border-radius: 4px;
+    padding: 56px 44px 44px;
+    box-shadow: 8px 8px 0 rgba(45, 36, 22, 0.22),
+                0 30px 60px -20px rgba(45, 36, 22, 0.4);
+    transform: rotate(-0.4deg);
+}
+/* 紙膠帶標籤 */
+.cb-form-tape {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-2deg);
+    padding: 6px 22px;
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    font-weight: 800;
+    color: #2d2416;
+    box-shadow: 0 2px 4px rgba(45, 36, 22, 0.2);
+    font-family: "Noto Serif TC", serif;
+    white-space: nowrap;
+}
+/* 圓形圖章（與 entry 卡片同款） */
+.cb-form-stamp {
+    position: absolute;
+    top: 32px;
+    right: 32px;
+    width: 60px;
+    height: 60px;
+    border: 1.5px solid rgba(45, 36, 22, 0.55);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #F4ECD4;
+}
+.cb-form-content { position: relative; }
+.cb-form-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    font-weight: 700;
+    color: #6b5428;
+    font-family: "Noto Serif TC", serif;
+    margin-bottom: 6px;
+}
+.cb-form-title {
+    font-size: 32px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+    font-family: "Noto Serif TC", "Huninn", serif;
+    color: #2d2416;
+    line-height: 1.2;
+    margin: 0;
+}
+.cb-form-desc {
+    margin: 14px 0 26px;
+    font-size: 14px;
+    line-height: 1.75;
+    color: #4a4330;
+    font-family: "Noto Serif TC", "Noto Sans TC", serif;
+}
+.cb-form-label {
+    display: block;
+    font-size: 11.5px;
+    letter-spacing: 0.2em;
+    font-weight: 700;
+    color: #6b5428;
+    font-family: "Noto Serif TC", serif;
+    margin: 18px 0 6px;
+}
+.cb-form-label:first-of-type { margin-top: 0; }
+
+/* 紙感輸入框 */
+.cb-form-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: #FBF7E8;
+    border: none;
+    border-bottom: 2px solid rgba(45, 36, 22, 0.35);
+    border-radius: 0;
+    font-size: 16px;
+    color: #2d2416;
+    font-family: "Noto Serif TC", "Noto Sans TC", serif;
+    outline: none;
+    transition: border-color 0.2s, background 0.2s;
+}
+.cb-form-input::placeholder {
+    color: rgba(74, 67, 48, 0.4);
+}
+.cb-form-input:focus {
+    border-bottom-color: #8b3a2b;
+    background: #FFFCF0;
+}
+
+/* 提示清單（底線分隔） */
+.cb-form-hints {
+    margin: 14px 0 24px;
+    padding: 12px 14px;
+    background: rgba(45, 36, 22, 0.04);
+    border-left: 3px solid #e8b84f;
+    list-style: none;
+    font-size: 12.5px;
+    line-height: 1.9;
+    color: #5a4a28;
+}
+.cb-form-hints li { padding: 1px 0; }
+
+/* 主按鈕（深綠黑板色） */
+.cb-form-cta {
+    width: 100%;
+    margin-top: 22px;
+    padding: 14px 22px;
+    background: #2d3a1f;
+    color: #f0ebdf;
+    border: none;
+    border-radius: 2px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: "Noto Serif TC", serif;
+    box-shadow: 4px 4px 0 rgba(45, 36, 22, 0.25);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.cb-form-cta:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.3);
+}
+.cb-form-cta:active {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 rgba(45, 36, 22, 0.2);
+}
+.cb-form-cta .cb-arrow { transition: transform 0.2s; }
+.cb-form-cta:hover .cb-arrow { transform: translateX(4px); }
+
+/* 次要按鈕（紙質返回） */
+.cb-form-cta-secondary {
+    width: 100%;
+    margin-top: 10px;
+    padding: 12px 22px;
+    background: transparent;
+    color: #5a4a28;
+    border: 1.5px dashed rgba(45, 36, 22, 0.4);
+    border-radius: 2px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-family: "Noto Serif TC", serif;
+    transition: background 0.2s, color 0.2s;
+}
+.cb-form-cta-secondary:hover {
+    background: rgba(45, 36, 22, 0.06);
+    color: #2d2416;
+}
+
+/* ---------- RWD（響應式） ---------- */
+@media (max-width: 1023px) {
+    .cb-wrap { padding: 0 28px; }
+    .cb-main {
+        grid-template-columns: 1fr;
+        padding: 32px 0 24px;
+        gap: 36px;
+    }
+    .cb-headline { font-size: 64px; }
+    .cb-headline-yellow { font-size: 48px; }
+    .cb-blackboard { padding: 28px 28px 32px; }
+    .cb-page-hint { text-align: left; justify-content: flex-start; }
+    .cb-quote { text-align: left; }
+}
+@media (max-width: 639px) {
+    .cb-wrap { padding: 0 16px; }
+    .cb-header {
+        padding: 16px 0;
+        gap: 10px;
+    }
+    .cb-nav {
+        gap: 14px;
+        font-size: 12px;
+        flex-wrap: wrap;
+    }
+    .cb-handbook-fab {
+        top: 8px;
+        right: 8px;
+        padding: 6px 10px;
+        font-size: 11px;
+    }
+    .cb-main {
+        padding: 24px 0 20px;
+        gap: 28px;
+    }
+    .cb-headline { font-size: 48px; }
+    .cb-headline-yellow { font-size: 36px; }
+    .cb-blackboard {
+        padding: 22px 20px 26px;
+        box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.2);
+    }
+    .cb-chalk-swirl { width: 56px; height: 56px; top: 12px; right: 14px; }
+    .cb-description { font-size: 14px; line-height: 1.75; }
+    .cb-stats {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 22px;
+    }
+    .cb-stat-num { font-size: 22px; }
+    .cb-note-card {
+        padding: 24px 22px 22px 96px;
+    }
+    .cb-note-stamp {
+        left: 14px;
+        top: 22px;
+        width: 60px;
+        height: 60px;
+    }
+    .cb-note-margin { left: 84px; }
+    .cb-note-rules { inset: 16px 18px 16px 92px; }
+    .cb-note-title { font-size: 30px; }
+    .cb-note-tape { width: 96px; left: 38%; }
+    .cb-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    /* 表單卡 RWD */
+    .cb-form-page { padding: 80px 14px 40px; }
+    .cb-form-card { padding: 48px 26px 32px; }
+    .cb-form-stamp {
+        top: 24px;
+        right: 18px;
+        width: 48px;
+        height: 48px;
+    }
+    .cb-form-title { font-size: 26px; }
+    .cb-form-desc { font-size: 13.5px; margin: 12px 0 22px; }
+    .cb-form-input { font-size: 16px; padding: 11px 12px; }
+    .cb-form-cta { font-size: 14px; padding: 13px 18px; }
+    .cb-back-link {
+        top: 10px;
+        left: 10px;
+        font-size: 12px;
+        padding: 6px 10px;
+    }
 }
 
 .role-card {
