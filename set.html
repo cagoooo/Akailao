@@ -8,198 +8,558 @@
     <!-- 🆕 MODIFIED [v3.8.7] D-2: Tailwind 從 CDN 改為本地預編譯 -->
     <link rel="stylesheet" href="tailwind-build.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@300;400;600;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Huninn&display=swap" rel="stylesheet">
     <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        /* 🆕 [V3.9.0] set.html 黑板筆記版 — 與主站 entry 視覺統一 */
+        *, *::before, *::after { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            padding: 0;
             min-height: 100vh;
+            font-family: "Huninn", "Noto Sans TC", system-ui, sans-serif;
+            background: #C9B085;
+            color: #2d2416;
+            overflow-x: hidden;
+        }
+        body::before, body::after {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::before {
+            opacity: 0.8;
+            mix-blend-mode: multiply;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='k'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.22 0 0 0 0 0.14 0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='400' height='400' filter='url(%23k)' opacity='0.5'/%3E%3C/svg%3E");
+        }
+        body::after {
+            opacity: 0.15;
+            background-image: repeating-linear-gradient(90deg, rgba(90,60,20,0.08) 0 2px, transparent 2px 4px);
         }
 
-        .container {
-            max-width: 900px;
+        @keyframes cb-float-up {
+            from { opacity: 0; transform: translateY(18px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes cb-spin { to { transform: rotate(360deg); } }
+
+        .cb-set-wrap {
+            position: relative;
+            z-index: 1;
+            max-width: 920px;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 36px 28px 64px;
         }
 
-        .card {
-            background: white;
-            border-radius: 1rem;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
-            padding: 2rem;
+        /* 返回首頁紙膠帶連結 */
+        .cb-back-link {
+            position: fixed;
+            top: 18px;
+            left: 22px;
+            z-index: 20;
+            color: #5a4a28;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-decoration: none;
+            background: rgba(241, 233, 214, 0.85);
+            padding: 8px 14px;
+            border-radius: 2px;
+            border: 1.5px solid rgba(45, 36, 22, 0.4);
+            box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.18);
+            transition: transform 0.2s;
+            font-family: "Noto Serif TC", serif;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .cb-back-link:hover { transform: translateY(-2px); }
+
+        /* HEADER */
+        .cb-set-header {
+            text-align: center;
+            margin-bottom: 28px;
+            animation: cb-float-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+        .cb-set-eyebrow {
+            font-size: 11px;
+            letter-spacing: 0.32em;
+            font-weight: 700;
+            color: #6b5428;
+            font-family: "Noto Serif TC", serif;
+            margin-bottom: 12px;
+        }
+        .cb-set-title {
+            font-size: 48px;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            color: #2d2416;
+            font-family: "Noto Serif TC", "Huninn", serif;
+            line-height: 1;
+            margin: 0;
+        }
+        .cb-set-subtitle {
+            font-size: 18px;
+            color: #4a4330;
+            margin-top: 10px;
+            font-family: "Noto Serif TC", serif;
+        }
+        .cb-set-version {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            background: #2d3a1f;
+            color: #f0ebdf;
+            padding: 6px 14px;
+            border-radius: 2px;
+            border: 1.5px solid #2d2416;
+            box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.25);
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            font-weight: 700;
+            font-family: "Noto Serif TC", serif;
+            transform: rotate(-1deg);
+        }
+        .cb-set-version-num {
+            background: #e8b84f;
+            color: #2d2416;
+            padding: 1px 8px;
+            border-radius: 2px;
+            font-weight: 900;
         }
 
-        .input-group {
-            margin-bottom: 1.5rem;
+        /* CARD */
+        .cb-set-card {
+            position: relative;
+            background: #F8F2DE;
+            border: 1.5px solid rgba(45, 36, 22, 0.5);
+            border-radius: 4px;
+            padding: 40px 36px 32px;
+            margin-bottom: 32px;
+            box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.18),
+                        0 24px 48px -20px rgba(45, 36, 22, 0.3);
+            animation: cb-float-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+        }
+        .cb-set-card:nth-of-type(odd) { transform: rotate(-0.2deg); }
+        .cb-set-card:nth-of-type(even) { transform: rotate(0.2deg); }
+        .cb-set-card-tape {
+            position: absolute;
+            top: -12px;
+            left: 32px;
+            padding: 5px 16px;
+            font-size: 10.5px;
+            letter-spacing: 0.24em;
+            font-weight: 800;
+            color: #2d2416;
+            font-family: "Noto Serif TC", serif;
+            box-shadow: 0 2px 4px rgba(45, 36, 22, 0.2);
+            transform: rotate(-2deg);
+        }
+        .cb-set-h2 {
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: -0.01em;
+            color: #2d2416;
+            font-family: "Noto Serif TC", "Huninn", serif;
+            margin: 0 0 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
-        .input-group label {
+        /* 提示框 */
+        .cb-set-info, .cb-set-warn, .cb-set-success {
+            padding: 14px 18px;
+            border-radius: 2px;
+            margin-bottom: 18px;
+            font-size: 14px;
+            line-height: 1.75;
+            color: #2d2416;
+        }
+        .cb-set-info {
+            background: rgba(232, 184, 79, 0.18);
+            border-left: 3px solid #e8b84f;
+        }
+        .cb-set-warn {
+            background: rgba(139, 58, 43, 0.1);
+            border-left: 3px solid #8b3a2b;
+        }
+        .cb-set-success {
+            background: rgba(107, 127, 58, 0.15);
+            border-left: 3px solid #6b7f3a;
+        }
+
+        /* 表單 */
+        .cb-set-label {
             display: block;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 0.5rem;
-            font-size: 1.1rem;
+            font-size: 12.5px;
+            letter-spacing: 0.18em;
+            font-weight: 700;
+            color: #6b5428;
+            font-family: "Noto Serif TC", serif;
+            margin-bottom: 8px;
         }
-
-        .input-group textarea {
+        .cb-set-label-extra {
+            font-size: 11px;
+            color: #6b5428;
+            font-weight: 600;
+            margin-left: 6px;
+            letter-spacing: 0.04em;
+        }
+        .cb-set-textarea {
             width: 100%;
-            padding: 1rem;
-            border: 2px solid #e5e7eb;
-            border-radius: 0.5rem;
-            font-size: 0.95rem;
+            min-height: 280px;
+            padding: 16px 18px;
+            background: #FFFDF4;
+            border: 2px solid rgba(45, 36, 22, 0.5);
+            border-bottom: 3px solid rgba(45, 36, 22, 0.55);
+            border-radius: 4px;
             font-family: 'Courier New', monospace;
-            transition: border-color 0.2s;
+            font-size: 13.5px;
+            line-height: 1.65;
+            color: #2d2416;
+            font-weight: 500;
             resize: vertical;
-            min-height: 300px;
-            background-color: #f9fafb;
-        }
-
-        .input-group textarea:focus {
             outline: none;
-            border-color: #667eea;
-            background-color: white;
+            box-shadow: inset 2px 2px 0 rgba(45, 36, 22, 0.06);
+            transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+        .cb-set-textarea::placeholder {
+            color: rgba(74, 67, 48, 0.5);
+            font-weight: 500;
+        }
+        .cb-set-textarea:hover {
+            border-color: rgba(45, 36, 22, 0.7);
+            background: #FFFEF8;
+        }
+        .cb-set-textarea:focus {
+            border-color: #8b3a2b;
+            border-bottom-color: #8b3a2b;
+            background: #FFFCF0;
+            box-shadow: inset 2px 2px 0 rgba(139, 58, 43, 0.08),
+                        0 0 0 3px rgba(232, 184, 79, 0.35);
         }
 
-        .btn {
-            padding: 1rem 2rem;
-            border-radius: 0.5rem;
-            font-weight: 600;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: all 0.2s;
+        /* 主 CTA（深綠黑板按鈕） */
+        .cb-set-cta {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 14px 32px;
+            background: #2d3a1f;
+            color: #f0ebdf;
             border: none;
+            border-radius: 2px;
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            font-family: "Noto Serif TC", serif;
+            box-shadow: 4px 4px 0 rgba(45, 36, 22, 0.25);
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-decoration: none;
         }
-
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+        .cb-set-cta:hover {
+            transform: translate(-2px, -2px);
+            box-shadow: 6px 6px 0 rgba(45, 36, 22, 0.3);
         }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        .cb-set-cta:active {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0 rgba(45, 36, 22, 0.2);
         }
-
-        .btn-primary:disabled {
-            opacity: 0.5;
+        .cb-set-cta:disabled {
+            opacity: 0.55;
             cursor: not-allowed;
             transform: none;
+            box-shadow: 4px 4px 0 rgba(45, 36, 22, 0.15);
+        }
+        .cb-set-cta-yellow {
+            background: #e8b84f;
+            color: #2d2416;
+            border: 1.5px solid #2d2416;
+        }
+        .cb-set-cta-red {
+            background: #8b3a2b;
+            color: #f0ebdf;
         }
 
+        /* alert 訊息 */
         .alert {
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1.5rem;
+            padding: 12px 16px;
+            border-radius: 2px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            line-height: 1.6;
+            font-family: "Noto Serif TC", serif;
         }
-
         .alert-info {
-            background: #dbeafe;
-            color: #1e40af;
-            border-left: 4px solid #3b82f6;
+            background: rgba(232, 184, 79, 0.18);
+            color: #2d2416;
+            border-left: 3px solid #e8b84f;
         }
-
         .alert-success {
-            background: #d1fae5;
-            color: #065f46;
-            border-left: 4px solid #10b981;
+            background: rgba(107, 127, 58, 0.18);
+            color: #2d2416;
+            border-left: 3px solid #6b7f3a;
         }
-
         .alert-error {
-            background: #fee2e2;
-            color: #991b1b;
-            border-left: 4px solid #ef4444;
+            background: rgba(139, 58, 43, 0.15);
+            color: #2d2416;
+            border-left: 3px solid #8b3a2b;
         }
 
         .spinner {
             display: inline-block;
             width: 1rem;
             height: 1rem;
-            border: 2px solid #ffffff;
+            border: 2px solid #f0ebdf;
             border-top-color: transparent;
             border-radius: 50%;
-            animation: spin 0.6s linear infinite;
+            animation: cb-spin 0.6s linear infinite;
         }
 
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
-        .code-example {
-            background: #1f2937;
-            color: #f9fafb;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.85rem;
-            overflow-x: auto;
-            margin-top: 0.5rem;
-        }
-
-        .code-example .comment {
-            color: #9ca3af;
-        }
-
-        .code-block-container {
+        /* 步驟 */
+        .cb-set-step {
+            margin-bottom: 24px;
+            padding: 18px 22px 18px 22px;
+            background: rgba(248, 242, 222, 0.55);
+            border: 1.5px dashed rgba(45, 36, 22, 0.35);
+            border-radius: 4px;
             position: relative;
         }
-
-        .copy-btn {
-            position: absolute;
-            top: 0.5rem;
-            right: 0.5rem;
-            background: #3b82f6;
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
-            cursor: pointer;
-            font-size: 0.875rem;
-            transition: all 0.2s;
+        .cb-set-step-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 17px;
+            font-weight: 800;
+            color: #2d2416;
+            font-family: "Noto Serif TC", serif;
+            margin: 0 0 10px;
         }
-
-        .copy-btn:hover {
-            background: #2563eb;
-            transform: translateY(-1px);
+        .cb-set-step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            background: #2d3a1f;
+            color: #f0ebdf;
+            border-radius: 50%;
+            font-size: 14px;
+            font-weight: 900;
+            font-family: "Noto Serif TC", serif;
+            flex-shrink: 0;
         }
-
-        .copy-btn.copied {
-            background: #10b981;
+        .cb-set-step-num.cb-num-red {
+            background: #8b3a2b;
         }
-
-        .highlight-text {
+        .cb-set-step-body {
+            margin-left: 40px;
+            font-size: 14px;
+            line-height: 1.85;
+            color: #4a4330;
+        }
+        .cb-set-step-body p { margin: 0 0 8px; }
+        .cb-set-step-body ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+        .cb-set-step-body li { margin-bottom: 4px; }
+        .cb-set-step-sub {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px dashed rgba(45, 36, 22, 0.2);
+        }
+        .cb-set-step-sub-title {
             font-weight: 700;
-            color: #7c3aed;
+            color: #2d2416;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .cb-set-highlight {
+            font-weight: 800;
+            color: #8b3a2b;
+            background: rgba(232, 184, 79, 0.3);
+            padding: 1px 5px;
+            border-radius: 2px;
+        }
+
+        .cb-set-link {
+            color: #8b3a2b;
+            text-decoration: underline;
+            text-decoration-style: dashed;
+            text-underline-offset: 3px;
+            font-weight: 700;
+        }
+        .cb-set-link:hover { color: #2d2416; }
+
+        /* 程式碼區塊（黑板樣式） */
+        .cb-set-code-block {
+            position: relative;
+            margin: 12px 0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .cb-set-code {
+            display: block;
+            background: #2d3a1f;
+            color: #f0ebdf;
+            padding: 16px 18px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.65;
+            overflow-x: auto;
+            white-space: pre;
+            border: 4px solid #8a6632;
+            border-radius: 4px;
+        }
+        .cb-set-copy-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #e8b84f;
+            color: #2d2416;
+            border: 1.5px solid #2d2416;
+            padding: 6px 12px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            font-family: "Noto Serif TC", serif;
+            box-shadow: 2px 2px 0 rgba(45, 36, 22, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+            z-index: 1;
+        }
+        .cb-set-copy-btn:hover {
+            transform: translate(-1px, -1px);
+            box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.45);
+        }
+        .cb-set-copy-btn.copied {
+            background: #6b7f3a;
+            color: #f0ebdf;
+        }
+
+        /* CTA 區（含按鈕的 section） */
+        .cb-set-cta-section {
+            text-align: center;
+            margin-top: 18px;
+        }
+
+        /* 內聯 code */
+        .cb-set-inline-code {
+            background: rgba(45, 36, 22, 0.08);
+            color: #8b3a2b;
+            padding: 1px 6px;
+            border-radius: 2px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.92em;
+            font-weight: 700;
+        }
+
+        /* 功能清單 */
+        .cb-set-feature-list {
+            list-style: none;
+            padding: 0;
+            margin: 12px 0 0;
+        }
+        .cb-set-feature-list li {
+            padding: 8px 0;
+            border-bottom: 1px dashed rgba(45, 36, 22, 0.15);
+            font-size: 13.5px;
+            line-height: 1.7;
+            color: #4a4330;
+        }
+        .cb-set-feature-list li:last-child { border-bottom: none; }
+        .cb-set-feature-list li.highlight {
+            background: rgba(232, 184, 79, 0.2);
+            margin: 4px -8px;
+            padding: 8px 8px;
+            border-radius: 2px;
+            border-bottom: none;
+        }
+
+        /* 頁尾 */
+        .cb-set-footer {
+            text-align: center;
+            margin-top: 36px;
+            padding-top: 20px;
+            border-top: 1.5px dashed rgba(45, 36, 22, 0.3);
+            font-size: 11.5px;
+            color: #6b5428;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            font-family: "Noto Serif TC", serif;
+        }
+
+        /* RWD */
+        @media (max-width: 639px) {
+            .cb-set-wrap { padding: 24px 14px 48px; }
+            .cb-back-link {
+                top: 10px;
+                left: 10px;
+                font-size: 12px;
+                padding: 6px 10px;
+            }
+            .cb-set-title { font-size: 36px; }
+            .cb-set-subtitle { font-size: 15px; }
+            .cb-set-card { padding: 30px 22px 24px; }
+            .cb-set-h2 { font-size: 20px; }
+            .cb-set-step { padding: 14px 16px; }
+            .cb-set-step-title { font-size: 15px; }
+            .cb-set-step-body { margin-left: 0; padding-top: 4px; font-size: 13.5px; }
+            .cb-set-cta { padding: 12px 22px; font-size: 14px; }
+            .cb-set-textarea { min-height: 220px; font-size: 12.5px; }
         }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <div class="card">
-            <div class="text-center mb-8">
-                <h1 class="text-4xl font-bold text-gray-800 mb-2">
-                    <i class="fas fa-cog text-purple-600"></i> 剛好學
-                </h1>
-                <p class="text-xl text-gray-600">Firebase 配置生成器</p>
-                <div class="mt-3 inline-flex items-center gap-2 bg-gradient-to-r from-purple-100 to-pink-100 px-4 py-1.5 rounded-full border border-purple-300">
-                    <span class="text-xs font-bold text-purple-800">🏷️ 本次下載版本</span>
-                    <span class="text-sm font-black text-purple-900 bg-white px-2 py-0.5 rounded-full">V3.8.9</span>
-                    <span class="text-xs text-purple-700">🐛 HOTFIX：modal 預設不隱藏 bug</span>
-                </div>
-            </div>
+    <!-- 返回首頁紙膠帶 -->
+    <a href="./index.html" class="cb-back-link">
+        <span>←</span> <span>返回首頁</span>
+    </a>
 
-            <div class="alert alert-info">
-                <i class="fas fa-lightbulb mr-2"></i>
+    <div class="cb-set-wrap">
+        <!-- HEADER -->
+        <header class="cb-set-header">
+            <div class="cb-set-eyebrow">SETUP · 配置生成器</div>
+            <h1 class="cb-set-title">⚙ 剛好學</h1>
+            <p class="cb-set-subtitle">Firebase 配置生成器</p>
+            <div class="cb-set-version">
+                <span>🏷️ 本次下載版本</span>
+                <span class="cb-set-version-num">V3.9.0</span>
+                <span>· 黑板筆記版</span>
+            </div>
+        </header>
+
+        <!-- 上傳配置卡片 -->
+        <section class="cb-set-card">
+            <span class="cb-set-card-tape" style="background:#e8b84f">STEP 0 · 開始</span>
+
+            <h2 class="cb-set-h2"><i class="fas fa-paste"></i> 貼上你的 Firebase 配置</h2>
+
+            <div class="cb-set-info">
+                <i class="fas fa-lightbulb"></i>
                 <strong>快速上手：</strong>只需一個步驟！直接從 Firebase Console 複製配置代碼，貼上下方文本框，點擊生成即可下載您的專屬應用程式。
             </div>
 
             <form id="config-form">
-                <div class="input-group">
-                    <label for="firebaseConfig">
-                        <i class="fas fa-code text-purple-600 mr-2"></i>Firebase 配置代碼
-                        <span class="text-sm text-gray-500 font-normal ml-2">(直接從 Firebase Console 複製貼上)</span>
-                    </label>
-                    <textarea id="firebaseConfig" name="firebaseConfig" placeholder="請貼上您的 Firebase 配置代碼，例如：
+                <label class="cb-set-label" for="firebaseConfig">
+                    Firebase 配置代碼
+                    <span class="cb-set-label-extra">(直接從 Firebase Console 複製貼上)</span>
+                </label>
+                <textarea id="firebaseConfig" name="firebaseConfig" class="cb-set-textarea" required placeholder="請貼上您的 Firebase 配置代碼，例如：
 
 const firebaseConfig = {
   apiKey: &quot;AIzaSyC...&quot;,
@@ -219,97 +579,82 @@ const firebaseConfig = {
   storageBucket: &quot;your-project.appspot.com&quot;,
   messagingSenderId: &quot;123456789012&quot;,
   appId: &quot;1:123456789012:web:...&quot;
-}" required></textarea>
-                </div>
+}"></textarea>
 
-                <div id="message-container"></div>
+                <div id="message-container" style="margin-top: 16px;"></div>
 
-                <div class="text-center">
-                    <button type="submit" id="generate-btn" class="btn btn-primary">
-                        <i class="fas fa-download mr-2"></i>生成並下載 index.html
+                <div class="cb-set-cta-section">
+                    <button type="submit" id="generate-btn" class="cb-set-cta">
+                        <i class="fas fa-download"></i> 生成並下載 index.html
                     </button>
                 </div>
             </form>
+        </section>
 
-            <div class="mt-8 p-6 bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl border-2 border-purple-200">
-                <h3 class="font-bold text-gray-800 mb-4 text-xl">
-                    <i class="fas fa-cog text-purple-600 mr-2"></i>🔧 建置主程式資料庫設定(Firebase)
+        <!-- 建置 Firebase 步驟卡片 -->
+        <section class="cb-set-card">
+            <span class="cb-set-card-tape" style="background:#8b3a2b; color:#F1E9D6">BUILD · 建置步驟</span>
+
+            <h2 class="cb-set-h2"><i class="fas fa-fire"></i> 建置主程式資料庫設定 (Firebase)</h2>
+
+            <div class="cb-set-warn">
+                本系統需要連接到 <strong>Google Firebase 資料庫</strong>才能運作，您需自行按照本說明完成建置後，才可正常使用。這能確保所有課堂資料（如學生答案）都保存在您自己的空間，確保資料的隱私與所有權。
+                <br><br>
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>注意：</strong>此為必要設定步驟，需要您具備基本的 Google Firebase 操作知識。若未完成此設定，系統將無法使用。
+            </div>
+
+            <!-- 步驟 1 -->
+            <div class="cb-set-step">
+                <h3 class="cb-set-step-title">
+                    <span class="cb-set-step-num">1</span>
+                    建立 Firebase 專案
                 </h3>
-
-                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-5 rounded">
-                    <p class="text-gray-700 mb-2">
-                        本系統需要連接到 <strong>Google Firebase
-                            資料庫</strong>才能運作，您需自行按照本說明完成建置後，才可正常使用。這能確保所有課堂資料（如學生答案）都保存在您自己的空間，確保資料的隱私與所有權。
-                    </p>
-                    <p class="text-sm text-gray-600 mt-2">
-                        <i class="fas fa-exclamation-triangle text-yellow-600 mr-1"></i>
-                        <strong>注意：</strong>此為必要設定步驟，需要您具備基本的 Google Firebase 操作知識。若未完成此設定，系統將無法使用。
-                    </p>
-                </div>
-
-                <!-- 步驟 1 -->
-                <div class="mb-6">
-                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
-                        <span
-                            class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">1</span>
-                        建立 Firebase 專案
-                    </h4>
-                    <ul class="ml-10 text-gray-700 space-y-1">
-                        <li>• 前往 <a href="https://console.firebase.google.com/" target="_blank"
-                                class="text-purple-600 hover:underline font-semibold">Firebase Console</a>（超連結）</li>
-                        <li>• 點擊「新增專案」並依照指示完成建立</li>
+                <div class="cb-set-step-body">
+                    <ul>
+                        <li>前往 <a href="https://console.firebase.google.com/" target="_blank" class="cb-set-link">Firebase Console</a>（超連結）</li>
+                        <li>點擊「新增專案」並依照指示完成建立</li>
                     </ul>
                 </div>
+            </div>
 
-                <!-- 步驟 2 -->
-                <div class="mb-6">
-                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
-                        <span
-                            class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">2</span>
-                        啟用必要服務
-                    </h4>
-                    <div class="ml-10 space-y-3">
-                        <div>
-                            <p class="font-semibold text-gray-800 mb-1">
-                                <i class="fas fa-user-shield text-blue-600 mr-1"></i> Authentication (驗證)
-                            </p>
-                            <p class="text-gray-700 ml-5">在專案左側<span class="highlight-text">「建構」</span>中找到<span
-                                    class="highlight-text">「Authentication」</span>，點擊<span
-                                    class="highlight-text">「開始使用」</span>，進入<span
-                                    class="highlight-text">「登入方式」</span>分頁，並<span
-                                    class="highlight-text">「啟用」</span><span class="highlight-text">「匿名」</span>登入方式。</p>
-                        </div>
-                        <div>
-                            <p class="font-semibold text-gray-800 mb-1">
-                                <i class="fas fa-database text-orange-600 mr-1"></i> Firestore Database (資料庫)
-                            </p>
-                            <p class="text-gray-700 ml-5">在專案左側<span class="highlight-text">「建構」</span>中找到<span
-                                    class="highlight-text">「Firestore Database」</span>，點擊<span
-                                    class="highlight-text">「建立資料庫」</span>後點選<span
-                                    class="highlight-text">「Standard版」</span>，接著下一步位置改成<span
-                                    class="highlight-text">「asia-east1 (Taiwan)」</span>讀取資料才能非常快速，最後選擇以<span
-                                    class="highlight-text">「測試模式」</span>啟動。</p>
-                        </div>
+            <!-- 步驟 2 -->
+            <div class="cb-set-step">
+                <h3 class="cb-set-step-title">
+                    <span class="cb-set-step-num">2</span>
+                    啟用必要服務
+                </h3>
+                <div class="cb-set-step-body">
+                    <div class="cb-set-step-sub">
+                        <p class="cb-set-step-sub-title">
+                            <i class="fas fa-user-shield"></i> Authentication (驗證)
+                        </p>
+                        <p>在專案左側<span class="cb-set-highlight">「建構」</span>中找到<span class="cb-set-highlight">「Authentication」</span>，點擊<span class="cb-set-highlight">「開始使用」</span>，進入<span class="cb-set-highlight">「登入方式」</span>分頁，並<span class="cb-set-highlight">「啟用」</span><span class="cb-set-highlight">「匿名」</span>登入方式。</p>
+                    </div>
+                    <div class="cb-set-step-sub">
+                        <p class="cb-set-step-sub-title">
+                            <i class="fas fa-database"></i> Firestore Database (資料庫)
+                        </p>
+                        <p>在專案左側<span class="cb-set-highlight">「建構」</span>中找到<span class="cb-set-highlight">「Firestore Database」</span>，點擊<span class="cb-set-highlight">「建立資料庫」</span>後點選<span class="cb-set-highlight">「Standard版」</span>，接著下一步位置改成<span class="cb-set-highlight">「asia-east1 (Taiwan)」</span>讀取資料才能非常快速，最後選擇以<span class="cb-set-highlight">「測試模式」</span>啟動。</p>
                     </div>
                 </div>
+            </div>
 
-                <!-- 步驟 3 -->
-                <div class="mb-6 bg-red-50 border-2 border-red-300 p-4 rounded-lg">
-                    <h4 class="font-bold text-red-700 mb-3 text-lg">
-                        <span
-                            class="bg-red-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">3</span>
-                        修改 Firestore 安全性規則 (非常重要！)
-                    </h4>
-                    <div class="ml-10 space-y-2">
-                        <p class="text-gray-700">資料庫建立後，在專案左側<span class="highlight-text">「建構」</span>中找到 Firestore
-                            Database 頁面，點擊上方的<span class="highlight-text">「規則」</span>(Rules) 分頁。</p>
-                        <p class="text-gray-700">將編輯器中的所有內容，替換為以下規則：</p>
-                        <div class="code-block-container">
-                            <button class="copy-btn" onclick="copyFirestoreRules(this)">
-                                <i class="fas fa-copy mr-1"></i>複製
-                            </button>
-                            <div class="code-example bg-gray-900 text-gray-100 p-4 rounded mt-2 overflow-x-auto">
-                                <pre class="text-sm" id="firestore-rules">rules_version = '2';
+            <!-- 步驟 3 -->
+            <div class="cb-set-step" style="border-color: rgba(139, 58, 43, 0.5); background: rgba(139, 58, 43, 0.06);">
+                <h3 class="cb-set-step-title">
+                    <span class="cb-set-step-num cb-num-red">3</span>
+                    修改 Firestore 安全性規則 <span style="color:#8b3a2b; font-size: 13px;">（非常重要！）</span>
+                </h3>
+                <div class="cb-set-step-body">
+                    <p>資料庫建立後，在專案左側<span class="cb-set-highlight">「建構」</span>中找到 Firestore Database 頁面，點擊上方的<span class="cb-set-highlight">「規則」</span>(Rules) 分頁。</p>
+                    <p>將編輯器中的所有內容，替換為以下規則：</p>
+
+                    <div class="cb-set-code-block">
+                        <button type="button" class="cb-set-copy-btn" onclick="copyFirestoreRules(this)">
+                            <i class="fas fa-copy"></i> 複製
+                        </button>
+                        <pre class="cb-set-code" id="firestore-rules">rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {
@@ -317,38 +662,32 @@ service cloud.firestore {
     }
   }
 }</pre>
-                            </div>
-                        </div>
-                        <p class="text-gray-600 text-sm mt-2">
-                            <i class="fas fa-lightbulb text-yellow-500 mr-1"></i>
-                            這條規則的意思是「允許任何已登入的使用者（包含我們剛才啟用的匿名登入）對資料庫進行讀寫」。
-                        </p>
-                        <p class="text-gray-700 font-semibold mt-3">
-                            <i class="fas fa-check-circle text-green-600 mr-1"></i>
-                            修改完成後，點擊<span class="highlight-text">「發佈」</span>(Publish) 來儲存您的新規則。
-                        </p>
                     </div>
-                </div>
 
-                <!-- 步驟 4 -->
-                <div class="mb-4">
-                    <h4 class="font-bold text-purple-700 mb-2 text-lg">
-                        <span
-                            class="bg-purple-600 text-white rounded-full w-7 h-7 inline-flex items-center justify-center mr-2 text-sm">4</span>
-                        取得您的 Firebase 設定值
-                    </h4>
-                    <div class="ml-10 space-y-2">
-                        <p class="text-gray-700">① 在 Firebase Console 中，點擊專案首頁左上角的齒輪圖示 <i
-                                class="fas fa-cog text-gray-600"></i>，選擇<span class="highlight-text">「專案設定」</span>。</p>
-                        <p class="text-gray-700">② 在<span class="highlight-text">「您的應用程式」</span>區塊，點擊<span
-                                class="highlight-text">「新增應用程式」</span>並選擇<span class="highlight-text">「網頁」</span>圖示
-                            (<code>&lt;/&gt;</code>)。</p>
-                        <p class="text-gray-700">③ 為您的應用程式命名後，點擊<span class="highlight-text">「註冊應用程式」</span>按鈕，您會看到一組
-                            <code
-                                class="bg-purple-100 px-2 py-1 rounded text-purple-700 font-semibold">firebaseConfig</code>
-                            設定值。請將它複製下來。</p>
-                        <div class="code-example bg-gray-900 text-gray-100 p-4 rounded mt-2 overflow-x-auto">
-                            <pre class="text-sm">const firebaseConfig = {
+                    <p style="margin-top: 12px;">
+                        <i class="fas fa-lightbulb" style="color:#e8b84f;"></i>
+                        這條規則的意思是「允許任何已登入的使用者（包含我們剛才啟用的匿名登入）對資料庫進行讀寫」。
+                    </p>
+                    <p style="margin-top: 8px; font-weight: 700; color: #2d2416;">
+                        <i class="fas fa-check-circle" style="color:#6b7f3a;"></i>
+                        修改完成後，點擊<span class="cb-set-highlight">「發佈」</span>(Publish) 來儲存您的新規則。
+                    </p>
+                </div>
+            </div>
+
+            <!-- 步驟 4 -->
+            <div class="cb-set-step">
+                <h3 class="cb-set-step-title">
+                    <span class="cb-set-step-num">4</span>
+                    取得您的 Firebase 設定值
+                </h3>
+                <div class="cb-set-step-body">
+                    <p>① 在 Firebase Console 中，點擊專案首頁左上角的齒輪圖示 <i class="fas fa-cog"></i>，選擇<span class="cb-set-highlight">「專案設定」</span>。</p>
+                    <p>② 在<span class="cb-set-highlight">「您的應用程式」</span>區塊，點擊<span class="cb-set-highlight">「新增應用程式」</span>並選擇<span class="cb-set-highlight">「網頁」</span>圖示 (<code class="cb-set-inline-code">&lt;/&gt;</code>)。</p>
+                    <p>③ 為您的應用程式命名後，點擊<span class="cb-set-highlight">「註冊應用程式」</span>按鈕，您會看到一組 <code class="cb-set-inline-code">firebaseConfig</code> 設定值。請將它複製下來。</p>
+
+                    <div class="cb-set-code-block">
+                        <pre class="cb-set-code">const firebaseConfig = {
   apiKey: "AIzaSy...",
   authDomain: "xxx.firebaseapp.com",
   projectId: "xxx",
@@ -356,107 +695,105 @@ service cloud.firestore {
   messagingSenderId: "123456789",
   appId: "1:123456789:web:..."
 };</pre>
-                        </div>
-                        <p
-                            class="text-gray-700 font-semibold mt-3 bg-green-100 border-l-4 border-green-500 p-3 rounded">
-                            <i class="fas fa-arrow-up text-green-600 mr-1"></i>
-                            將這段配置代碼複製後，貼到本頁面最上方的文本框，然後點擊<span class="highlight-text">「生成並下載」</span>按鈕即可！
-                        </p>
+                    </div>
+
+                    <div class="cb-set-success" style="margin-top: 14px;">
+                        <i class="fas fa-arrow-up"></i>
+                        將這段配置代碼複製後，貼到本頁面最上方的文本框，然後點擊<span class="cb-set-highlight">「生成並下載」</span>按鈕即可！
                     </div>
                 </div>
             </div>
+        </section>
 
-            <!-- GitHub Pages 部署說明 -->
-            <div class="mt-6 p-5 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border-2 border-green-200">
-                <h3 class="font-bold text-gray-800 mb-3 text-lg">
-                    <i class="fas fa-rocket text-green-600 mr-2"></i>下一步：發布您的應用程式到網路上
-                </h3>
-                <p class="text-gray-700 mb-4">
-                    下載完成後，請將剛剛下載的 <code
-                        class="bg-white px-2 py-1 rounded text-sm font-semibold text-purple-700">index.html</code>
-                    上傳到以下網站即可免費發布您的應用程式：
+        <!-- GitHub Pages 部署卡片 -->
+        <section class="cb-set-card">
+            <span class="cb-set-card-tape" style="background:#6b7f3a; color:#F1E9D6">DEPLOY · 發布上線</span>
+
+            <h2 class="cb-set-h2"><i class="fas fa-rocket"></i> 下一步：發布到網路上</h2>
+
+            <p style="font-size: 14px; line-height: 1.85; color: #4a4330;">
+                下載完成後，請將剛剛下載的 <code class="cb-set-inline-code">index.html</code> 上傳到以下網站即可免費發布您的應用程式：
+            </p>
+
+            <div class="cb-set-cta-section">
+                <a href="https://gg90052.github.io/ezpage/" target="_blank" class="cb-set-cta">
+                    <i class="fas fa-cloud-upload-alt"></i> 前往 GitHub Pages 發布工具
+                    <i class="fas fa-external-link-alt" style="font-size: 12px;"></i>
+                </a>
+            </div>
+
+            <p style="text-align: center; font-size: 13px; color: #6b5428; margin-top: 14px;">
+                <i class="fas fa-info-circle" style="color:#6b7f3a;"></i>
+                上傳後，您將獲得一個公開網址，學生可以直接透過瀏覽器使用您的教學工具！
+            </p>
+        </section>
+
+        <!-- Google AI Studio 卡片 -->
+        <section class="cb-set-card">
+            <span class="cb-set-card-tape" style="background:#a88957; color:#F1E9D6">AI · Gemini 金鑰</span>
+
+            <h2 class="cb-set-h2"><i class="fas fa-magic"></i> 啟用 AI 自動出題功能</h2>
+            <p style="font-size: 13.5px; color: #4a4330; margin: 0 0 18px;">完全免費，📷 支援拍照/截圖辨識</p>
+
+            <div class="cb-set-info" style="background: rgba(107, 127, 58, 0.1); border-left-color: #6b7f3a;">
+                <p style="font-weight: 800; color: #2d2416; margin: 0 0 6px;">
+                    <i class="fas fa-info-circle"></i>
+                    使用 AI 出題功能前，請先準備您自己的 Gemini API Key
                 </p>
-                <div class="text-center">
-                    <a href="https://gg90052.github.io/ezpage/" target="_blank"
-                        class="inline-block bg-gradient-to-r from-green-500 to-blue-500 text-white px-8 py-4 rounded-lg font-bold text-lg hover:shadow-xl transition-all transform hover:scale-105">
-                        <i class="fas fa-cloud-upload-alt mr-2"></i>前往 GitHub Pages 發布工具
-                        <i class="fas fa-external-link-alt ml-2 text-sm"></i>
-                    </a>
-                </div>
-                <p class="text-sm text-gray-600 mt-4 text-center">
-                    <i class="fas fa-info-circle text-blue-500 mr-1"></i>
-                    上傳後，您將獲得一個公開網址，學生可以直接透過瀏覽器使用您的教學工具！
+                <p style="font-size: 13.5px; margin: 0 0 8px;">
+                    為確保每位老師都能穩定享用 AI 服務，<strong>透過本頁下載的 <code class="cb-set-inline-code">index.html</code> 不內建共用金鑰</strong>。只要花 2 分鐘完成以下步驟即可永久免費使用：
+                </p>
+                <ol style="font-size: 13.5px; padding-left: 22px; margin: 0 0 8px;">
+                    <li>點擊下方「前往 Google AI Studio」按鈕</li>
+                    <li>用 Google 帳號登入後點 <strong>「Create API Key」</strong>，取得一組金鑰</li>
+                    <li>打開您下載的 index.html → 教師模式 → AI 設定 → 貼上金鑰 → 儲存</li>
+                </ol>
+                <p style="font-size: 12.5px; color: #6b5428; margin: 8px 0 0;">
+                    💡 Gemini 個人免費配額：每分鐘 15 次、每日 1,500 次 — 整班 30 位學生的備課需求完全夠用。
+                </p>
+                <p style="font-size: 12.5px; color: #6b7f3a; font-weight: 700; margin: 6px 0 0;">
+                    ✨ 想直接試用看看？
+                    <a href="https://cagoooo.github.io/Akailao/" target="_blank" class="cb-set-link">線上版 (cagoooo.github.io/Akailao)</a>
+                    仍可免 Key 直接體驗（體驗帳號共用，正式授課請用自己下載的版本）。
                 </p>
             </div>
 
-            <!-- Google AI Studio API KEY 獲取說明 -->
-            <div class="mt-6 p-5 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-lg border-2 border-orange-200">
-                <h3 class="font-bold text-gray-800 mb-3 text-lg">
-                    <i class="fas fa-magic text-orange-600 mr-2"></i>啟用 AI 自動出題功能（完全免費，📷 支援拍照/截圖辨識）
-                </h3>
+            <div class="cb-set-cta-section">
+                <a href="https://aistudio.google.com/" target="_blank" class="cb-set-cta cb-set-cta-yellow">
+                    <i class="fas fa-brain"></i> 前往 Google AI Studio 申請免費 API Key
+                    <i class="fas fa-external-link-alt" style="font-size: 12px;"></i>
+                </a>
+            </div>
 
-                <!-- 🆕 v3.6.1 重要提醒：下載版本需自行設定 Gemini Key -->
-                <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-500 rounded">
-                    <p class="font-bold text-blue-800 mb-2">
-                        <i class="fas fa-info-circle text-blue-600 mr-1"></i>
-                        使用 AI 出題功能前，請先準備您自己的 Gemini API Key
-                    </p>
-                    <p class="text-sm text-gray-700 mb-2">
-                        為確保每位老師都能穩定享用 AI 服務，
-                        <strong>透過本頁下載的 <code class="bg-white px-1.5 py-0.5 rounded text-purple-700 font-semibold">index.html</code>
-                            不內建共用金鑰</strong>。只要花 2 分鐘完成以下步驟即可永久免費使用：
-                    </p>
-                    <ol class="text-sm text-gray-700 ml-5 space-y-1 list-decimal">
-                        <li>點擊下方「前往 Google AI Studio」按鈕</li>
-                        <li>用 Google 帳號登入後點 <strong>「Create API Key」</strong>，取得一組金鑰</li>
-                        <li>打開您下載的 index.html → 教師模式 → AI 設定 → 貼上金鑰 → 儲存</li>
-                    </ol>
-                    <p class="text-xs text-gray-600 mt-2">
-                        💡 Gemini 個人免費配額：每分鐘 15 次、每日 1,500 次 — 整班 30 位學生的備課需求完全夠用。
-                    </p>
-                    <p class="text-xs text-green-700 mt-1 font-semibold">
-                        ✨ 想直接試用看看？
-                        <a href="https://cagoooo.github.io/Akailao/" target="_blank" class="underline hover:text-green-900">
-                            線上版 (cagoooo.github.io/Akailao)
-                        </a>
-                        仍可免 Key 直接體驗（體驗帳號共用，正式授課請用自己下載的版本）。
-                    </p>
-                </div>
-
-                <div class="text-center">
-                    <a href="https://aistudio.google.com/" target="_blank"
-                        class="inline-block bg-gradient-to-r from-orange-500 to-yellow-500 text-white px-8 py-4 rounded-lg font-bold text-lg hover:shadow-xl transition-all transform hover:scale-105">
-                        <i class="fas fa-brain mr-2"></i>前往 Google AI Studio 申請免費 API Key
-                        <i class="fas fa-external-link-alt ml-2 text-sm"></i>
-                    </a>
-                </div>
-
-                <div class="mt-4 p-3 bg-white rounded-lg border border-orange-200">
-                    <p class="text-sm text-gray-700 mb-2">
-                        <i class="fas fa-lightbulb text-yellow-500 mr-2"></i>
-                        <strong>設定完 API Key 後，AI 出題有三種使用方式：</strong>
-                    </p>
-                    <ul class="text-sm text-gray-600 ml-6 space-y-1.5">
-                        <li>📝 <strong>貼上文章</strong>：將課本或教材的文字內容貼入，AI 自動產生 PIRLS 四層次題組</li>
-                        <li>💭 <strong>描述主題</strong>：只寫主題關鍵字（例如「台灣的地震」），AI 會自動生成文本 + 題目</li>
-                        <li class="bg-purple-50 -ml-2 pl-2 py-1 rounded border border-purple-200">
-                            📷 <strong class="text-purple-700">【V3.6.0 新功能】拍照/截圖辨識</strong>：
-                            直接拍課本、截圖 PDF 或講義（支援多張圖片、可 Ctrl+V 貼上剪貼簿），
-                            Gemini Vision 自動辨識文字並產生 PIRLS 四層次題組 — <span class="text-purple-600">教師備課神器！</span>
-                        </li>
-                    </ul>
-                    <p class="text-sm text-gray-700 mt-3 pt-3 border-t border-orange-200">
-                        <i class="fas fa-layer-group text-orange-500 mr-1"></i>
-                        <strong>PIRLS 四層次自動配題</strong>：直接提取(3) + 直接推論(3) + 詮釋整合(2) + 比較評估(2) = 10 題
-                    </p>
-                </div>
-
-                <p class="text-sm text-gray-600 mt-3 text-center">
-                    <i class="fas fa-shield-alt text-blue-600 mr-1"></i>
-                    您的 API Key 只儲存在您自己的瀏覽器中（localStorage），絕不會外流或上傳到任何伺服器。
+            <div style="margin-top: 20px; padding: 14px 18px; background: rgba(45, 36, 22, 0.04); border: 1.5px dashed rgba(45, 36, 22, 0.25); border-radius: 4px;">
+                <p style="font-size: 13.5px; font-weight: 700; color: #2d2416; margin: 0 0 8px;">
+                    <i class="fas fa-lightbulb" style="color:#e8b84f;"></i>
+                    設定完 API Key 後，AI 出題有三種使用方式：
+                </p>
+                <ul class="cb-set-feature-list">
+                    <li>📝 <strong>貼上文章</strong>：將課本或教材的文字內容貼入，AI 自動產生 PIRLS 四層次題組</li>
+                    <li>💭 <strong>描述主題</strong>：只寫主題關鍵字（例如「台灣的地震」），AI 會自動生成文本 + 題目</li>
+                    <li class="highlight">
+                        📷 <strong style="color:#8b3a2b;">【V3.6.0 新功能】拍照/截圖辨識</strong>：
+                        直接拍課本、截圖 PDF 或講義（支援多張圖片、可 Ctrl+V 貼上剪貼簿），
+                        Gemini Vision 自動辨識文字並產生 PIRLS 四層次題組 — <span style="color:#8b3a2b; font-weight: 700;">教師備課神器！</span>
+                    </li>
+                </ul>
+                <p style="font-size: 13px; color: #4a4330; margin: 12px 0 0; padding-top: 10px; border-top: 1px dashed rgba(45, 36, 22, 0.2);">
+                    <i class="fas fa-layer-group" style="color:#a88957;"></i>
+                    <strong>PIRLS 四層次自動配題</strong>：直接提取(3) + 直接推論(3) + 詮釋整合(2) + 比較評估(2) = 10 題
                 </p>
             </div>
-        </div>
+
+            <p style="text-align: center; font-size: 12.5px; color: #6b5428; margin: 14px 0 0;">
+                <i class="fas fa-shield-alt" style="color:#6b7f3a;"></i>
+                您的 API Key 只儲存在您自己的瀏覽器中（localStorage），絕不會外流或上傳到任何伺服器。
+            </p>
+        </section>
+
+        <footer class="cb-set-footer">
+            © 2026 AKAILAO 剛好學 · 由教師為教師打造
+        </footer>
     </div>
 
     <script>

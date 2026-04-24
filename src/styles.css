@@ -749,26 +749,37 @@ body.initial-view-background #app-container {
 }
 .cb-form-label:first-of-type { margin-top: 0; }
 
-/* 紙感輸入框 */
+/* 紙感輸入框 — V3.9.1 加強可見度：完整邊框 + 內陰影 + 更亮底色 */
 .cb-form-input {
     width: 100%;
-    padding: 12px 14px;
-    background: #FBF7E8;
-    border: none;
-    border-bottom: 2px solid rgba(45, 36, 22, 0.35);
-    border-radius: 0;
-    font-size: 16px;
+    padding: 14px 16px;
+    background: #FFFDF4;
+    border: 2px solid rgba(45, 36, 22, 0.5);
+    border-bottom: 3px solid rgba(45, 36, 22, 0.55);
+    border-radius: 4px;
+    font-size: 17px;
+    font-weight: 600;
     color: #2d2416;
     font-family: "Noto Serif TC", "Noto Sans TC", serif;
     outline: none;
-    transition: border-color 0.2s, background 0.2s;
+    box-shadow: inset 2px 2px 0 rgba(45, 36, 22, 0.06);
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, transform 0.15s;
 }
 .cb-form-input::placeholder {
-    color: rgba(74, 67, 48, 0.4);
+    color: rgba(74, 67, 48, 0.55);
+    font-weight: 500;
+}
+.cb-form-input:hover {
+    border-color: rgba(45, 36, 22, 0.7);
+    background: #FFFEF8;
 }
 .cb-form-input:focus {
+    border-color: #8b3a2b;
     border-bottom-color: #8b3a2b;
     background: #FFFCF0;
+    box-shadow: inset 2px 2px 0 rgba(139, 58, 43, 0.08),
+                0 0 0 3px rgba(232, 184, 79, 0.35);
+    transform: translateY(-1px);
 }
 
 /* 提示清單（底線分隔） */
@@ -919,7 +930,7 @@ body.initial-view-background #app-container {
     }
     .cb-form-title { font-size: 26px; }
     .cb-form-desc { font-size: 13.5px; margin: 12px 0 22px; }
-    .cb-form-input { font-size: 16px; padding: 11px 12px; }
+    .cb-form-input { font-size: 16px; padding: 13px 14px; }
     .cb-form-cta { font-size: 14px; padding: 13px 18px; }
     .cb-back-link {
         top: 10px;
