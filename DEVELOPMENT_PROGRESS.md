@@ -1,10 +1,27 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.9.3** ｜ 更新時間：2026-04-24
+> **版本：V3.9.4** ｜ 更新時間：2026-04-24
 
 ---
 
-## 🆕 最近更新（V3.9.3）
+## 🆕 最近更新（V3.9.4）
+
+### 🐛 修復 set.html 版本徽章顯示成 Vdev 的 bug
+- [x] **[v3.9.4] 🐛 修正 V3.9.3 引入的 sed 自我覆蓋問題**
+  - **症狀**：線上 set.html 版本徽章顯示「Vdev」而不是「V3.9.3」
+  - **根因**：deploy.yml 的 `sed -i "s/__APP_VERSION__/.../g"` 全域替換時，
+    把 inline script **本身**裡的 `__APP_VERSION__` 字面字串也替換掉了，
+    導致 `if (textContent.includes('__APP_VERSION__'))` 變成
+    `if (textContent.includes('3.9.3'))` → 永遠成立 →
+    把正確版本「V3.9.3」覆蓋為 fallback「Vdev」
+  - **修法**：inline script 改用 regex 檢查「是否為有效版本格式 `V數字.數字`」，
+    不是有效格式才 fallback。完全不依賴 sentinel 字面字串，sed 替換不到
+  - **教訓**：用 sed 全域替換 build artifact 時，要避免在同檔案 inline script
+    裡寫 sentinel literal — 改用 dynamic 字串建構或內容驗證
+
+---
+
+## 🆕 V3.9.3 更新
 
 ### 🏷️ 版本徽章自動同步 — 一處改 package.json，全站更新
 - [x] **[v3.9.3] 🏷️ 入口頁「NEW · vX.Y.Z」徽章 build-time 自動注入**

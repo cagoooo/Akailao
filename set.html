@@ -797,12 +797,17 @@ service cloud.firestore {
     </div>
 
     <script>
-        // 🆕 [V3.9.3] 版本徽章自動同步：
-        //   prod build 時 deploy.yml 會把 __APP_VERSION__ 替換成實際版本號
+        // 🆕 [V3.9.4] 版本徽章自動同步（修正 V3.9.3 bug）：
+        //   prod build 時 deploy.yml 會把 sentinel 替換成實際版本號 (V x.y.z)
         //   dev / 未替換時 fallback 為 data-version-fallback 的值
+        //   ⚠️ V3.9.3 bug：原本用 .includes('__APP_'+'VERSION__') 檢查 sentinel，
+        //      但 sed 也會把 inline script 裡的字面字串替換成版本號，
+        //      導致條件變成 includes('3.9.3') → 永遠成立 → 把正確版本覆蓋成 Vdev。
+        //   ✅ 修法：改檢查「textContent 是否為有效版本格式 V數字.數字.數字」，
+        //      不是有效格式才 fallback。這樣完全不依賴 sentinel 字面字串。
         (function() {
-            const el = document.getElementById('set-version-num');
-            if (el && el.textContent.includes('__APP_VERSION__')) {
+            var el = document.getElementById('set-version-num');
+            if (el && !/^V\d+\.\d+/.test(el.textContent.trim())) {
                 el.textContent = 'V' + (el.dataset.versionFallback || 'dev');
             }
         })();
