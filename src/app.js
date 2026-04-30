@@ -14283,6 +14283,33 @@ async function initialize() {
         _versionBadge.textContent = `NEW · v${__APP_VERSION__}`;
     }
 
+    // 🆕 [V3.9.6] 全局版本徽章（所有頁面右下角固定顯示，方便確認 SW 是否更新）
+    const _globalTag = document.getElementById('global-version-tag');
+    if (_globalTag) {
+        const ver = (typeof __APP_VERSION__ !== 'undefined') ? __APP_VERSION__ : (_globalTag.dataset.versionFallback || 'dev');
+        _globalTag.textContent = `v${ver}`;
+        _globalTag.title = `目前載入版本：v${ver}\n點擊：清除 Service Worker 快取並強制重新整理`;
+        // 點擊：unregister SW + 清 caches + reload，確保拿到最新版
+        _globalTag.addEventListener('click', async () => {
+            try {
+                if ('serviceWorker' in navigator) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    for (const r of regs) await r.unregister();
+                }
+                if (window.caches) {
+                    const keys = await caches.keys();
+                    for (const k of keys) await caches.delete(k);
+                }
+            } catch (e) {
+                console.warn('[VersionTag] 清快取失敗，仍會強制 reload：', e);
+            }
+            // 加 query string 跳過瀏覽器 disk cache
+            const u = new URL(window.location.href);
+            u.searchParams.set('_v', Date.now().toString());
+            window.location.replace(u.toString());
+        });
+    }
+
     try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
