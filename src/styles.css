@@ -2322,6 +2322,89 @@ body {
     object-fit: contain;
 }
 
+/* 🆕 V3.9.5：班級相片牆教師端卡片排版 — 獨立樣式避開 .magnified-image-modal-content img 全域 max-height: 80vh */
+.photo-wall-card {
+    background: #fff;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #e5e7eb;
+}
+
+.photo-wall-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* 圖片容器：固定 4:3 橫向比例（最常見的繪圖板比例），保證每張卡都看得到完整內容 */
+.photo-wall-card-image {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.photo-wall-card-image img {
+    /* 強制覆寫 .magnified-image-modal-content img 的 max-height: 80vh 與 object-fit: contain（這裡也要 contain，但 max-height 不該 80vh） */
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    padding: 4px;
+    box-sizing: border-box;
+}
+
+.photo-wall-card-zoom {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    width: 28px;
+    height: 28px;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+
+.photo-wall-card:hover .photo-wall-card-zoom {
+    opacity: 1;
+}
+
+.photo-wall-card-name {
+    padding: 0.5rem 0.75rem;
+    text-align: center;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+    background: #f9fafb;
+    border-top: 1px solid #e5e7eb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 響應式：螢幕較窄時降回 3:2，避免縱向太矮 */
+@media (max-width: 640px) {
+    .photo-wall-card-image {
+        aspect-ratio: 3 / 2;
+    }
+}
+
 .magnified-image-modal-close {
     position: absolute;
     top: 0.5rem;

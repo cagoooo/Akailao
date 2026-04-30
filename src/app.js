@@ -13742,12 +13742,23 @@ async function startPeerReview() {
         }
 
         try {
+            // 🐛 V3.9.5 FIX：drawing 模式單張 base64 圖最大 ~900KB，整批塞進單一 Firestore 文件
+            // 會超過 1 MB doc 上限導致整個互評啟動失敗。改成只送輕量 metadata，
+            // 學生端再從 photoWall 集合 fetch 圖片（每張獨立文件，不受 1MB 限制）。
+            const worksToStore = currentInteractionMode === 'drawing'
+                ? allStudentResponses.map(w => ({
+                    name: w.name,
+                    timestamp: w.timestamp || null,
+                    hasImage: !!(w.answer && typeof w.answer === 'string' && w.answer.startsWith('data:image'))
+                }))
+                : allStudentResponses;
+
             // Set peer review status in Firebase
             const peerReviewRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'peerReview');
             await setDoc(peerReviewRef, {
                 active: true,
                 mode: currentInteractionMode,
-                works: allStudentResponses,
+                works: worksToStore,
                 timestamp: Date.now()
             });
 
@@ -13843,9 +13854,40 @@ function listenToPeerReviewStatus() {
 
 /**
  * Displays peer review works for students to vote on.
+ * 🐛 V3.9.5 FIX：drawing 模式不再從 works.answer 直接讀（startPeerReview 已剝離），
+ * 改成從 photoWall 集合（必要時 fallback 到 studentResponses）拉取每位學生的繪圖。
  */
-function displayPeerReviewWorks(works, mode) {
+async function displayPeerReviewWorks(works, mode) {
     const worksGrid = document.getElementById('peer-review-works-grid');
+    worksGrid.innerHTML = '<p class="text-center text-gray-500 col-span-full animate-pulse">載入作品中...</p>';
+
+    // 🐛 V3.9.5：drawing 模式預先 fetch 一次圖片，建立 name → imageData 對照表
+    const imagesByName = {};
+    if (mode === 'drawing' && classroomCode) {
+        try {
+            const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
+            const photoSnap = await getDocs(photoWallRef);
+            photoSnap.forEach(d => {
+                const data = d.data();
+                if (data && data.imageData && typeof data.imageData === 'string' && data.imageData.startsWith('data:image')) {
+                    imagesByName[data.studentName || d.id] = data.imageData;
+                }
+            });
+            // Fallback：photoWall 沒寫到的，從 studentResponses 補
+            const respRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
+            const respSnap = await getDocs(respRef);
+            respSnap.forEach(d => {
+                const data = d.data();
+                const nm = data.name || d.id;
+                if (!imagesByName[nm] && data.answer && typeof data.answer === 'string' && data.answer.startsWith('data:image')) {
+                    imagesByName[nm] = data.answer;
+                }
+            });
+        } catch (e) {
+            console.error('[PeerReview] Failed to load drawing images:', e);
+        }
+    }
+
     worksGrid.innerHTML = '';
 
     works.forEach((work, index) => {
@@ -13858,9 +13900,12 @@ function displayPeerReviewWorks(works, mode) {
 
         let contentHtml = '';
         if (mode === 'drawing') {
-            contentHtml = `<img src="${work.answer}" alt="學生作品">`;
+            const imgSrc = imagesByName[work.name] || work.answer || '';
+            contentHtml = imgSrc
+                ? `<img src="${imgSrc}" alt="${work.name} 的作品">`
+                : '<p style="color:#9ca3af;font-size:0.85rem;">圖片載入中或已遺失</p>';
         } else {
-            contentHtml = `<p>${work.answer}</p>`;
+            contentHtml = `<p>${work.answer || ''}</p>`;
         }
 
         workDiv.innerHTML = `
@@ -16334,14 +16379,15 @@ async function loadPhotoWallGallery(target = 'teacher') {
         grid.innerHTML = '';
         drawings.forEach(item => {
             const card = document.createElement('div');
-            card.className = 'bg-white rounded-lg shadow-md overflow-hidden cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all';
+            // 🐛 V3.9.5：用獨立 class 控制版型，避開 .magnified-image-modal-content img 全域樣式覆蓋
+            card.className = 'photo-wall-card';
+            const safeName = (item.name || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             card.innerHTML = `
-                <div class="aspect-square overflow-hidden bg-gray-100">
-                    <img src="${item.image}" alt="${item.name}" class="w-full h-full object-contain" loading="lazy">
+                <div class="photo-wall-card-image">
+                    <img src="${item.image}" alt="${safeName}" loading="lazy">
+                    <div class="photo-wall-card-zoom"><i class="fas fa-search-plus"></i></div>
                 </div>
-                <div class="p-2 text-center">
-                    <p class="text-sm font-semibold text-gray-700 truncate">${item.name}</p>
-                </div>`;
+                <div class="photo-wall-card-name">${safeName}</div>`;
             card.addEventListener('click', () => {
                 const modal = document.getElementById('magnified-image-modal');
                 document.getElementById('magnified-image').src = item.image;
