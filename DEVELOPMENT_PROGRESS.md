@@ -1,13 +1,33 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.2.4** ｜ 更新時間：2026-06-16
+> **版本：V4.2.6** ｜ 更新時間：2026-06-17
 
 ---
 
-## 🆕 最近更新（V4.2 — 黑板筆記版「往內延伸」+ 前端錯誤可追蹤）
+## 🆕 最近更新（V4.2 — 黑板筆記版「往內延伸」+ 可觀測性 + 課堂便利）
 
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
-> 並補上無障礙動畫降級與「前端錯誤自動上報」可觀測性能力。
+> 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播」可觀測性、以及互動自動計時鎖定。
+
+### ✅ V4.2.6：OBS-1b 嚴重錯誤接 Google Chat 通知（2026-06-17）
+- [x] **`src/app.js`：`ErrorReporter.report()` 寫 Firestore 前先呼叫 `UsageNotify.error()`**
+  - 沿用 NOTIFY-A 既有 Cloud Function（`error` 事件 → 🐞 卡片）+ webhook，**無需部署**
+  - context 帶 kind + 來源行號 + 模式 + role（如「error · @ app.js:200 · 學生:小明」）
+  - 先於 Firestore 寫入呼叫 → 即使寫入失敗（如權限）仍會推播
+- [x] **整併重複 handler**：移除 init 函式內舊的全域 error/unhandledrejection 監聽器
+  - 舊 handler 無過濾 → chunk error / ResizeObserver 噪音會洗版 Chat
+  - 改由 ErrorReporter 單一入口（chunk 過濾 + Firestore + Chat），保留 `firebase-auth-failed` 明確上報
+- **雙層節流**：ErrorReporter（60s 去重 + 20/session）× UsageNotify（同訊息 session 一次 + 5/session）→ Chat 每場最多 5 則
+- **驗證**：preview 攔截 UsageNotify.error 避免污染真實 Chat → 確認單次呼叫無重複、context 正確、chunk/ResizeObserver 噪音被過濾不送 Chat
+
+### ✅ V4.2.5：TCH-2 互動自動計時鎖定（2026-06-17）
+- [x] **`index.html`：暫停鈕旁新增 `#auto-lock-select`**（關 / 1 / 3 / 5 / 10 分鐘）
+- [x] **`src/app.js`：`startAutoLock(minutes)`**
+  - 教師端 setTimeout 計時 + setInterval 每秒倒數，倒數即時顯示在 select 折疊文字（⏱️ M:SS）
+  - 到時：寫 control doc `isPaused:true`（沿用既有暫停機制）+ toast「⏰ 時間到，已自動鎖定」
+  - 重置時機：教師切換模式、手動暫停/恢復、結束課堂；選單跟隨暫停鈕顯示規則
+- **設計**：教師端 client 計時（非 Cloud Function 排程），刷新會重置，鎖定複用已驗證的暫停寫入路徑
+- **驗證**：preview 確認 select 渲染、change handler 接線（guard 正常）、倒數顯示機制；真實計時觸發因需 Google 登入流程未 E2E
 
 ### ✅ V4.2.4：OBS-1 前端錯誤自動上報 + 教師端系統健康檢視（2026-06-16）
 - [x] **`src/app.js`：`ErrorReporter` 模組**
