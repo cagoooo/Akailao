@@ -265,6 +265,15 @@
                         </svg>
                     </div>
                     <div class="cb-form-content">
+                        <!-- 🆕 [V4.0] Google 帳號 chip，登入後才顯示 -->
+                        <div id="teacher-google-profile" class="hidden mb-4 flex items-center gap-3 px-3 py-2 bg-green-50 border border-green-200 rounded-xl">
+                            <img id="teacher-avatar" src="" alt="" class="w-9 h-9 rounded-full object-cover border border-green-300">
+                            <div class="flex-1 min-w-0">
+                                <div id="teacher-name-display" class="text-sm font-semibold text-gray-800 truncate"></div>
+                                <div id="teacher-email-display" class="text-xs text-green-700 truncate"></div>
+                            </div>
+                            <span class="flex-shrink-0 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium border border-green-200">✓ 已驗證</span>
+                        </div>
                         <div class="cb-form-eyebrow">教師登入 · TEACHER LOGIN</div>
                         <h2 class="cb-form-title">請輸入教室代碼</h2>
                         <p class="cb-form-desc">這組代碼是學生加入教室的鑰匙，建議用簡短好記的數字。</p>
@@ -313,6 +322,11 @@
 
                 <!-- 🆕 MODIFIED [v3.8.17]: 右側區域改為獨立一行，避免與左側教室代碼擠在同行跑版 -->
                 <div class="flex items-center gap-1.5 sm:gap-2 ml-auto">
+                    <!-- 🆕 [V4.0] 老師帳號 badge（Google 登入後才顯示） -->
+                    <div id="teacher-menu-profile" class="hidden items-center gap-1.5 px-2 py-1 rounded-lg bg-yellow-50 border border-yellow-200 max-w-[140px]">
+                        <img id="teacher-menu-avatar" src="" alt="" class="w-6 h-6 rounded-full object-cover flex-shrink-0">
+                        <span id="teacher-menu-name" class="text-xs font-medium text-gray-700 truncate"></span>
+                    </div>
                     <button id="show-qrcode-btn-menu"
                         class="bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs h-8 px-2.5 flex items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-teal-700">
                         <i class="fas fa-qrcode"></i> <span class="hidden sm:inline">課堂</span> QR Code

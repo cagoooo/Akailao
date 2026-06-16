@@ -1,7 +1,8 @@
 // Import Firebase SDK functions.
 import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "firebase/auth";
+import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, enableIndexedDbPersistence } from "firebase/firestore";
+import { initUsageNotify, UsageNotify } from "./usage-notify.js";
 
 // --- Global Variables ---
 // Max dimension (px) for user uploaded images to prevent excessively large files.
@@ -28,6 +29,13 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+initUsageNotify(app);
+
+// 🆕 [V4.0.0] 老師 Google 帳號登入
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+let currentTeacherGoogleUser = null; // 當前登入的老師 Google 用戶物件
+let _teacherAuthInProgress = false;  // popup 期間避免 onAuthStateChanged 搶先跳頁
 
 // 🆕 NEW [v3.8.23] PERF-4: 啟用 Firestore 離線快取
 // 學生短暫斷網時仍能繼續操作；大幅減少 Firestore 讀取次數（免費方案 50,000 次/日）
@@ -2929,12 +2937,15 @@ function loadQuestionBankFromFile() {
         const existingIndex = questionBanks.findIndex(bank => bank.name === fileName);
         if (existingIndex !== -1) {
             if (confirm(`題庫「${fileName}」已存在，是否要覆蓋？`)) {
-                questionBanks[existingIndex] = { name: fileName, content: content };
+                questionBanks[existingIndex] = { name: fileName, content: content, firestoreId: questionBanks[existingIndex].firestoreId };
+                _cloudSyncBank('mc', questionBanks[existingIndex]).then(id => { if (id && !questionBanks[existingIndex].firestoreId) questionBanks[existingIndex].firestoreId = id; });
             } else {
                 return;
             }
         } else {
-            questionBanks.push({ name: fileName, content: content });
+            const newBank = { name: fileName, content: content };
+            questionBanks.push(newBank);
+            _cloudSyncBank('mc', newBank).then(id => { if (id) newBank.firestoreId = id; });
         }
 
         updateQuestionBankList();
@@ -2969,12 +2980,15 @@ function saveQuestionBankFromTextarea() {
     const existingIndex = questionBanks.findIndex(bank => bank.name === name);
     if (existingIndex !== -1) {
         if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
-            questionBanks[existingIndex] = { name: name, content: content };
+            questionBanks[existingIndex] = { name: name, content: content, firestoreId: questionBanks[existingIndex].firestoreId };
+            _cloudSyncBank('mc', questionBanks[existingIndex]).then(id => { if (id && !questionBanks[existingIndex].firestoreId) questionBanks[existingIndex].firestoreId = id; });
         } else {
             return;
         }
     } else {
-        questionBanks.push({ name: name, content: content });
+        const newBank = { name: name, content: content };
+        questionBanks.push(newBank);
+        _cloudSyncBank('mc', newBank).then(id => { if (id) newBank.firestoreId = id; });
     }
 
     updateQuestionBankList();
@@ -2994,6 +3008,7 @@ function deleteQuestionBank(index) {
     if (index >= 0 && index < questionBanks.length) {
         const bankName = questionBanks[index].name;
         if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            _cloudDeleteBank(questionBanks[index].firestoreId);
             questionBanks.splice(index, 1);
             updateQuestionBankList();
             showMessage(`題庫「${bankName}」已刪除`, 'success');
@@ -3065,12 +3080,15 @@ function loadSequencingBankFromFile() {
         const existingIndex = sequencingQuestionBanks.findIndex(bank => bank.name === fileName);
         if (existingIndex !== -1) {
             if (confirm(`題庫「${fileName}」已存在，是否要覆蓋？`)) {
-                sequencingQuestionBanks[existingIndex] = { name: fileName, question: question, items: items };
+                sequencingQuestionBanks[existingIndex] = { name: fileName, question: question, items: items, firestoreId: sequencingQuestionBanks[existingIndex].firestoreId };
+                _cloudSyncBank('sequencing', sequencingQuestionBanks[existingIndex]).then(id => { if (id && !sequencingQuestionBanks[existingIndex].firestoreId) sequencingQuestionBanks[existingIndex].firestoreId = id; });
             } else {
                 return;
             }
         } else {
-            sequencingQuestionBanks.push({ name: fileName, question: question, items: items });
+            const newBank = { name: fileName, question: question, items: items };
+            sequencingQuestionBanks.push(newBank);
+            _cloudSyncBank('sequencing', newBank).then(id => { if (id) newBank.firestoreId = id; });
         }
 
         updateSequencingBankList();
@@ -3106,12 +3124,15 @@ function saveSequencingBank() {
     const existingIndex = sequencingQuestionBanks.findIndex(bank => bank.name === name);
     if (existingIndex !== -1) {
         if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
-            sequencingQuestionBanks[existingIndex] = { name: name, question: question, items: items };
+            sequencingQuestionBanks[existingIndex] = { name: name, question: question, items: items, firestoreId: sequencingQuestionBanks[existingIndex].firestoreId };
+            _cloudSyncBank('sequencing', sequencingQuestionBanks[existingIndex]).then(id => { if (id && !sequencingQuestionBanks[existingIndex].firestoreId) sequencingQuestionBanks[existingIndex].firestoreId = id; });
         } else {
             return;
         }
     } else {
-        sequencingQuestionBanks.push({ name: name, question: question, items: items });
+        const newBank = { name: name, question: question, items: items };
+        sequencingQuestionBanks.push(newBank);
+        _cloudSyncBank('sequencing', newBank).then(id => { if (id) newBank.firestoreId = id; });
     }
 
     updateSequencingBankList();
@@ -3131,6 +3152,7 @@ function deleteSequencingBank(index) {
     if (index >= 0 && index < sequencingQuestionBanks.length) {
         const bankName = sequencingQuestionBanks[index].name;
         if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            _cloudDeleteBank(sequencingQuestionBanks[index].firestoreId);
             sequencingQuestionBanks.splice(index, 1);
             updateSequencingBankList();
             showMessage(`題庫「${bankName}」已刪除`, 'success');
@@ -3229,12 +3251,15 @@ function saveMatchingBank() {
     const existingIndex = matchingQuestionBanks.findIndex(bank => bank.name === name);
     if (existingIndex !== -1) {
         if (confirm(`題庫「${name}」已存在，是否要覆蓋？`)) {
-            matchingQuestionBanks[existingIndex] = { name: name, question: question, pairs: pairs };
+            matchingQuestionBanks[existingIndex] = { name: name, question: question, pairs: pairs, firestoreId: matchingQuestionBanks[existingIndex].firestoreId };
+            _cloudSyncBank('matching', matchingQuestionBanks[existingIndex]).then(id => { if (id && !matchingQuestionBanks[existingIndex].firestoreId) matchingQuestionBanks[existingIndex].firestoreId = id; });
         } else {
             return;
         }
     } else {
-        matchingQuestionBanks.push({ name: name, question: question, pairs: pairs });
+        const newBank = { name: name, question: question, pairs: pairs };
+        matchingQuestionBanks.push(newBank);
+        _cloudSyncBank('matching', newBank).then(id => { if (id) newBank.firestoreId = id; });
     }
 
     updateMatchingBankList();
@@ -3254,6 +3279,7 @@ function deleteMatchingBank(index) {
     if (index >= 0 && index < matchingQuestionBanks.length) {
         const bankName = matchingQuestionBanks[index].name;
         if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            _cloudDeleteBank(matchingQuestionBanks[index].firestoreId);
             matchingQuestionBanks.splice(index, 1);
             updateMatchingBankList();
             showMessage(`題庫「${bankName}」已刪除`, 'success');
@@ -9345,6 +9371,7 @@ async function endClassSession() {
 
         classroomCode = null; // Clear the classroom code after ending session
         localStorage.removeItem('teacherClassroomCode'); // Clear from local storage
+        currentTeacherGoogleUser = null; // 🆕 [V4.0.0] 清空老師 Google 身分
 
         // 🚀 CRITICAL: 清空所有全局狀態變量
         studentName = null;
@@ -9391,9 +9418,15 @@ async function endClassSession() {
         isResponsePaused = false; // NEW: Reset pause state
         updateTeacherPauseButtonUI(); // NEW: Update pause button UI
 
-        await signOut(auth); // Explicitly sign out the user
+        // 🆕 [V4.0.0] 清除老師帳號 UI
+        const menuProfile = document.getElementById('teacher-menu-profile');
+        if (menuProfile) { menuProfile.classList.add('hidden'); menuProfile.classList.remove('flex'); }
+        const profileChip = document.getElementById('teacher-google-profile');
+        if (profileChip) profileChip.classList.add('hidden');
 
-        // NEW: After signing out, explicitly sign in again to get a fresh authenticated state
+        await signOut(auth); // 完全登出（包含 Google）
+
+        // 重新以匿名身分認證，讓入口頁正常運作
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
             console.log("Signed in with custom token.");
@@ -10738,8 +10771,32 @@ function handleImageFileForTeacher(file, statusId, previewContainerId, previewId
 
 function setupEventListeners() {
     // Entry screen.
-    document.getElementById('teacher-entry-btn').addEventListener('click', () => {
-        showView('teacherClassroomCode');
+    document.getElementById('teacher-entry-btn').addEventListener('click', async () => {
+        try {
+            // 若同一 session 已 Google 登入，直接進教室代碼頁
+            const currentUser = auth.currentUser;
+            if (currentUser && currentUser.providerData.length > 0) {
+                currentTeacherGoogleUser = currentUser;
+                updateTeacherProfileUI();
+                await loadTeacherProfile(currentUser.uid);
+                showView('teacherClassroomCode');
+                return;
+            }
+            // 彈出 Google 帳號選擇器
+            _teacherAuthInProgress = true;
+            const result = await signInWithPopup(auth, googleProvider);
+            _teacherAuthInProgress = false;
+            currentTeacherGoogleUser = result.user;
+            updateTeacherProfileUI();
+            await loadTeacherProfile(result.user.uid);
+            showView('teacherClassroomCode');
+        } catch (error) {
+            _teacherAuthInProgress = false;
+            if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+                console.error('[Teacher] Google 登入失敗:', error);
+                showMessage(`Google 登入失敗：${error.message}`, 'error');
+            }
+        }
     });
     document.getElementById('student-entry-btn').addEventListener('click', () => {
         currentRole = 'student';
@@ -10796,7 +10853,25 @@ function setupEventListeners() {
     });
 
     // NEW: Teacher classroom code input.
-    document.getElementById('teacher-classroom-code-back-btn').addEventListener('click', () => showView('entry'));
+    document.getElementById('teacher-classroom-code-back-btn').addEventListener('click', async () => {
+        // 若已 Google 登入，返回首頁時登出並重新匿名登入，讓入口頁維持乾淨狀態
+        if (currentTeacherGoogleUser) {
+            currentTeacherGoogleUser = null;
+            const profileChip = document.getElementById('teacher-google-profile');
+            if (profileChip) profileChip.classList.add('hidden');
+            try {
+                await signOut(auth);
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) {
+                console.warn('[Teacher] 返回登出失敗:', e);
+            }
+        }
+        showView('entry');
+    });
     document.getElementById('teacher-classroom-code-submit-btn').addEventListener('click', async () => {
         const rawCode = document.getElementById('teacher-classroom-code-input').value.trim();
 
@@ -10829,6 +10904,12 @@ function setupEventListeners() {
                 document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
                 localStorage.setItem('teacherClassroomCode', classroomCode); // Persist teacher's classroom code
 
+                // 🆕 [V4.0.0] Phase 2: 儲存老師個人資料到 Firestore（教室代碼跨裝置同步）
+                if (currentTeacherGoogleUser) {
+                    saveTeacherProfile(currentTeacherGoogleUser.uid, code); // fire-and-forget
+                    await loadQuestionBanksFromCloud(currentTeacherGoogleUser.uid); // Phase 3: 載入題庫
+                }
+
                 // Set initial classroom state in Firestore, including isPaused: false
                 const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
                 await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true });
@@ -10839,9 +10920,16 @@ function setupEventListeners() {
                 listenToClassroomPresence(); // Ensure presence listener is active
                 showView('teacherMenu');
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
+                
+                // 遙測：教師登入與建立教室成功
+                UsageNotify.create(classroomCode);
+                UsageNotify.login('teacher', '教師', classroomCode);
             } catch (error) {
                 console.error('進入教室失敗:', error);
                 showMessage(`進入教室失敗：${error.message}`, 'error');
+                
+                // 遙測：教師進入教室失敗
+                UsageNotify.error(error.message, 'teacher-join-classroom-failed', classroomCode);
             }
         } else {
             showMessage('請輸入教室代碼！', 'error');
@@ -10989,6 +11077,10 @@ function setupEventListeners() {
                 // 但這個 setTimeout 又強制切回 waiting，導致學生卡在等待頁
                 // 改為「只在 mode=waiting 時顯示等待頁，其他模式由 listener 負責」
                 updateStudentJoinProgress(100, '🎉 進入成功！', '🏆 CLEAR!');
+                
+                // 遙測：學生登入成功
+                UsageNotify.login('student', studentName, classroomCode);
+
                 setTimeout(() => {
                     // 智能切換：只在模式為 waiting 或尚未確定時，才顯示等待頁
                     if (!currentInteractionMode || currentInteractionMode === 'waiting') {
@@ -11006,6 +11098,9 @@ function setupEventListeners() {
                 hideStudentJoinProgress();
                 submitBtn.disabled = false;
                 submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                
+                // 遙測：學生加入失敗（教室不存在）
+                UsageNotify.error('教室代碼不存在或老師尚未開啟教室', 'student-join-classroom-not-exists', classroomCode);
             }
         } catch (error) {
             console.error("檢查教室代碼失敗:", error);
@@ -11013,6 +11108,9 @@ function setupEventListeners() {
             hideStudentJoinProgress();
             submitBtn.disabled = false;
             submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            
+            // 遙測：學生加入失敗（連線錯誤等）
+            UsageNotify.error(error.message, 'student-join-classroom-failed', classroomCode);
         }
     });
 
@@ -14187,6 +14285,141 @@ function initReadingZoom() {
     updateZoom(savedZoom);
 }
 
+// ===== 🆕 [V4.0.0] 老師帳號輔助函式 (Phase 1 + 2 + 3) =====
+
+function updateTeacherProfileUI() {
+    const user = currentTeacherGoogleUser;
+    if (!user) return;
+    const name = user.displayName || user.email || '老師';
+    const photo = user.photoURL || '';
+    const email = user.email || '';
+
+    // 教室代碼輸入頁：帳號 chip
+    const profileChip = document.getElementById('teacher-google-profile');
+    if (profileChip) {
+        profileChip.classList.remove('hidden');
+        const avatar = document.getElementById('teacher-avatar');
+        const nameEl = document.getElementById('teacher-name-display');
+        const emailEl = document.getElementById('teacher-email-display');
+        if (avatar) { avatar.src = photo; avatar.style.display = photo ? '' : 'none'; }
+        if (nameEl) nameEl.textContent = name;
+        if (emailEl) emailEl.textContent = email;
+    }
+
+    // 教師選單工具列：帳號 badge
+    const menuProfile = document.getElementById('teacher-menu-profile');
+    if (menuProfile) {
+        menuProfile.classList.remove('hidden');
+        menuProfile.classList.add('flex');
+        const menuAvatar = document.getElementById('teacher-menu-avatar');
+        const menuName = document.getElementById('teacher-menu-name');
+        if (menuAvatar) { menuAvatar.src = photo; menuAvatar.style.display = photo ? '' : 'none'; }
+        if (menuName) menuName.textContent = name;
+    }
+}
+
+async function loadTeacherProfile(uid) {
+    try {
+        const profileRef = doc(db, 'teachers', uid, 'private', 'profile');
+        const snap = await getDoc(profileRef);
+        if (snap.exists()) {
+            const data = snap.data();
+            const codeInput = document.getElementById('teacher-classroom-code-input');
+            if (codeInput && data.classroomCode && !codeInput.value) {
+                codeInput.value = data.classroomCode;
+            }
+            return data;
+        }
+    } catch (e) {
+        console.warn('[TeacherProfile] 無法載入個人資料:', e);
+    }
+    return null;
+}
+
+async function saveTeacherProfile(uid, code) {
+    try {
+        const profileRef = doc(db, 'teachers', uid, 'private', 'profile');
+        await setDoc(profileRef, {
+            classroomCode: code,
+            displayName: currentTeacherGoogleUser?.displayName || '',
+            email: currentTeacherGoogleUser?.email || '',
+            photoURL: currentTeacherGoogleUser?.photoURL || '',
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+    } catch (e) {
+        console.warn('[TeacherProfile] 無法儲存個人資料:', e);
+    }
+}
+
+// Phase 3: 雲端題庫函式
+
+async function loadQuestionBanksFromCloud(uid) {
+    if (!uid) return;
+    try {
+        const banksRef = collection(db, 'teachers', uid, 'questionBanks');
+        const snap = await getDocs(banksRef);
+        if (snap.empty) return;
+
+        const mcBanks = [], seqBanks = [], matchBanks = [], readBanks = [];
+        snap.forEach(docSnap => {
+            const d = docSnap.data();
+            const bank = Object.assign({}, d, { firestoreId: docSnap.id });
+            delete bank.updatedAt;
+            delete bank.type;
+            if (d.type === 'mc') mcBanks.push(bank);
+            else if (d.type === 'sequencing') seqBanks.push(bank);
+            else if (d.type === 'matching') matchBanks.push(bank);
+            else if (d.type === 'reading') readBanks.push(bank);
+        });
+
+        if (mcBanks.length > 0) { questionBanks = mcBanks; updateQuestionBankList(); }
+        if (seqBanks.length > 0) { sequencingQuestionBanks = seqBanks; updateSequencingBankList(); }
+        if (matchBanks.length > 0) { matchingQuestionBanks = matchBanks; updateMatchingBankList(); }
+        if (readBanks.length > 0) {
+            readingQuestionBanks = readBanks;
+            updateReadingBankList();
+            localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
+        }
+
+        console.log(`[QB] 雲端題庫載入完成：MC=${mcBanks.length}, 排序=${seqBanks.length}, 配對=${matchBanks.length}, 閱讀=${readBanks.length}`);
+    } catch (e) {
+        console.warn('[QB] 無法載入雲端題庫:', e);
+    }
+}
+
+async function _cloudSyncBank(type, bank) {
+    const uid = currentTeacherGoogleUser?.uid;
+    if (!uid) return null;
+    try {
+        const banksRef = collection(db, 'teachers', uid, 'questionBanks');
+        if (bank.firestoreId) {
+            const bankDoc = doc(banksRef, bank.firestoreId);
+            await setDoc(bankDoc, { ...bank, type, updatedAt: serverTimestamp() }, { merge: true });
+            return bank.firestoreId;
+        } else {
+            const bankDoc = doc(banksRef);
+            const id = bankDoc.id;
+            await setDoc(bankDoc, { ...bank, type, firestoreId: id, updatedAt: serverTimestamp() });
+            return id;
+        }
+    } catch (e) {
+        console.warn('[QB] 無法同步題庫到雲端:', e);
+        return null;
+    }
+}
+
+async function _cloudDeleteBank(firestoreId) {
+    const uid = currentTeacherGoogleUser?.uid;
+    if (!uid || !firestoreId) return;
+    try {
+        await deleteDoc(doc(db, 'teachers', uid, 'questionBanks', firestoreId));
+    } catch (e) {
+        console.warn('[QB] 無法刪除雲端題庫:', e);
+    }
+}
+
+// ===== 結束老師帳號輔助函式 =====
+
 async function initialize() {
     // 🚀 OPTIMIZED: 預載常用 DOM 元素到快取
     DOMCache.preload();
@@ -14199,22 +14432,73 @@ async function initialize() {
             userId = user.uid;
             document.getElementById('user-id-display').textContent = userId;
             console.log("Authenticated User ID:", userId);
-            // setupEventListeners(); // Moved this call outside onAuthStateChanged
 
-            // Check if teacher has a persisted classroom code
+            // 🆕 [V4.0.0] 判斷是否為 Google 帳號（非匿名）→ 代表老師身分
+            const isGoogleUser = user.providerData && user.providerData.length > 0;
+
+            if (isGoogleUser) {
+                // popup 期間 _teacherAuthInProgress = true，由按鈕 handler 接管導航，這裡直接 return
+                if (_teacherAuthInProgress) return;
+
+                // 頁面重整：還原老師工作區
+                currentTeacherGoogleUser = user;
+                updateTeacherProfileUI();
+
+                // 嘗試從 localStorage 取回教室代碼（本機），再 fallback 到 Firestore
+                let restoredCode = localStorage.getItem('teacherClassroomCode');
+                if (!restoredCode) {
+                    const profile = await loadTeacherProfile(user.uid);
+                    restoredCode = profile?.classroomCode || null;
+                }
+
+                if (restoredCode) {
+                    classroomCode = restoredCode;
+                    currentRole = 'teacher';
+                    document.getElementById('teacher-menu-code-value').textContent = classroomCode;
+                    document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`;
+                    localStorage.setItem('teacherClassroomCode', classroomCode);
+
+                    const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                    const docSnap = await getDoc(controlRef);
+                    if (docSnap.exists()) {
+                        isResponsePaused = docSnap.data().isPaused || false;
+                        const fetchedDispatchSettings = docSnap.data().dispatchSettings;
+                        if (fetchedDispatchSettings) {
+                            dispatchSettings.type = fetchedDispatchSettings.type || 'url';
+                            dispatchSettings.url = fetchedDispatchSettings.url || '';
+                            dispatchSettings.isYoutube = fetchedDispatchSettings.isYoutube || false;
+                            dispatchSettings.htmlContent = fetchedDispatchSettings.htmlContent || null;
+                        }
+                        currentMultipleChoiceQuestions = docSnap.data().multiple_choice_questions || null;
+                        customMultipleChoiceQuestions = currentMultipleChoiceQuestions || [];
+                    } else {
+                        isResponsePaused = false;
+                        currentMultipleChoiceQuestions = null;
+                        customMultipleChoiceQuestions = [];
+                    }
+                    updateTeacherPauseButtonUI();
+                    listenToClassroomPresence();
+                    await loadQuestionBanksFromCloud(user.uid); // Phase 3: 還原題庫
+                    showView('teacherMenu');
+                } else {
+                    // Google 登入但無教室代碼 → 教室代碼輸入頁（auto-fill 已在 loadTeacherProfile 處理）
+                    showView('teacherClassroomCode');
+                }
+                return;
+            }
+
+            // ── 匿名用戶：原有流程 ──
             const savedTeacherClassroomCode = localStorage.getItem('teacherClassroomCode');
             if (savedTeacherClassroomCode) {
                 classroomCode = savedTeacherClassroomCode;
                 currentRole = 'teacher';
-                document.getElementById('teacher-menu-code-value').textContent = classroomCode; // Update classroom code in teacher menu
-                document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`; // Update button text for monitor view
+                document.getElementById('teacher-menu-code-value').textContent = classroomCode;
+                document.getElementById('end-class-monitor-button-text').textContent = `下課 教室代碼: ${classroomCode}`;
 
-                // NEW: Fetch initial pause state and dispatch settings for teacher
                 const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
                 const docSnap = await getDoc(controlRef);
                 if (docSnap.exists()) {
                     isResponsePaused = docSnap.data().isPaused || false;
-                    // MODIFIED: Load dispatchSettings from Firestore
                     const fetchedDispatchSettings = docSnap.data().dispatchSettings;
                     if (fetchedDispatchSettings) {
                         dispatchSettings.type = fetchedDispatchSettings.type || 'url';
@@ -14222,18 +14506,15 @@ async function initialize() {
                         dispatchSettings.isYoutube = fetchedDispatchSettings.isYoutube || false;
                         dispatchSettings.htmlContent = fetchedDispatchSettings.htmlContent || null;
                     }
-                    // NEW: Load custom multiple choice questions from Firestore
                     currentMultipleChoiceQuestions = docSnap.data().multiple_choice_questions || null;
-                    customMultipleChoiceQuestions = currentMultipleChoiceQuestions || []; // Sync for teacher UI
+                    customMultipleChoiceQuestions = currentMultipleChoiceQuestions || [];
                 } else {
-                    isResponsePaused = false; // Default to not paused if control doc doesn't exist
-                    // dispatchSettings remains at its default or loaded localStorage value
+                    isResponsePaused = false;
                     currentMultipleChoiceQuestions = null;
                     customMultipleChoiceQuestions = [];
                 }
-                updateTeacherPauseButtonUI(); // Update button UI based on fetched state
-
-                listenToClassroomPresence(); // Ensure presence listener is established here and remains active
+                updateTeacherPauseButtonUI();
+                listenToClassroomPresence();
                 showView('teacherMenu');
             } else {
                 // 🚀 UX 優化：若 URL 含有 ?classroom= 參數，自動以學生身份進入姓名輸入頁
@@ -14249,13 +14530,12 @@ async function initialize() {
                     setTimeout(() => {
                         const nameInput = document.getElementById('student-name-input');
                         if (nameInput) {
-                            // 嘗試帶入上次使用的姓名
                             const lastName = localStorage.getItem('lastStudentName');
                             if (lastName) {
                                 nameInput.value = lastName;
-                                nameInput.select();  // 選取所有文字方便修改
+                                nameInput.select();
                             } else {
-                                nameInput.focus();  // 直接 focus 讓鍵盤彈出（手機端）
+                                nameInput.focus();
                             }
                         }
                     }, 300);
@@ -14268,9 +14548,7 @@ async function initialize() {
             }
         } else {
             // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
-            // signInAnonymously() 執行後，onAuthStateChanged 會再次觸發並傳入有效的 user
             console.log("[Auth] Waiting for authentication...");
-            // If user is null (e.g., after signOut), ensure we are on the entry view.
             showView('entry');
         }
     });
@@ -14310,6 +14588,9 @@ async function initialize() {
         });
     }
 
+    // 遙測：啟動首頁遙測
+    UsageNotify.sessionStart(currentRole, classroomCode);
+
     try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
@@ -14321,7 +14602,16 @@ async function initialize() {
     } catch (error) {
         console.error("Firebase Authentication failed:", error);
         document.body.innerHTML = `<div class="text-center p-8 text-red-600"><h1 class="text-2xl font-bold">驗證失敗</h1><p>無法連接至互動服務，請檢查 Firebase 設定或網路連線。</p><p class=\"text-sm mt-2\">${error.message}</p></div>`;
+        UsageNotify.error(error.message, 'firebase-auth-failed', classroomCode);
     }
+
+    // 遙測：註冊全域未捕獲錯誤遙測捕捉
+    window.addEventListener('error', (event) => {
+        UsageNotify.error(event.message, `${event.filename}:${event.lineno}:${event.colno}`, classroomCode);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+        UsageNotify.error(event.reason?.message || String(event.reason), 'Unhandled Promise Rejection', classroomCode);
+    });
 }
 
 // Add beforeunload handler to warn user about closing window
@@ -19840,9 +20130,12 @@ async function saveReadingQuestionBank() {
         if (!confirm(`題庫「${bankName}」已存在，是否覆蓋？`)) {
             return;
         }
+        bank.firestoreId = readingQuestionBanks[existingIndex].firestoreId;
         readingQuestionBanks[existingIndex] = bank;
+        _cloudSyncBank('reading', bank).then(id => { if (id && !bank.firestoreId) bank.firestoreId = id; });
     } else {
         readingQuestionBanks.push(bank);
+        _cloudSyncBank('reading', bank).then(id => { if (id) bank.firestoreId = id; });
     }
 
     localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
@@ -20270,6 +20563,7 @@ function deleteReadingBank(index) {
     if (index >= 0 && index < readingQuestionBanks.length) {
         const bankName = readingQuestionBanks[index].name;
         if (confirm(`確定要刪除題庫「${bankName}」嗎？`)) {
+            _cloudDeleteBank(readingQuestionBanks[index].firestoreId);
             readingQuestionBanks.splice(index, 1);
             localStorage.setItem('readingQuestionBanks', JSON.stringify(readingQuestionBanks));
             updateReadingBankList();

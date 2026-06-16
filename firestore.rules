@@ -9,13 +9,33 @@ service cloud.firestore {
                          && request.auth.uid == userId;
     }
 
+    // 🆕 [V4.0] 老師帳號資料（Google 登入才能寫）
+    match /teachers/{teacherId} {
+      // 個人資料（教室代碼、名稱等）
+      match /private/{document=**} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == teacherId
+                           && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      }
+      // 雲端題庫
+      match /questionBanks/{bankId} {
+        allow read, write: if request.auth != null
+                           && request.auth.uid == teacherId
+                           && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      }
+    }
+
     // 🆕 MODIFIED [v3.8.24] SEC-2 + SEC-3：細粒度安全規則
     // 教室公開資料（artifacts 路徑）
     match /artifacts/{appId}/public/data/classrooms/{classroomCode} {
 
-      // 教室設定（control doc）：任何登入用戶可讀寫
+      // 教室設定（control doc）：
+      // 讀取：任何登入用戶（學生需要讀取互動模式）
+      // 寫入：非匿名用戶（老師 Google 帳號）才能寫
       match /settings/{settingId} {
-        allow read, write: if request.auth != null;
+        allow read: if request.auth != null;
+        allow write: if request.auth != null
+                     && request.auth.token.firebase.sign_in_provider != 'anonymous';
       }
 
       // 🔒 SEC-2：學生作答記錄 — 禁止覆寫已提交的 answer
