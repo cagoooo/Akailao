@@ -1695,6 +1695,13 @@ body {
     max-width: 98% !important;
 }
 
+/* 🆕 [V4.0.2] 教師面板全版模式：桌機端解除 max-w-4xl 限制，善用全寬 */
+#app-container.teacher-wide-mode {
+    max-width: min(1600px, 98%) !important;
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+}
+
 /* 隱藏列印時的縮放控制 */
 @media print {
     .no-print {

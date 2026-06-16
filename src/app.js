@@ -2158,6 +2158,14 @@ function showView(viewName) {
     if (appContainer && viewName !== 'studentInteraction') {
         appContainer.classList.remove('reading-test-wide-mode');
     }
+    // 🆕 [V4.0.2] 教師面板（選模式頁 + 監控頁）套用全版寬度
+    if (appContainer) {
+        if (viewName === 'teacherMenu' || viewName === 'teacherMonitor') {
+            appContainer.classList.add('teacher-wide-mode');
+        } else {
+            appContainer.classList.remove('teacher-wide-mode');
+        }
+    }
 
     Object.values(views).forEach(view => view.classList.add('hidden'));
     if (views[viewName]) {
