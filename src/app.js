@@ -4960,6 +4960,7 @@ function listenToReadingLeaderboardTeacher() {
     const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
 
     const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        _fsTrack('read', querySnapshot.docChanges().length); // 🆕 [V4.2.7] OBS-4
         const studentsData = [];
         let readingSubmissionCount = 0;
 
@@ -5315,6 +5316,7 @@ function listenToReadingLeaderboard() {
     const studentsColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
 
     const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        _fsTrack('read', querySnapshot.docChanges().length); // 🆕 [V4.2.7] OBS-4
         const studentsData = [];
         querySnapshot.forEach(doc => {
             studentsData.push(doc.data());
@@ -6184,6 +6186,7 @@ function listenToStudentSubmissions(mode) {
     const container = document.getElementById('student-responses-container');
 
     const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        _fsTrack('read', querySnapshot.docChanges().length); // 🆕 [V4.2.7] OBS-4
         container.innerHTML = '';
         lastSelectedStudentCard = null;
 
@@ -6416,6 +6419,7 @@ function setupStudentChartListener(mode) {
 
     // 監聽學生回應
     const unsubscribe = onSnapshot(studentsColRef, (querySnapshot) => {
+        _fsTrack('read', querySnapshot.docChanges().length); // 🆕 [V4.2.7] OBS-4
         const responses = [];
         querySnapshot.forEach((doc) => {
             const student = doc.data();
@@ -9387,6 +9391,20 @@ async function endClassSession() {
                 console.log(`[Teacher] ✓ Deleted ${teamSnap.size} team scores`);
             } catch (error) {
                 console.error('[Teacher] ✗ Failed to delete team scores:', error);
+            }
+
+            // 🆕 [V4.2.7] OBS-3：清除 7 天前的舊錯誤紀錄（避免 Firestore 累積吃免費額度）
+            try {
+                const errCutoff = Date.now() - 7 * 24 * 3600 * 1000;
+                const errColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'errors');
+                const errSnap = await getDocs(errColRef);
+                let pruned = 0;
+                for (const docSnap of errSnap.docs) {
+                    if ((docSnap.data().tsLocal || 0) < errCutoff) { await deleteDoc(docSnap.ref); pruned++; }
+                }
+                if (pruned > 0) console.log(`[Teacher] ✓ Pruned ${pruned} old error logs (>7d)`);
+            } catch (error) {
+                console.error('[Teacher] ✗ Failed to prune old error logs:', error);
             }
 
             console.log(`[Teacher] ✓ Cleanup completed for classroom: ${classroomCode}`);
@@ -14612,6 +14630,61 @@ function _shEsc(s) {
     return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+// 🆕 [V4.2.7] OBS-2：把 userAgent 粗分類成瀏覽器名（用於健康面板分組統計）
+function _shBrowserOf(ua) {
+    ua = String(ua || '');
+    if (/Line\//i.test(ua)) return 'LINE';
+    if (/Edg\//i.test(ua)) return 'Edge';
+    if (/OPR\/|Opera/i.test(ua)) return 'Opera';
+    if (/Firefox\//i.test(ua)) return 'Firefox';
+    if (/Chrome\//i.test(ua)) return 'Chrome';
+    if (/Safari\//i.test(ua)) return 'Safari';
+    return '其他';
+}
+
+// 🆕 [V4.2.7] OBS-4：Firestore 讀取用量「估算」（免費方案 5 萬讀取/日為實際瓶頸）
+// 誠實標示：只計主要即時監聽的讀取，非精確值；用於接近上限時提醒老師。
+const _FS_FREE_READ_LIMIT = 50000;
+function _fsTrack(kind, n) {
+    try {
+        n = Number(n) || 0;
+        if (n <= 0) return;
+        const today = new Date().toISOString().slice(0, 10);
+        let t = JSON.parse(localStorage.getItem('akailao:fs_usage') || '{}');
+        if (t.date !== today) t = { date: today, reads: 0, writes: 0 };
+        if (kind === 'read') t.reads += n; else t.writes += n;
+        localStorage.setItem('akailao:fs_usage', JSON.stringify(t));
+        // 跨越 80% 門檻時提醒一次（每 session 一次）
+        if (kind === 'read' && t.reads >= _FS_FREE_READ_LIMIT * 0.8) {
+            try {
+                if (!sessionStorage.getItem('fs_read_warned')) {
+                    sessionStorage.setItem('fs_read_warned', '1');
+                    if (typeof showMessage === 'function') {
+                        showMessage(`⚠️ 今日 Firestore 讀取已達 ${Math.round(t.reads / _FS_FREE_READ_LIMIT * 100)}%（估算），接近免費上限`, 'error');
+                    }
+                }
+            } catch (e) {}
+        }
+    } catch (e) {}
+}
+function _fsUsageToday() {
+    try {
+        const today = new Date().toISOString().slice(0, 10);
+        const t = JSON.parse(localStorage.getItem('akailao:fs_usage') || '{}');
+        return (t.date === today) ? t : { date: today, reads: 0, writes: 0 };
+    } catch (e) { return { reads: 0, writes: 0 }; }
+}
+
+// 🆕 [V4.2.7] OBS-2：把 {key:count} 物件渲染成小膠囊 chips（依數量遞減）
+function _shCountChips(counts) {
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) return '<span style="color:#aaa;">—</span>';
+    return entries.map(([k, n]) =>
+        '<span style="background:#fff;border:1px solid rgba(45,58,31,0.2);border-radius:3px;padding:1px 6px;font-size:11px;color:#555;">'
+        + _shEsc(k) + ' <b style="color:#C8443A;">' + n + '</b></span>'
+    ).join('');
+}
+
 async function loadSystemHealthErrors() {
     const listEl = document.getElementById('system-health-list');
     if (!listEl) return;
@@ -14631,14 +14704,46 @@ async function loadSystemHealthErrors() {
             });
         }
         errors.sort((a, b) => (b.tsLocal || 0) - (a.tsLocal || 0));
-        errors = errors.slice(0, 60);
+
+        // 🆕 [V4.2.7] OBS-4：今日 Firestore 讀取用量估算列（空狀態與有錯誤時都顯示）
+        const _u = _fsUsageToday();
+        const _pct = Math.min(100, Math.round((_u.reads || 0) / _FS_FREE_READ_LIMIT * 100));
+        const _barColor = _pct >= 80 ? '#C8443A' : _pct >= 50 ? '#D89000' : '#7AA874';
+        const usageHtml = '<div style="background:var(--cb-paper);border:1px solid rgba(45,58,31,0.2);border-radius:6px;box-shadow:2px 2px 0 rgba(45,36,22,0.1);padding:8px 12px;margin-bottom:10px;text-align:left;">'
+            + '<div style="font-size:12px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span style="font-weight:700;color:#2d3a1f;">📈 今日 Firestore 讀取估算</span><span style="color:' + _barColor + ';font-weight:700;">' + (_u.reads || 0).toLocaleString() + ' / ' + _FS_FREE_READ_LIMIT.toLocaleString() + '</span></div>'
+            + '<div style="height:6px;background:rgba(45,58,31,0.12);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + _pct + '%;background:' + _barColor + ';"></div></div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:3px;">估算值（僅計即時監聽、本機累計，非精確帳單）· 今日寫入約 ' + (_u.writes || 0).toLocaleString() + '</div>'
+            + '</div>';
 
         if (errors.length === 0) {
-            listEl.innerHTML = '<div class="text-center py-10"><div style="font-size:42px;margin-bottom:10px;">✅</div>'
+            listEl.innerHTML = usageHtml
+                + '<div class="text-center py-10"><div style="font-size:42px;margin-bottom:10px;">✅</div>'
                 + '<p class="text-gray-500 font-medium">近 24 小時沒有錯誤紀錄</p>'
                 + '<p class="text-gray-400 text-sm mt-1">系統運作正常</p></div>';
             return;
         }
+
+        // 🆕 [V4.2.7] OBS-2：在完整 24h 集合上算統計（slice 顯示前）
+        const totalCount = errors.length;
+        const msgCounts = {}, browserCounts = {}, modeCounts = {};
+        errors.forEach(e => {
+            const m = String(e.message || '(無訊息)').slice(0, 60);
+            msgCounts[m] = (msgCounts[m] || 0) + 1;
+            const b = _shBrowserOf(e.userAgent);
+            browserCounts[b] = (browserCounts[b] || 0) + 1;
+            if (e.mode) modeCounts[e.mode] = (modeCounts[e.mode] || 0) + 1;
+        });
+        const topMsg = Object.entries(msgCounts).sort((a, b) => b[1] - a[1])[0];
+        const summaryHtml =
+            '<div style="background:var(--cb-paper);border:1px solid rgba(45,58,31,0.2);border-radius:6px;box-shadow:2px 2px 0 rgba(45,36,22,0.1);padding:10px 12px;margin-bottom:10px;text-align:left;">'
+            + '<div style="font-size:13px;font-weight:700;color:#2d3a1f;margin-bottom:6px;">📊 近 24 小時共 <span style="color:#C8443A;">' + totalCount + '</span> 筆錯誤'
+            + (totalCount > 60 ? '<span style="font-size:11px;color:#888;font-weight:400;">（僅顯示最近 60 筆）</span>' : '') + '</div>'
+            + '<div style="font-size:12px;color:#555;margin-bottom:6px;">最常見：「<b>' + _shEsc(topMsg[0]) + '</b>」<span style="color:#888;">× ' + topMsg[1] + '</span></div>'
+            + '<div style="font-size:11px;color:#666;display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:4px;"><span style="font-weight:600;">瀏覽器：</span>' + _shCountChips(browserCounts) + '</div>'
+            + (Object.keys(modeCounts).length ? '<div style="font-size:11px;color:#666;display:flex;flex-wrap:wrap;gap:4px;align-items:center;"><span style="font-weight:600;">模式：</span>' + _shCountChips(modeCounts) + '</div>' : '')
+            + '</div>';
+
+        errors = errors.slice(0, 60);
 
         const roleBadge = (r) => r === 'teacher'
             ? '<span style="background:#7AA874;color:#fff;padding:1px 7px;border-radius:3px;font-size:11px;">教師</span>'
@@ -14647,7 +14752,7 @@ async function loadSystemHealthErrors() {
                 : '<span style="background:#999;color:#fff;padding:1px 7px;border-radius:3px;font-size:11px;">未知</span>';
         const kindIcon = (k) => k === 'promise' ? '⛓️' : '💥';
 
-        listEl.innerHTML = errors.map(e => {
+        listEl.innerHTML = usageHtml + summaryHtml + errors.map(e => {
             const tStr = new Date(e.tsLocal || 0).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
             const ua = _shEsc((e.userAgent || '').slice(0, 80));
             const loc = e.source ? _shEsc(String(e.source).split('/').pop()) + (e.lineno ? ':' + e.lineno : '') : '';
