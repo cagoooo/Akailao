@@ -1,10 +1,29 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.0.2** ｜ 更新時間：2026-06-16
+> **版本：V4.0.3** ｜ 更新時間：2026-06-16
 
 ---
 
-## 🆕 最近更新（V4.0 — 老師 Google 帳號登入 + 題庫雲端同步 + AI API 通知 + 教師面板全版 RWD）
+## 🆕 最近更新（V4.0 — 老師 Google 帳號登入 + 題庫雲端同步 + AI API 通知 + 教師面板全版 RWD + 進入進度提示）
+
+### ✅ V4.0.3：教師進入面板 — 分步進度提示，消除「以為當機」體驗（2026-06-16）
+- [x] **`src/app.js`：按鈕點擊後立即 disable + 顯示 spinner**
+  - 驗證通過後立即：`btn.disabled = true`，innerHTML 換成 `<span class="cb-loading-spinner"></span><span>同步題庫中…</span>`
+  - `loadQuestionBanksFromCloud()` 完成後切換文字：`建立教室中…`（對應 `setDoc` 初始化教室）
+  - 失敗時 `_restoreBtn()` 自動還原「進入教師面板 →」，老師可立即重試
+- [x] **`src/styles.css`：新增 loading 相關樣式**
+  - `.cb-loading-spinner`：15px 圓形邊框旋轉動畫（`@keyframes cb-spin`），顏色配合黑板按鈕奶白 `#f0ebdf`
+  - `.cb-form-cta:disabled`：`opacity: 0.78` + `cursor: not-allowed`，視覺清楚表示不可重複點
+
+**效果驗證（preview_eval）**：
+| 屬性 | 值 | 說明 |
+|---|---|---|
+| `opacity` | `0.78` | disabled 狀態正確生效 |
+| `cursor` | `not-allowed` | 防誤點 |
+| `animationName` | `cb-spin` | spinner 動畫已套用 |
+| `width`（spinner） | `15px` | 大小正確 |
+
+---
 
 ### ✅ V4.0.2：教師面板全版 RWD — 桌機端善用全螢幕寬度（2026-06-16）
 - [x] **`src/styles.css`：新增 `#app-container.teacher-wide-mode`**
