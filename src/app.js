@@ -14539,6 +14539,21 @@ const ErrorReporter = (() => {
             _recentKeys.set(key, now);
             _reportCount++;
 
+            // 🆕 [V4.2.6] OBS-1b：嚴重錯誤推 Google Chat（沿用 NOTIFY-A 基建）
+            // UsageNotify.error 自帶節流（同訊息每 session 一次 + 上限 5），不會洗版；
+            // 先於 Firestore 寫入呼叫，確保即使寫入失敗（如權限）仍會推播。
+            try {
+                const _loc = extra.source
+                    ? String(extra.source).split('/').pop() + (extra.lineno ? ':' + extra.lineno : '')
+                    : '';
+                const _roleTxt = currentRole === 'teacher' ? '教師'
+                    : currentRole === 'student' ? ('學生' + (studentName ? ':' + studentName : ''))
+                    : '未知';
+                const _ctx = [kind, _loc ? '@ ' + _loc : '', currentInteractionMode ? '模式:' + currentInteractionMode : '', _roleTxt]
+                    .filter(Boolean).join(' · ');
+                UsageNotify.error(message, _ctx, classroomCode || '');
+            } catch (_) { /* 推播失敗不影響後續 Firestore 寫入 */ }
+
             // 無教室代碼時（登入前 / 入口頁）丟到 _global_ 桶，仍可追蹤
             const cc = classroomCode || '_global_';
             const errId = `${now}_${Math.random().toString(36).slice(2, 8)}`;
@@ -14995,13 +15010,8 @@ async function initialize() {
         UsageNotify.error(error.message, 'firebase-auth-failed', classroomCode);
     }
 
-    // 遙測：註冊全域未捕獲錯誤遙測捕捉
-    window.addEventListener('error', (event) => {
-        UsageNotify.error(event.message, `${event.filename}:${event.lineno}:${event.colno}`, classroomCode);
-    });
-    window.addEventListener('unhandledrejection', (event) => {
-        UsageNotify.error(event.reason?.message || String(event.reason), 'Unhandled Promise Rejection', classroomCode);
-    });
+    // 🆕 [V4.2.6] OBS-1b：全域錯誤遙測已整併進 ErrorReporter（含 chunk error 過濾 + Firestore 紀錄 + Chat 通知）
+    // 移除此處舊的重複 window error/unhandledrejection 監聽器，避免雙重註冊與 chunk error 洗版 Chat。
 }
 
 // Add beforeunload handler to warn user about closing window
