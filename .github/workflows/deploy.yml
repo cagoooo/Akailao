@@ -63,6 +63,14 @@ jobs:
           cp manifest.json dist/manifest.json 2>/dev/null || true
           cp sw.js dist/sw.js 2>/dev/null || true
 
+      # 🆕 [V4.1.1] 注入 BUILD_VERSION 到 sw.js（git hash + 時間戳）
+      # 讓每次 CI build 後 sw.js byte 都不同 → 瀏覽器一定偵測到更新 → updatefound 正確 fire
+      - name: 🔧 注入 Build Version 到 sw.js
+        run: |
+          BUILD_VERSION="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M)"
+          sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" dist/sw.js
+          echo "✓ sw.js BUILD_VERSION 已注入：${BUILD_VERSION}"
+
       # 🆕 [V3.9.3] 把 set.html 裡的 __APP_VERSION__ sentinel 替換成 package.json 版本
       - name: 🏷️ 注入版本號到 set.html
         run: |
@@ -91,6 +99,14 @@ jobs:
             FAIL=1
           else
             echo "✓ dist/set.html：版本 sentinel 已正確替換"
+          fi
+          # ③ dist/sw.js：__BUILD_VERSION__ 是否仍存在（sw.js BUILD_VERSION 注入失敗才會殘留）
+          BV_LEFT=$(grep -o '__BUILD_VERSION__' dist/sw.js 2>/dev/null || true)
+          if [ -n "$BV_LEFT" ]; then
+            echo "::error::❌ dist/sw.js 仍有 __BUILD_VERSION__ sentinel，sed 注入失敗"
+            FAIL=1
+          else
+            echo "✓ dist/sw.js：BUILD_VERSION sentinel 已正確注入"
           fi
           exit $FAIL
 

@@ -14358,30 +14358,59 @@ function _renderRecentClassrooms() {
     } catch (e) {}
 }
 
-// ===== 🆕 [V4.1.0] UX-G — Service Worker 版本更新通知 =====
+// ===== 🆕 [V4.1.1] UX-G — Service Worker 版本更新通知（prompt-to-refresh 雙線偵測）=====
+// 參考 pwa-cache-bust skill：陷阱#12（sw.js byte 不變 → updatefound 從不 fire）
+// 修法：BUILD_VERSION 由 CI sed 注入，每次 byte 都不同；register 加 updateViaCache:"none"
 
-function _showSwUpdateToast() {
-    if (document.getElementById('sw-update-toast')) return; // 已顯示
+function _showSwUpdateToast(waitingWorker) {
+    if (document.getElementById('sw-update-toast')) return;
     const toast = document.createElement('div');
     toast.id = 'sw-update-toast';
     toast.innerHTML =
         '<span>📝 教材已更新！</span>' +
-        '<button class="sw-reload-btn" onclick="window.location.reload()">立即重整</button>' +
-        '<button class="sw-dismiss-btn" aria-label="關閉" onclick="this.parentElement.remove()">✕</button>';
+        '<button class="sw-reload-btn" id="sw-reload-btn">立即重整</button>' +
+        '<button class="sw-dismiss-btn" aria-label="關閉">✕</button>';
     document.body.appendChild(toast);
+
+    document.getElementById('sw-reload-btn').addEventListener('click', () => {
+        toast.remove();
+        if (waitingWorker) {
+            // prompt-to-refresh：通知等待中的 SW 執行 skipWaiting
+            // 用 sessionStorage flag 防 controllerchange 無限 reload（陷阱#3）
+            let _reloaded = false;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!_reloaded) { _reloaded = true; window.location.reload(); }
+            });
+            waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+        } else {
+            window.location.reload();
+        }
+    });
+    toast.querySelector('.sw-dismiss-btn').addEventListener('click', () => toast.remove());
 }
 
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js')
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then(reg => {
-            reg.addEventListener('updatefound', () => {
-                const newWorker = reg.installing;
-                if (!newWorker) return;
-                newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                        _showSwUpdateToast();
+            // 線 A：SW lifecycle 事件（updatefound + statechange）
+            const _watchWorker = (worker) => {
+                worker.addEventListener('statechange', () => {
+                    // 確認「是更新非首裝」：必須有舊 controller（陷阱#12 / #3）
+                    if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+                        _showSwUpdateToast(worker);
                     }
                 });
+            };
+            if (reg.installing) _watchWorker(reg.installing);
+            reg.addEventListener('updatefound', () => {
+                if (reg.installing) _watchWorker(reg.installing);
+            });
+
+            // 線 B：SW activate 後廣播 SW_ACTIVATED（備胎，GitHub CDN polling 延遲 10 分鐘問題）
+            navigator.serviceWorker.addEventListener('message', e => {
+                if (e.data?.type === 'SW_ACTIVATED' && navigator.serviceWorker.controller) {
+                    _showSwUpdateToast(null); // SW 已接管，直接 reload 即可
+                }
             });
         })
         .catch(e => console.warn('[SW] 註冊失敗（本機開發環境可忽略）:', e));
