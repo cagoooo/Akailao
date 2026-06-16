@@ -578,6 +578,16 @@
                         class="btn bg-gray-500 hover:bg-gray-600 text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap">
                         <i class="fas fa-pause mr-1 sm:mr-2"></i> <span id="toggle-pause-btn-text">暫停回覆 ⏸️</span>
                     </button>
+                    <!-- 🆕 [V4.2.5] TCH-2：互動自動計時鎖定 -->
+                    <select id="auto-lock-select"
+                        class="text-xs sm:text-sm h-9 sm:h-10 px-2 rounded-lg border-2 border-stone-400 bg-stone-100 text-stone-700 font-bold cursor-pointer text-center"
+                        title="互動進行 N 分鐘後自動鎖定學生回覆（教師端計時，倒數會顯示在此）">
+                        <option value="0" data-label="⏱️ 自動鎖定：關">⏱️ 自動鎖定：關</option>
+                        <option value="1" data-label="⏱️ 1 分鐘後鎖定">⏱️ 1 分鐘後鎖定</option>
+                        <option value="3" data-label="⏱️ 3 分鐘後鎖定">⏱️ 3 分鐘後鎖定</option>
+                        <option value="5" data-label="⏱️ 5 分鐘後鎖定">⏱️ 5 分鐘後鎖定</option>
+                        <option value="10" data-label="⏱️ 10 分鐘後鎖定">⏱️ 10 分鐘後鎖定</option>
+                    </select>
                     <button id="reset-answers-btn"
                         class="btn btn-green text-xs sm:text-sm h-9 sm:h-10 px-2 sm:px-3 whitespace-nowrap">
                         <i class="fas fa-redo mr-1 sm:mr-2"></i> <span>重新開始 🔄</span>

@@ -3430,6 +3430,10 @@ async function setInteractionMode(mode, options = {}) {
     // Step 2: 依模式精準顯示（每個 mode 只開需要的按鈕）
     // 永遠顯示：暫停回覆（除 url_dispatch）、重新開始、結束互動
     togglePauseBtn?.classList.toggle('hidden', mode === 'url_dispatch');
+    // 🆕 [V4.2.5] TCH-2：自動鎖定選單跟隨暫停鈕顯示；教師切換模式時重置計時
+    const autoLockSel = document.getElementById('auto-lock-select');
+    autoLockSel?.classList.toggle('hidden', mode === 'url_dispatch');
+    if (currentRole === 'teacher') _clearAutoLock();
 
     switch (mode) {
         case 'true_false':
@@ -9402,6 +9406,7 @@ async function endClassSession() {
         lastSelectedStudentCard = null;
         lastSelectedModalStudent = null;
         isResponsePaused = false;
+        _clearAutoLock(); // 🆕 [V4.2.5] TCH-2：結束課堂時清除自動鎖定計時
         currentMultipleChoiceQuestions = null;
         readingComprehensionData = { text: '', questions: [] }; // 🚀 NEW: 清空閱讀測驗資料
         sequencingData = { question: '', correctOrder: [] }; // 🚀 NEW: 清空排序題資料
@@ -9481,11 +9486,74 @@ async function toggleResponsePause() {
         await setDoc(controlRef, { isPaused: isResponsePaused }, { merge: true });
         showMessage(`學生回覆已${isResponsePaused ? '暫停' : '恢復'}！`, 'info');
         updateTeacherPauseButtonUI();
+        _clearAutoLock(); // 手動切換暫停 → 取消自動計時（避免衝突）
     } catch (error) {
         console.error("切換暫停回覆狀態失敗:", error);
         showMessage("切換狀態失敗，請檢查網路連線。", "error");
         isResponsePaused = !isResponsePaused; // Revert local state on error
     }
+}
+
+// ===== 🆕 [V4.2.5] TCH-2：互動自動計時鎖定（教師端 client 計時）=====
+let _autoLockTimer = null;     // setTimeout id（到時鎖定）
+let _autoLockInterval = null;  // setInterval id（每秒更新倒數顯示）
+let _autoLockEndTs = null;     // 結束時間戳
+
+function _clearAutoLock() {
+    if (_autoLockTimer) { clearTimeout(_autoLockTimer); _autoLockTimer = null; }
+    if (_autoLockInterval) { clearInterval(_autoLockInterval); _autoLockInterval = null; }
+    _autoLockEndTs = null;
+    const sel = document.getElementById('auto-lock-select');
+    if (sel) {
+        // 還原所有 option 文字（倒數期間 selected option 文字被改過）
+        Array.from(sel.options).forEach(o => { if (o.dataset.label) o.text = o.dataset.label; });
+        sel.value = '0';
+    }
+}
+
+/**
+ * 啟動 / 重設「N 分鐘後自動鎖定學生回覆」計時器。
+ * 到時等同教師按下「暫停回覆」+ toast 提醒。教師端計時，刷新會重置。
+ */
+function startAutoLock(minutes) {
+    if (_autoLockTimer) { clearTimeout(_autoLockTimer); _autoLockTimer = null; }
+    if (_autoLockInterval) { clearInterval(_autoLockInterval); _autoLockInterval = null; }
+    if (!minutes || minutes <= 0) { _clearAutoLock(); return; }
+    if (!classroomCode) { showMessage('請先開啟一個教室！', 'error'); _clearAutoLock(); return; }
+
+    const sel = document.getElementById('auto-lock-select');
+    const ms = minutes * 60 * 1000;
+    _autoLockEndTs = Date.now() + ms;
+
+    const tick = () => {
+        const remain = Math.max(0, _autoLockEndTs - Date.now());
+        const mm = Math.floor(remain / 60000);
+        const ss = Math.floor((remain % 60000) / 1000);
+        if (sel && sel.selectedIndex >= 0) {
+            sel.options[sel.selectedIndex].text = `⏱️ ${mm}:${String(ss).padStart(2, '0')}`;
+        }
+    };
+    tick();
+    _autoLockInterval = setInterval(tick, 1000);
+
+    _autoLockTimer = setTimeout(async () => {
+        if (_autoLockInterval) { clearInterval(_autoLockInterval); _autoLockInterval = null; }
+        _autoLockTimer = null;
+        // 鎖定：等同按下暫停（若尚未暫停才寫入）
+        if (!isResponsePaused && classroomCode) {
+            try {
+                isResponsePaused = true;
+                const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+                await setDoc(controlRef, { isPaused: true }, { merge: true });
+                updateTeacherPauseButtonUI();
+            } catch (e) {
+                console.error('[AutoLock] 自動鎖定失敗:', e);
+                isResponsePaused = false;
+            }
+        }
+        showMessage('⏰ 時間到，已自動鎖定學生回覆', 'info');
+        _clearAutoLock();
+    }, ms);
 }
 
 /**
@@ -12427,6 +12495,21 @@ function setupEventListeners() {
 
     // NEW: Toggle Pause Button Event Listener
     togglePauseBtn.addEventListener('click', toggleResponsePause);
+
+    // 🆕 [V4.2.5] TCH-2：自動鎖定計時選單
+    const autoLockSelect = document.getElementById('auto-lock-select');
+    if (autoLockSelect) {
+        autoLockSelect.addEventListener('change', (e) => {
+            const mins = parseInt(e.target.value, 10) || 0;
+            if (mins > 0) {
+                startAutoLock(mins);
+                showMessage(`已設定 ${mins} 分鐘後自動鎖定學生回覆`, 'info');
+            } else {
+                _clearAutoLock();
+                showMessage('已取消自動鎖定計時', 'info');
+            }
+        });
+    }
 
     // NEW: Reset Answers Button Event Listener
     const resetAnswersBtn = document.getElementById('reset-answers-btn');
