@@ -246,6 +246,63 @@
     .cb-q-stamp { width: 40px; height: 40px; font-size: 17px; }
 }
 
+/* ============================================================
+   🆕 [V4.2.0] VIS-2 教師面板「備課桌」風
+   ① 九宮格模式按鈕 → 彩色筆磁貼（保留各模式底色 + 硬陰影 + 交錯傾斜 + A./B. 粉筆圓標）
+   ② 監控頁學生卡片 → 便利貼（紙底 + 交錯微傾，保留 content-visibility 效能）
+   ============================================================ */
+/* ① 九宮格彩色筆磁貼 — scope 在 .cb-mode-grid 內，不影響底部其他 .btn */
+.cb-mode-grid .btn {
+    position: relative;
+    border: 2.5px solid rgba(45, 36, 22, 0.32) !important;
+    border-radius: 7px !important;
+    box-shadow: var(--cb-shadow-hard) !important;
+    font-family: "Noto Serif TC", serif;
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+.cb-mode-grid .btn:nth-child(odd)  { transform: rotate(-1.1deg); }
+.cb-mode-grid .btn:nth-child(even) { transform: rotate(1.1deg); }
+.cb-mode-grid .btn:hover {
+    transform: translateY(-4px) rotate(0deg) !important;
+    box-shadow: 6px 8px 0 rgba(45, 36, 22, 0.3) !important;
+    z-index: 2;
+}
+/* A./B./C. 字母 → 左上角粉筆圓標 */
+.cb-mode-grid .btn > span:first-child {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255, 253, 244, 0.9);
+    color: rgba(45, 36, 22, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px !important;
+    font-weight: 700;
+    opacity: 1 !important;
+    margin: 0 !important;
+    box-shadow: 1px 1px 0 rgba(45, 36, 22, 0.22);
+    transform: rotate(-6deg);
+    letter-spacing: -0.5px;
+}
+
+/* ② 學生卡片便利貼風 */
+.student-response-item {
+    background-color: var(--cb-paper) !important;
+    border: 1px solid rgba(45, 58, 31, 0.16) !important;
+    box-shadow: var(--cb-shadow-hard) !important;
+}
+#student-responses-container .student-response-item:nth-child(odd)  { transform: rotate(-0.7deg); }
+#student-responses-container .student-response-item:nth-child(even) { transform: rotate(0.7deg); }
+#student-responses-container .student-response-item:hover {
+    transform: rotate(0deg) translateY(-2px);
+    box-shadow: 5px 6px 0 rgba(45, 36, 22, 0.28) !important;
+    z-index: 2;
+}
+
 /* 🆕 [v3.8.26] QR Code 模態框：學生卡片加入動畫 + 名單過渡 */
 .student-join-item {
     animation: student-slide-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
