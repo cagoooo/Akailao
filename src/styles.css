@@ -826,6 +826,24 @@ body.initial-view-background #app-container {
 }
 .cb-form-cta .cb-arrow { transition: transform 0.2s; }
 .cb-form-cta:hover .cb-arrow { transform: translateX(4px); }
+.cb-form-cta:disabled {
+    opacity: 0.78;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: 2px 2px 0 rgba(45, 36, 22, 0.15) !important;
+}
+
+/* 🆕 [V4.0.3] 進入教師面板載入中 spinner */
+.cb-loading-spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid rgba(240, 235, 223, 0.3);
+    border-top-color: #f0ebdf;
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: cb-spin 0.75s linear infinite;
+}
+@keyframes cb-spin { to { transform: rotate(360deg); } }
 
 /* 次要按鈕（紙質返回） */
 .cb-form-cta-secondary {

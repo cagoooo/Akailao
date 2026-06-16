@@ -10905,6 +10905,15 @@ function setupEventListeners() {
         }
         const code = rawCode;
         if (code) {
+            // 🆕 [V4.0.3] 顯示進度，避免老師以為當機
+            const _submitBtn = document.getElementById('teacher-classroom-code-submit-btn');
+            const _restoreBtn = () => {
+                _submitBtn.disabled = false;
+                _submitBtn.innerHTML = '進入教師面板 <span class="cb-arrow">→</span>';
+            };
+            _submitBtn.disabled = true;
+            _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>同步題庫中…</span>';
+
             try {
                 classroomCode = code;
                 currentRole = 'teacher';
@@ -10918,6 +10927,9 @@ function setupEventListeners() {
                     await loadQuestionBanksFromCloud(currentTeacherGoogleUser.uid); // Phase 3: 載入題庫
                 }
 
+                // 🆕 [V4.0.3] 題庫同步完成，進入第二步
+                _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>建立教室中…</span>';
+
                 // Set initial classroom state in Firestore, including isPaused: false
                 const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
                 await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true });
@@ -10928,14 +10940,15 @@ function setupEventListeners() {
                 listenToClassroomPresence(); // Ensure presence listener is active
                 showView('teacherMenu');
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
-                
+
                 // 遙測：教師登入與建立教室成功
                 UsageNotify.create(classroomCode);
                 UsageNotify.login('teacher', '教師', classroomCode);
             } catch (error) {
                 console.error('進入教室失敗:', error);
+                _restoreBtn(); // 失敗時還原按鈕，讓老師可重試
                 showMessage(`進入教室失敗：${error.message}`, 'error');
-                
+
                 // 遙測：教師進入教室失敗
                 UsageNotify.error(error.message, 'teacher-join-classroom-failed', classroomCode);
             }
