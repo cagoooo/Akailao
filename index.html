@@ -966,9 +966,12 @@
                 </div>
             </div>
             <div id="interaction-drawing" class="hidden text-center flex flex-col h-full min-h-screen">
-                <h3 class="text-2xl font-bold text-center mb-4">繪圖題</h3>
+                <div class="cb-q-header cb-q-header-standalone" style="margin-top:8px;">
+                    <span class="cb-q-stamp">繪</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-yellow);">繪圖題</span>
+                </div>
                 <div
-                    class="flex flex-wrap justify-center md:justify-start items-center gap-2 sm:gap-4 mb-4 p-2 bg-gray-50 rounded-lg shadow-sm flex-shrink-0">
+                    class="cb-draw-toolbar flex flex-wrap justify-center md:justify-start items-center gap-2 sm:gap-4 mb-4 p-2 rounded-lg flex-shrink-0">
                     <!-- 🆕 [v3.8.27] 筆類選擇（一般/螢光/馬克/鉛筆）取代原單一畫筆按鈕 -->
                     <button id="pen-tool-btn"
                         class="p-2 rounded-lg border-2 border-blue-500 bg-white transition-all duration-150 ease-in-out h-11 flex items-center"
@@ -1029,8 +1032,7 @@
                     </div>
                     <div class="flex items-center gap-2 mt-2 md:mt-0 ml-auto">
                         <button id="submit-drawing-btn"
-                            class="btn btn-primary !w-auto text-base h-11 px-4 py-2 flex items-center justify-center">送出
-                            🚀</button>
+                            class="btn cb-submit-cta" style="margin-top:0 !important;">送出 🚀</button>
                     </div>
                 </div>
                 <div class="relative">

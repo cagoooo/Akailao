@@ -181,6 +181,15 @@
 /* 搶答獨立標題（不包卡，全螢幕點擊鈕保留絕對定位） */
 .cb-q-header.cb-q-header-standalone { margin-bottom: 14px; }
 
+/* 繪圖題工具列 → 紙感「筆盤」風（不碰 canvas，避免座標偏移） */
+.cb-draw-toolbar {
+    background: var(--cb-craft) !important;
+    border: 2px solid rgba(45, 36, 22, 0.28) !important;
+    border-radius: 6px !important;
+    box-shadow: var(--cb-shadow-hard) !important;
+}
+.cb-draw-toolbar label { color: var(--cb-board) !important; }
+
 /* 卡內題目顯示框（覆蓋原 white/blue 樣式為紙感） */
 .cb-student-card #tf-question-display {
     background: var(--cb-paper-bright) !important;
@@ -1608,8 +1617,10 @@ body {
 
 /* 繪圖板 Canvas 樣式 */
 #drawing-canvas {
-    border: 2px solid #cbd5e1;
+    /* 🆕 [V4.2.3] VIS-1d：邊框寬度維持 2px（不動座標映射），僅換色 + 加硬陰影 → 素描本感 */
+    border: 2px solid rgba(45, 36, 22, 0.3);
     border-radius: 0.5rem;
+    box-shadow: var(--cb-shadow-hard);
     cursor: crosshair;
     touch-action: none;
     /* 防止在 canvas 上繪圖時觸發頁面滾動 */
