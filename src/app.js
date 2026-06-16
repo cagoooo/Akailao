@@ -12089,6 +12089,7 @@ function setupEventListeners() {
             aiLoadingSpinner.classList.add('hidden');
             const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
             const parsedResults = jsonText ? JSON.parse(jsonText) : [];
+            UsageNotify.aiApi('ai_wordcloud', 'AI 文字雲分析', { topic: `分析 ${textResponses.length} 則學生回答`, count: parsedResults.length, keyType: aiSettings.aiSource }, classroomCode);
             if (parsedResults.length > 0) {
                 parsedResults.sort((a, b) => b.count - a.count).forEach(item => {
                     const li = document.createElement('li');
@@ -12568,6 +12569,7 @@ function setupEventListeners() {
                 const existingText = customMcQuestionsTextarea.value.trim();
                 customMcQuestionsTextarea.value = existingText ? `${existingText}\n${generatedText.trim()}` : generatedText.trim();
                 showMessage('AI 題目已成功生成並填入左方！', 'success');
+                UsageNotify.aiApi('ai_mc_gen', 'AI 生成選擇題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -12694,6 +12696,7 @@ function setupEventListeners() {
                 const sequencingItemsTextarea = document.getElementById('sequencing-items-textarea');
                 sequencingItemsTextarea.value = generatedText.trim();
                 showMessage('AI 排序題已成功生成並填入！', 'success');
+                UsageNotify.aiApi('ai_seq_gen', 'AI 生成排序題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -12821,6 +12824,7 @@ function setupEventListeners() {
                 const matchingPairsTextarea = document.getElementById('matching-pairs-textarea');
                 matchingPairsTextarea.value = generatedText.trim();
                 showMessage('AI 配對題已成功生成並填入！', 'success');
+                UsageNotify.aiApi('ai_match_gen', 'AI 生成配對題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -18776,6 +18780,7 @@ async function recognizeQuizImages(composerId, targetTextareaId, mode) {
         const result = await response.json();
         let generated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (!generated) throw new Error('AI 未返回有效內容');
+        UsageNotify.aiApi('ai_quiz_ocr', `AI 辨識題目（${mode === 'tf' ? '是非題' : '選擇題'}）`, { topic: `${store.length} 張圖片`, keyType: aiSettings.aiSource }, classroomCode);
 
         // 🆕 v3.8.1 A-2: 強化清理 — 剝除 markdown code fence
         generated = generated.replace(/^```[a-zA-Z]*\n?/gm, '').replace(/\n?```\s*$/g, '').trim();
@@ -19097,6 +19102,7 @@ ${existingText}
 
         const result = await response.json();
         let generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        UsageNotify.aiApi('ai_reading_gen', 'AI 生成閱讀測驗', { topic: (topic || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '')).slice(0, 80), keyType: aiSettings.aiSource }, classroomCode);
 
         if (generatedText) {
             // 🆕 MODIFIED [v3.7.14]: 強化輸出清理 — 剝除 markdown code fence 與其他雜訊

@@ -133,6 +133,12 @@ export const UsageNotify = {
         if (!ssOnce('err_' + hash(message))) return;
         errCount++;
         enqueue('error', { message, context: String(context == null ? '' : context).slice(0, 160), classroom });
+    },
+
+    // 每次 AI API 呼叫成功都送出（不做 ssOnce 去重，用於統計用量與頻率）
+    aiApi(feature, label, details, classroom) {
+        if (!feature) return;
+        enqueue('ai_api', Object.assign({ feature, label: label || feature, classroom }, details || {}));
     }
 };
 
