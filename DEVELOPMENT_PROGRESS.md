@@ -1,6 +1,94 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.0.3** ｜ 更新時間：2026-06-16
+> **版本：V4.1.1** ｜ 更新時間：2026-06-16
+
+---
+
+## 🆕 最近更新（V4.1 — SW 版本感知更新通知 + Design Token + 最近教室快速入口 + 下課 Google Chat 通知）
+
+### ✅ V4.1.1：SW 版本感知更新通知 + 版本號正確同步（2026-06-16）
+
+#### 問題根因（兩個 Bug 同時修）
+
+| Bug | 症狀 | 根因 |
+|---|---|---|
+| 版本徽章卡在 v3.9.6 | badge 顯示舊版 | `package.json` 版本從未從 3.9.6 更新過（即使功能已到 V4.1.x） |
+| SW 更新通知永遠不出現 | toast 從不跳出 | `sw.js` 的 `CACHE_NAME` 寫死 `'akailao-v1'`，每次 deploy bytes 完全相同 → 瀏覽器比對後當作「沒變」→ `updatefound` 從不觸發（pwa-cache-bust Trap #12） |
+
+#### 修法
+
+- [x] **`package.json`：版本從 `3.9.6` 正確升至 `4.1.1`**
+  - 修正版本徽章（`NEW · v4.1.1`）、`CACHE_NAME` 等所有版本來源
+- [x] **`sw.js`：全面重構（prompt-to-refresh 模式）**
+  - `const BUILD_VERSION = "__BUILD_VERSION__";` — CI sentinel，每次 deploy 由 sed 注入 `git-short-hash-YYYYMMDDhhmm`
+  - `const CACHE_NAME = \`akailao-${BUILD_VERSION}\`` — 動態 CACHE_NAME，bytes 每次必不同
+  - `install`：不呼叫 `skipWaiting()`（prompt-to-refresh，不打斷進行中的課堂）
+  - `activate`：清除舊 CACHE_NAME + `clients.claim()` + 廣播 `{ type: 'SW_ACTIVATED', version }` 給所有 client（線 B 偵測）
+  - `message`：監聽 `SKIP_WAITING` — 使用者點「立即重整」後才切換 SW
+  - `fetch`：HTML navigate → network-first（防 chunk 不匹配）
+- [x] **`.github/workflows/deploy.yml`：新增 BUILD_VERSION 注入步驟**
+  ```yaml
+  BUILD_VERSION="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M)"
+  sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" dist/sw.js
+  ```
+  - 位置：複製靜態資源之後、sentinel 殘留偵測之前
+  - sentinel 偵測新增第 ③ 條：`grep -o '__BUILD_VERSION__' dist/sw.js`
+- [x] **`src/app.js`：SW 註冊全面重寫**
+  - `register('./sw.js', { updateViaCache: 'none' })` — 繞過瀏覽器 HTTP cache，確保每次都比對新 sw.js
+  - 線 A（lifecycle）：`updatefound` → `_watchWorker(installing)` → `statechange === 'installed' && controller` → `_showSwUpdateToast(worker)`
+  - 線 B（postMessage）：`SW_ACTIVATED` → `_showSwUpdateToast(null)` （已 activate 的 backup）
+  - `_showSwUpdateToast(waitingWorker)`：傳入 worker reference → 按「立即重整」才送 `SKIP_WAITING` → `controllerchange` + `_reloaded` flag → `reload()`（防無限 reload）
+
+**觸發流程**（正常 deploy 後）：
+```
+CI deploy → sed 注入 BUILD_VERSION → sw.js bytes 改變
+→ 瀏覽器下次打開頁面抓 sw.js → 比對不同 → install 新 SW
+→ 線 A：updatefound + statechange('installed') → toast
+→ 使用者點「立即重整」→ SKIP_WAITING → activate → controllerchange → reload
+→ 線 B（backup）：SW_ACTIVATED postMessage → toast（若線 A 漏掉）
+```
+
+---
+
+### ✅ V4.1.0：五大功能同時上線（2026-06-16）
+
+#### BUILD-A：CI Sentinel 殘留自動偵測
+- [x] **`.github/workflows/deploy.yml`：新增 Build Smoke Test 步驟**
+  - ① `import\.meta\.env\.VITE_[A-Z_]+` 掃 `dist/index.html`（Vite API key 未替換）
+  - ② `__APP_VERSION__` 掃 `dist/set.html`（版本 sentinel 未替換）
+  - 使用**精確 pattern**，避免匹配 Firebase SDK 內部符號（`__FIREBASE_DEFAULTS__` 等）造成假陽性（Trap #15）
+  - 任一殘留 `exit 1` 中斷 deploy，防止帶著壞 sentinel 上線
+
+#### CSS-A：Design Token 系統化
+- [x] **`src/styles.css`：`:root` 新增 `--cb-*` 系列 CSS 變數**
+  ```css
+  :root {
+    --cb-board: #2d3a1f;  --cb-chalk: #f0ebdf;  --cb-paper: #F8F2DE;
+    --cb-paper-bright: #FFFDF4;  --cb-craft: #C9B085;  --cb-vermilion: #C8443A;
+    --cb-tape-yellow: #F4D35E;  --cb-tape-red: #E07856;  --cb-tape-green: #7AA874;
+    --cb-shadow-hard: 4px 4px 0 rgba(45, 36, 22, 0.25);
+    --cb-rotate-l: -0.5deg;  --cb-rotate-r: 0.5deg;
+  }
+  ```
+  - 為後續 Dark Mode / 高對比模式奠定基礎，未來只需換一組變數
+
+#### UX-A：最近教室快速入口
+- [x] **`src/app.js`：`_saveRecentClassroom()` + `_renderRecentClassrooms()`**
+  - 成功進入教室時 → localStorage `akailao:recent_classrooms` 記錄最多 3 筆（code + timestamp）
+  - `showView('teacherClassroomCode')` 時自動渲染為 chip 按鈕，點擊直接填入輸入框
+- [x] **`index.html`：新增 `#teacher-recent-chips` 容器**（`hidden` 狀態，有歷史才顯示）
+
+#### NOTIFY-A：下課 Google Chat 通知含統計
+- [x] **`src/usage-notify.js`：新增 `UsageNotify.classEnd(classroom, studentCount, durationMin)`**
+  - `enqueue('class_end', {...})`，不使用 ssOnce 去重（每次下課都發）
+- [x] **`src/app.js`：`endClassSession()` 前插入統計擷取**
+  - `activeStudentNames.length` 必須在 `markClassEnded()` **之前**讀取（清空後就拿不到了）
+  - `classStartTime`（教室建立時刻）→ 計算課堂時長（分鐘）
+- [x] **`functions/index.js`：新增 `class_end` 事件類型 + Google Chat Card**
+  - 顯示：下課通知 🔔 + 教室代碼 + 參與人數 + 課堂時長
+
+#### UX-G：SW 版本更新通知（→ V4.1.1 完整實作）
+- [x] 初版架構在 V4.1.0 建立，V4.1.1 全面重構修正 Trap #12
 
 ---
 
@@ -308,23 +396,24 @@
 
 ### 📈 V3.9.4 後 ROI 排序總表
 
-| 優先級 | 項目 | 工時 | 收益 | 依賴 |
-|---|---|---|---|---|
-| ⭐⭐⭐ | **V3.9.5** Design Token 系統化 | 半天 | 解鎖後續所有視覺改動 | — |
-| ⭐⭐⭐ | **V3.9.10** Build Smoke Test | 1h | 防止 V3.9.4 同類雷再發 | — |
-| ⭐⭐⭐ | **V3.9.6** 13 模式學生端筆記紙化（Top 3） | 1 天 | 視覺一致性 | V3.9.5 |
-| ⭐⭐⭐ | **V3.9.11** SW 版本更新通知 | 1 天 | 消滅「沒看到新版」客訴 | — |
-| ⭐⭐⭐ | **V3.10.0** 教師「最近班級」 | 半天 | 老師日常 UX | — |
-| ⭐⭐⭐ | **V3.12.0** 前端錯誤追蹤 | 1 天 | 維運能力上一階 | — |
-| ⭐⭐ | **V3.9.7** 教師面板「備課桌」風 | 2 天 | 品牌儀式感 | V3.9.5 |
-| ⭐⭐ | **V3.9.8/9** 動畫降級 + 對比驗證 | 1.5 天 | 無障礙合規 | — |
-| ⭐⭐ | **V3.10.4** Demo 模式 | 1.5 天 | 對外推廣 | — |
-| ⭐⭐ | **V3.11.0** PDF 改筆記紙風 | 2 天 | 家長感受度 | V3.9.5 |
-| ⭐⭐ | **V3.6** 13 模式中頻 5 個 | 1.5 天 | 視覺收尾 | V3.9.5/6 |
-| ⭐ | **V3.10.1/2/3** 入口智慧化小品 | 各半天 | 趣味性 | — |
-| ⭐ | **V3.13** Dark Mode | 2 天 | 進階體驗 | V3.9.5 |
-| ⭐ | **V3.9.12** CHANGELOG | 半天 | 透明度 | — |
-| ⭐ | **V3.12.1/2** 觀測性小品 | 各半天-1 天 | 維運深化 | V3.12.0 |
+| 優先級 | 項目 | 工時 | 收益 | 依賴 | 狀態 |
+|---|---|---|---|---|---|
+| ⭐⭐⭐ | **V3.9.5** Design Token 系統化 | 半天 | 解鎖後續所有視覺改動 | — | ✅ **V4.1.0 CSS-A 完成** |
+| ⭐⭐⭐ | **V3.9.10** Build Smoke Test | 1h | 防止 V3.9.4 同類雷再發 | — | ✅ **V4.1.0 BUILD-A 完成** |
+| ⭐⭐⭐ | **V3.9.6** 13 模式學生端筆記紙化（Top 3） | 1 天 | 視覺一致性 | V3.9.5 | ⏳ 待做 |
+| ⭐⭐⭐ | **V3.9.11** SW 版本更新通知 | 1 天 | 消滅「沒看到新版」客訴 | — | ✅ **V4.1.1 完整實作** |
+| ⭐⭐⭐ | **V3.10.0** 教師「最近班級」 | 半天 | 老師日常 UX | — | ✅ **V4.1.0 UX-A 完成** |
+| ⭐⭐⭐ | **NOTIFY-A** 下課 Google Chat 通知 | 半天 | 課後統計 | — | ✅ **V4.1.0 NOTIFY-A 完成** |
+| ⭐⭐⭐ | **V3.12.0** 前端錯誤追蹤 | 1 天 | 維運能力上一階 | — | ⏳ 待做 |
+| ⭐⭐ | **V3.9.7** 教師面板「備課桌」風 | 2 天 | 品牌儀式感 | V3.9.5 | ⏳ 待做 |
+| ⭐⭐ | **V3.9.8/9** 動畫降級 + 對比驗證 | 1.5 天 | 無障礙合規 | — | ⏳ 待做 |
+| ⭐⭐ | **V3.10.4** Demo 模式 | 1.5 天 | 對外推廣 | — | ⏳ 待做 |
+| ⭐⭐ | **V3.11.0** PDF 改筆記紙風 | 2 天 | 家長感受度 | V3.9.5 | ⏳ 待做 |
+| ⭐⭐ | **V3.9.6** 13 模式中頻 5 個 | 1.5 天 | 視覺收尾 | V3.9.5/6 | ⏳ 待做 |
+| ⭐ | **V3.10.1/2/3** 入口智慧化小品 | 各半天 | 趣味性 | — | ⏳ 待做 |
+| ⭐ | **V3.13** Dark Mode | 2 天 | 進階體驗 | V3.9.5 | ⏳ 待做 |
+| ⭐ | **V3.9.12** CHANGELOG | 半天 | 透明度 | — | ⏳ 待做 |
+| ⭐ | **V3.12.1/2** 觀測性小品 | 各半天-1 天 | 維運深化 | V3.12.0 | ⏳ 待做 |
 
 ---
 
