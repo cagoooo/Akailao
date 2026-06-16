@@ -139,6 +139,16 @@ export const UsageNotify = {
     aiApi(feature, label, details, classroom) {
         if (!feature) return;
         enqueue('ai_api', Object.assign({ feature, label: label || feature, classroom }, details || {}));
+    },
+
+    // 🆕 [V4.1.0] 下課時送出課堂統計通知
+    classEnd(classroom, studentCount, durationMin) {
+        enqueue('class_end', {
+            classroom,
+            studentCount: studentCount ?? 0,
+            durationMin: durationMin ?? null,
+            role: 'teacher'
+        });
     }
 };
 

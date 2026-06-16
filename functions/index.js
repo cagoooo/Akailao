@@ -24,6 +24,7 @@ const EVENT_META = {
   create:        { emoji: '🏫', title: '建立教室' },
   feature:       { emoji: '🧩', title: '使用功能' },
   ai_api:        { emoji: '🤖', title: 'AI API 呼叫' },
+  class_end:     { emoji: '🔔', title: '下課通知' },
   error:         { emoji: '🐞', title: '系統發生錯誤' },
 };
 
@@ -59,6 +60,8 @@ function buildCard(type, data, who) {
     textSummary += `: ${data.label || data.feature} (教室: ${data.classroom || '未設定'})`;
   } else if (type === 'ai_api') {
     textSummary += `: ${data.label || data.feature} (教室: ${data.classroom || '未設定'})`;
+  } else if (type === 'class_end') {
+    textSummary += ` - 教室 ${data.classroom || '未知'}，${data.studentCount ?? 0} 位學生，共 ${data.durationMin != null ? data.durationMin + ' 分鐘' : '時長不明'}`;
   } else if (type === 'error') {
     textSummary += `: ${clip(data.message, 100)}`;
   }
@@ -99,6 +102,13 @@ function buildCard(type, data, who) {
     }
   }
   
+  if (type === 'class_end') {
+    widgets.push({ decoratedText: { topLabel: '參與學生人數', text: String(data.studentCount ?? 0) + ' 人', wrapText: true } });
+    if (data.durationMin != null) {
+      widgets.push({ decoratedText: { topLabel: '課堂時長', text: String(data.durationMin) + ' 分鐘', wrapText: true } });
+    }
+  }
+
   if (type === 'error') {
     widgets.push({ decoratedText: { topLabel: '錯誤訊息', text: clip(data.message, 300), wrapText: true } });
     if (data.context) {

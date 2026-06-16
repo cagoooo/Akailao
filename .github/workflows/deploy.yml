@@ -70,6 +70,17 @@ jobs:
           sed -i "s/__APP_VERSION__/${APP_VERSION}/g" dist/set.html
           echo "✓ set.html 版本號已注入：${APP_VERSION}"
 
+      # 🆕 [V4.1.0] BUILD-A: 所有替換完成後，確認 dist/ 無殘留 sentinel（防止 V3.9.4 類型的 sed 自覆蓋雷）
+      - name: 🔍 Build smoke test — sentinel 殘留偵測
+        run: |
+          FOUND=$(grep -rE '__[A-Z_]+__' dist/index.html dist/set.html 2>/dev/null || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::❌ dist/ 內發現未替換的 sentinel，請確認 Vite define 設定 / GitHub Secrets："
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✓ 未發現殘留 sentinel"
+
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
         with:

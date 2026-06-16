@@ -64,6 +64,7 @@ let activeStudentsPresenceMap = new Map(); // 🚀 NEW: 存儲所有在線學生
 let lastSelectedStudentCard = null; // To track the previously selected card for the lottery feature.
 let isResponsePaused = false; // NEW: Global state for response pause.
 let lastSelectedModalStudent = null; // NEW: To track the previously selected student in the modal for lottery.
+let classStartTime = null; // 🆕 [V4.1.0] 記錄教室開始時間（用於計算課堂時長）
 
 let interactionModeUnsubscribe = null;
 let questionBanks = []; // Question Bank storage in memory (will be cleared when class ends)
@@ -2173,6 +2174,10 @@ function showView(viewName) {
         // 🆕 [V3.9.0] entry / teacherClassroomCode / studentName 三個身分入口頁都套用牛皮紙底
         if (['entry', 'teacherClassroomCode', 'studentName'].includes(viewName)) {
             body.classList.add('initial-view-background');
+        }
+        // 🆕 [V4.1.0] UX-A: 顯示最近使用教室 chip
+        if (viewName === 'teacherClassroomCode') {
+            _renderRecentClassrooms();
         }
         // 🆕 NEW [v3.8.15]: 進入教師監控頁時，先把所有可選按鈕隱藏
         // 這樣在 setInteractionMode 執行 Step 2 之前，不會閃出無關按鈕
@@ -9295,6 +9300,12 @@ async function endClassSession() {
         return;
     }
 
+    // 🆕 [V4.1.0] NOTIFY-A: 下課通知（在清空 activeStudentNames 之前讀取）
+    const _endStudentCount = activeStudentNames.length;
+    const _endDurMin = classStartTime ? Math.round((Date.now() - classStartTime) / 60000) : null;
+    if (classroomCode) UsageNotify.classEnd(classroomCode, _endStudentCount, _endDurMin);
+    classStartTime = null;
+
     markClassEnded(); // Mark that class has been properly ended
     clearAllQuestionBanks(); // Clear question banks from memory
     showMessage('正在結束課程並清空資料...', 'info');
@@ -10938,6 +10949,9 @@ function setupEventListeners() {
                 currentMultipleChoiceQuestions = null; // Ensure this is cleared on new class
 
                 listenToClassroomPresence(); // Ensure presence listener is active
+                // 🆕 [V4.1.0] UX-A + NOTIFY-A: 存最近教室 + 記錄開始時間
+                _saveRecentClassroom(classroomCode);
+                classStartTime = Date.now();
                 showView('teacherMenu');
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
 
@@ -14308,6 +14322,69 @@ function initReadingZoom() {
     const savedZoom = localStorage.getItem('reading-zoom-level') || 1;
     newRange.value = savedZoom;
     updateZoom(savedZoom);
+}
+
+// ===== 🆕 [V4.1.0] UX-A — 最近使用教室快速入口 =====
+
+function _saveRecentClassroom(code) {
+    if (!code) return;
+    try {
+        const RKEY = 'akailao:recent_classrooms';
+        const list = JSON.parse(localStorage.getItem(RKEY) || '[]');
+        const filtered = list.filter(c => c.code !== code);
+        filtered.unshift({ code, ts: Date.now() });
+        localStorage.setItem(RKEY, JSON.stringify(filtered.slice(0, 3)));
+    } catch (e) {}
+}
+
+function _renderRecentClassrooms() {
+    try {
+        const RKEY = 'akailao:recent_classrooms';
+        const list = JSON.parse(localStorage.getItem(RKEY) || '[]');
+        const container = document.getElementById('teacher-recent-classrooms');
+        const chipsEl = document.getElementById('teacher-recent-chips');
+        if (!container || !chipsEl) return;
+        if (list.length === 0) { container.classList.add('hidden'); return; }
+        chipsEl.innerHTML = list.map(item =>
+            `<button type="button" class="cb-recent-chip" data-code="${item.code}">${item.code}</button>`
+        ).join('');
+        chipsEl.querySelectorAll('.cb-recent-chip').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const inp = document.getElementById('teacher-classroom-code-input');
+                if (inp) { inp.value = btn.dataset.code; inp.focus(); }
+            });
+        });
+        container.classList.remove('hidden');
+    } catch (e) {}
+}
+
+// ===== 🆕 [V4.1.0] UX-G — Service Worker 版本更新通知 =====
+
+function _showSwUpdateToast() {
+    if (document.getElementById('sw-update-toast')) return; // 已顯示
+    const toast = document.createElement('div');
+    toast.id = 'sw-update-toast';
+    toast.innerHTML =
+        '<span>📝 教材已更新！</span>' +
+        '<button class="sw-reload-btn" onclick="window.location.reload()">立即重整</button>' +
+        '<button class="sw-dismiss-btn" aria-label="關閉" onclick="this.parentElement.remove()">✕</button>';
+    document.body.appendChild(toast);
+}
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+        .then(reg => {
+            reg.addEventListener('updatefound', () => {
+                const newWorker = reg.installing;
+                if (!newWorker) return;
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        _showSwUpdateToast();
+                    }
+                });
+            });
+        })
+        .catch(e => console.warn('[SW] 註冊失敗（本機開發環境可忽略）:', e));
 }
 
 // ===== 🆕 [V4.0.0] 老師帳號輔助函式 (Phase 1 + 2 + 3) =====
