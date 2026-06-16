@@ -1,10 +1,32 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.0.1** ｜ 更新時間：2026-06-16
+> **版本：V4.0.2** ｜ 更新時間：2026-06-16
 
 ---
 
-## 🆕 最近更新（V4.0 — 老師 Google 帳號登入 + 題庫雲端同步 + AI API 通知）
+## 🆕 最近更新（V4.0 — 老師 Google 帳號登入 + 題庫雲端同步 + AI API 通知 + 教師面板全版 RWD）
+
+### ✅ V4.0.2：教師面板全版 RWD — 桌機端善用全螢幕寬度（2026-06-16）
+- [x] **`src/styles.css`：新增 `#app-container.teacher-wide-mode`**
+  - `max-width: min(1600px, 98%) !important`，解除原本 `max-w-4xl`（896px）限制
+  - 同步設定 `padding-left/right: 1.5rem` 保持適當呼吸空間
+- [x] **`src/app.js`：`showView()` 自動切換全版 class**
+  - 進入 `teacherMenu`（選模式頁）或 `teacherMonitor`（監控頁）→ 加上 `teacher-wide-mode`
+  - 離開教師頁面時自動移除，不影響學生端和入口頁
+- [x] **`index.html`：九宮格按鈕加入寬螢幕欄數響應**
+  - 移除舊 `max-w-2xl md:max-w-4xl lg:max-w-5xl` 硬限制
+  - 新增 `xl:grid-cols-4`（≥1280px）/ `2xl:grid-cols-5`（≥1536px）
+- [x] **`tailwind-build.css`：重建含新 grid-cols 樣式**
+
+**RWD 驗證結果（preview 實測）**：
+
+| 裝置寬度 | 容器寬度 | 按鈕欄數 | 每顆尺寸 |
+|---|---|---|---|
+| 手機 375px | 368px（不變）| 2 欄 | 148px |
+| 桌機 1440px | **1397px**（原 896px，+56%）| **4 欄** | **317px** |
+| 寬螢幕 1600px | **1553px** | **5 欄** | **282px** |
+
+---
 
 ### ✅ V4.0.1：AI API 呼叫 Google Chat 通知（2026-06-16）
 - [x] **`functions/index.js`：新增 `ai_api` 事件類型**
