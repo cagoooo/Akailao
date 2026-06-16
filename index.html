@@ -1051,7 +1051,10 @@
             </div>
             <div id="interaction-recording"
                 class="hidden text-center flex flex-col items-center justify-center h-full min-h-screen p-4">
-                <h3 class="text-2xl font-bold text-center mb-6">錄音題</h3>
+                <div class="cb-q-header cb-q-header-standalone">
+                    <span class="cb-q-stamp">錄</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-red); color:#fff;">錄音題</span>
+                </div>
                 <div class="flex items-center justify-center space-x-3 text-xl text-gray-600 mb-6">
                     <i id="recording-status-icon" class="fas fa-microphone-alt text-gray-400"></i>
                     <p id="recording-status-text">準備錄音...</p>
@@ -1075,7 +1078,7 @@
                     </button>
                 </div>
                 <audio id="audio-preview" controls class="w-full max-w-md mb-6 hidden"></audio>
-                <button id="submit-recording-btn" class="btn btn-primary mt-4 max-w-sm mx-auto" disabled>
+                <button id="submit-recording-btn" class="btn cb-submit-cta" disabled>
                     <i class="fas fa-paper-plane mr-2"></i> 送出錄音 ✉️
                 </button>
             </div>
@@ -1332,13 +1335,16 @@
 
             <!-- 🆕 NEW [v3.8.25] MODE-3：文字雲 — 學生端 -->
             <div id="interaction-word-cloud" class="hidden text-center flex flex-col items-center justify-center min-h-[60vh] p-4">
-                <h3 class="text-3xl font-bold text-gray-800 mb-2">☁️ 文字雲</h3>
+                <div class="cb-q-header cb-q-header-standalone">
+                    <span class="cb-q-stamp">雲</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-green);">文字雲</span>
+                </div>
                 <p id="word-cloud-topic-display" class="text-lg text-gray-600 mb-6"></p>
                 <div id="word-cloud-input-phase" class="w-full max-w-md">
                     <input type="text" id="word-cloud-student-input"
-                        class="w-full px-4 py-4 border-2 border-cyan-300 rounded-xl text-2xl text-center focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500"
+                        class="cb-text-answer" style="text-align:center;font-size:22px;"
                         placeholder="輸入一個詞彙…" maxlength="20">
-                    <button id="submit-word-cloud-btn" class="btn bg-cyan-500 hover:bg-cyan-600 w-full mt-4 h-14 text-xl">
+                    <button id="submit-word-cloud-btn" class="btn cb-submit-cta w-full mt-4">
                         <i class="fas fa-paper-plane mr-2"></i> 送出詞彙 ✨
                     </button>
                 </div>
@@ -1353,7 +1359,10 @@
 
             <!-- 🆕 NEW [v3.8.25] MODE-4：相片牆 — 學生端（與教師端共用展示） -->
             <div id="interaction-photo-wall" class="hidden p-2">
-                <h3 class="text-2xl font-bold text-gray-800 mb-4 text-center">🖼️ 班級相片牆</h3>
+                <div class="cb-q-header cb-q-header-standalone" style="margin-top:8px;">
+                    <span class="cb-q-stamp">相</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-yellow);">班級相片牆</span>
+                </div>
                 <div id="photo-wall-grid-student" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                     <p class="text-gray-500 text-center col-span-full">載入作品中...</p>
                 </div>
