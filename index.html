@@ -877,7 +877,11 @@
             </div>
 
             <div id="interaction-true-false" class="hidden px-4 sm:px-6">
-                <h3 class="text-2xl font-bold text-center mb-4">是非題</h3>
+                <div class="cb-student-card cb-rotate-left" data-mode="tf">
+                <div class="cb-q-header">
+                    <span class="cb-q-stamp">OX</span>
+                    <span class="cb-q-tape">是非題</span>
+                </div>
                 <div class="flex flex-col gap-4 sm:gap-6 md:gap-8 justify-center items-center w-full max-w-6xl mx-auto">
                     <!-- 🆕 NEW [v3.7.0]: 備題模式題目顯示區（快速模式下隱藏） -->
                     <div id="tf-question-display"
@@ -909,9 +913,14 @@
                             style="background-color: #fff; border-radius: 0.5rem;"></svg>
                     </div>
                 </div>
+                </div>
             </div>
             <div id="interaction-multiple-choice" class="hidden flex flex-col items-center px-4 sm:px-6 w-full">
-                <h3 class="text-2xl font-bold text-center mb-4 sm:mb-6">選擇題</h3>
+                <div class="cb-student-card cb-rotate-right" data-mode="mc">
+                <div class="cb-q-header">
+                    <span class="cb-q-stamp">①②</span>
+                    <span class="cb-q-tape">選擇題</span>
+                </div>
                 <div class="flex flex-col gap-6 sm:gap-8 md:gap-8 w-full items-center justify-center max-w-6xl mx-auto">
                     <!-- 答案選項區塊 -->
                     <div class="flex flex-col items-center w-full flex-shrink-0">
@@ -942,13 +951,19 @@
                             style="background-color: #fff; border-radius: 0.5rem;"></svg>
                     </div>
                 </div>
+                </div>
             </div>
             <div id="interaction-text-input" class="hidden text-center">
-                <h3 class="text-2xl font-bold text-center mb-6">文字題</h3>
+                <div class="cb-student-card cb-rotate-left" data-mode="text">
+                <div class="cb-q-header">
+                    <span class="cb-q-stamp">文</span>
+                    <span class="cb-q-tape">文字題</span>
+                </div>
                 <textarea id="text-input-area" rows="6"
-                    class="w-full p-3 border rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    class="cb-text-answer"
                     placeholder="請在此輸入您的回答..."></textarea>
-                <button id="submit-text-btn" class="btn btn-primary mt-4 max-w-sm mx-auto">送出回答 ✉️</button>
+                <button id="submit-text-btn" class="btn btn-primary cb-submit-cta">送出回答 ✉️</button>
+                </div>
             </div>
             <div id="interaction-drawing" class="hidden text-center flex flex-col h-full min-h-screen">
                 <h3 class="text-2xl font-bold text-center mb-4">繪圖題</h3>
