@@ -1228,7 +1228,10 @@
             </div> <!-- Close interaction-reading-comprehension -->
             <div id="interaction-quick-answer"
                 class="hidden text-center flex flex-col items-center justify-center h-full min-h-screen p-4 relative">
-                <h3 class="text-2xl md:text-3xl font-bold text-center mb-4 md:mb-6">搶答題</h3>
+                <div class="cb-q-header cb-q-header-standalone">
+                    <span class="cb-q-stamp">搶</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-red); color:#fff;">搶答題</span>
+                </div>
                 <p id="quick-answer-status-text" class="text-base md:text-lg text-gray-600 mb-4 md:mb-6">等待搶答開始...
                 </p>
                 <div id="quick-answer-button-container" class="absolute inset-0 pointer-events-none">
@@ -1247,17 +1250,26 @@
                 </div>
             </div>
             <div id="interaction-sequencing" class="hidden text-center">
-                <h3 class="text-2xl font-bold text-center mb-2">排序題</h3>
+                <div class="cb-student-card cb-rotate-right" data-mode="seq">
+                <div class="cb-q-header">
+                    <span class="cb-q-stamp">序</span>
+                    <span class="cb-q-tape">排序題</span>
+                </div>
                 <p id="sequencing-question-text" class="text-lg text-gray-700 mb-6"></p>
                 <div class="sequencing-container">
                     <div id="sequencing-items-container" class="mb-6">
                         <!-- 排序項目將動態生成在這裡 -->
                     </div>
-                    <button id="submit-sequencing-btn" class="btn btn-primary max-w-sm mx-auto">送出答案 ✉️</button>
+                    <button id="submit-sequencing-btn" class="btn btn-primary cb-submit-cta">送出答案 ✉️</button>
+                </div>
                 </div>
             </div>
             <div id="interaction-matching" class="hidden text-center">
-                <h3 class="text-2xl font-bold text-center mb-2">配對題</h3>
+                <div class="cb-student-card cb-rotate-left" data-mode="match">
+                <div class="cb-q-header">
+                    <span class="cb-q-stamp">配</span>
+                    <span class="cb-q-tape">配對題</span>
+                </div>
                 <p id="matching-question-text" class="text-lg text-gray-700 mb-6"></p>
                 <div class="matching-container">
                     <svg id="matching-svg-canvas"></svg>
@@ -1268,12 +1280,16 @@
                         <!-- B項目列表 -->
                     </div>
                 </div>
-                <button id="submit-matching-btn" class="btn btn-primary max-w-sm mx-auto mt-6">送出答案 ✉️</button>
+                <button id="submit-matching-btn" class="btn btn-primary cb-submit-cta mt-6">送出答案 ✉️</button>
+                </div>
             </div>
 
             <div id="interaction-quick-poll"
                 class="hidden text-center flex flex-col items-center justify-center h-full min-h-screen p-4">
-                <h3 class="text-2xl font-bold text-center mb-4">快速投票</h3>
+                <div class="cb-q-header cb-q-header-standalone">
+                    <span class="cb-q-stamp">票</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-green);">快速投票</span>
+                </div>
                 <p id="quick-poll-question-display" class="text-xl text-gray-800 mb-8 font-medium px-4"></p>
 
                 <!-- 投票選項容器 -->
@@ -1345,7 +1361,10 @@
 
             <!-- 🆕 NEW [v3.8.25] MODE-5：課後回饋 — 學生端 -->
             <div id="interaction-course-feedback" class="hidden text-center flex flex-col items-center justify-center min-h-[60vh] p-4">
-                <h3 class="text-3xl font-bold text-gray-800 mb-2">📝 課後回饋</h3>
+                <div class="cb-q-header cb-q-header-standalone">
+                    <span class="cb-q-stamp">★</span>
+                    <span class="cb-q-tape" style="background: var(--cb-tape-yellow);">課後回饋</span>
+                </div>
                 <p class="text-lg text-gray-600 mb-6">匿名評分，幫助老師改善教學</p>
                 <div id="feedback-input-phase" class="w-full max-w-md">
                     <!-- 星星評分 -->
@@ -1362,9 +1381,9 @@
                     </div>
                     <!-- 文字建議 -->
                     <textarea id="feedback-comment-input" rows="3"
-                        class="w-full px-4 py-3 border-2 border-amber-300 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                        class="cb-text-answer"
                         placeholder="一句話建議或心得（選填）"></textarea>
-                    <button id="submit-feedback-btn" class="btn bg-amber-500 hover:bg-amber-600 w-full mt-4 h-14 text-xl" disabled>
+                    <button id="submit-feedback-btn" class="btn cb-submit-cta" disabled>
                         <i class="fas fa-paper-plane mr-2"></i> 送出回饋 📬
                     </button>
                 </div>

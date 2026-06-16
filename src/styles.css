@@ -171,9 +171,15 @@
     letter-spacing: 0.05em;
 }
 /* 圖章配色變體（依模式換紙膠帶色） */
-.cb-student-card[data-mode="tf"]   .cb-q-tape { background: var(--cb-tape-green); }
-.cb-student-card[data-mode="mc"]   .cb-q-tape { background: var(--cb-tape-yellow); }
-.cb-student-card[data-mode="text"] .cb-q-tape { background: var(--cb-tape-red); color: #fff; }
+.cb-student-card[data-mode="tf"]    .cb-q-tape { background: var(--cb-tape-green); }
+.cb-student-card[data-mode="mc"]    .cb-q-tape { background: var(--cb-tape-yellow); }
+.cb-student-card[data-mode="text"]  .cb-q-tape { background: var(--cb-tape-red); color: #fff; }
+.cb-student-card[data-mode="seq"]   .cb-q-tape { background: var(--cb-tape-green); }
+.cb-student-card[data-mode="match"] .cb-q-tape { background: var(--cb-tape-yellow); }
+.cb-student-card[data-mode="poll"]  .cb-q-tape { background: var(--cb-tape-green); }
+.cb-student-card[data-mode="feedback"] .cb-q-tape { background: var(--cb-tape-yellow); }
+/* 搶答獨立標題（不包卡，全螢幕點擊鈕保留絕對定位） */
+.cb-q-header.cb-q-header-standalone { margin-bottom: 14px; }
 
 /* 卡內題目顯示框（覆蓋原 white/blue 樣式為紙感） */
 .cb-student-card #tf-question-display {
@@ -196,8 +202,8 @@
     box-shadow: 2px 2px 0 rgba(45,36,22,0.12) !important;
 }
 
-/* 文字題 textarea 紙感 */
-.cb-student-card .cb-text-answer {
+/* 文字題 textarea 紙感（非 scope，課後回饋等 standalone 也可用） */
+.cb-text-answer {
     width: 100%;
     padding: 14px;
     background: var(--cb-paper-bright);
@@ -211,12 +217,12 @@
     transition: border-color 0.15s, box-shadow 0.15s;
     resize: vertical;
 }
-.cb-student-card .cb-text-answer:focus {
+.cb-text-answer:focus {
     outline: none;
     border-color: var(--cb-vermilion);
     box-shadow: 0 0 0 3px rgba(244,211,94,0.5);
 }
-.cb-student-card .cb-text-answer::placeholder { color: rgba(45,58,31,0.4); }
+.cb-text-answer::placeholder { color: rgba(45,58,31,0.4); }
 
 /* 紙感送出 CTA（深綠黑板鈕 + 硬陰影） */
 .cb-submit-cta {
@@ -239,6 +245,7 @@
 }
 .cb-submit-cta:hover { transform: translate(-1px,-1px); box-shadow: 5px 5px 0 rgba(45,36,22,0.3) !important; }
 .cb-submit-cta:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 rgba(45,36,22,0.2) !important; }
+.cb-submit-cta:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: var(--cb-shadow-hard) !important; }
 
 @media (max-width: 480px) {
     .cb-student-card { padding: 26px 14px 20px; }
