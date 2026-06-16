@@ -98,6 +98,15 @@ service cloud.firestore {
       match /photoWall/{studentName} {
         allow read, write: if request.auth != null;
       }
+
+      // 🆕 [V4.2.4] OBS-1：前端錯誤上報
+      // create：任何登入用戶（含匿名學生）皆可上報自己遇到的錯誤
+      // read/delete：教師檢視與清除（任何登入用戶，與其他子集合一致）
+      // 無 update（錯誤紀錄不可竄改）
+      match /errors/{errorId} {
+        allow read, delete: if request.auth != null;
+        allow create: if request.auth != null;
+      }
     }
 
     // 其他 artifacts 路徑：通用規則（保持向後相容）

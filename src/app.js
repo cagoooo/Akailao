@@ -11861,6 +11861,18 @@ function setupEventListeners() {
     document.getElementById('show-qrcode-btn').addEventListener('click', showQRCodeModal);
     document.getElementById('show-qrcode-btn-menu').addEventListener('click', showQRCodeModal);
 
+    // 🆕 [V4.2.4] OBS-1：系統健康 modal listeners
+    const _shBtn = document.getElementById('system-health-btn-menu');
+    if (_shBtn) _shBtn.addEventListener('click', openSystemHealthModal);
+    const _shClose = document.getElementById('system-health-close-btn');
+    if (_shClose) _shClose.addEventListener('click', () => document.getElementById('system-health-modal').classList.add('hidden'));
+    const _shModal = document.getElementById('system-health-modal');
+    if (_shModal) _shModal.addEventListener('click', (e) => { if (e.target === _shModal) _shModal.classList.add('hidden'); });
+    const _shRefresh = document.getElementById('system-health-refresh-btn');
+    if (_shRefresh) _shRefresh.addEventListener('click', loadSystemHealthErrors);
+    const _shClear = document.getElementById('system-health-clear-btn');
+    if (_shClear) _shClear.addEventListener('click', clearSystemHealthErrors);
+
     // 🚀 NEW: Click on classroom code display to open QR code modal
     const classroomCodeDisplay = document.getElementById('teacher-menu-classroom-code-display');
     if (classroomCodeDisplay) {
@@ -14414,6 +14426,170 @@ if ('serviceWorker' in navigator) {
             });
         })
         .catch(e => console.warn('[SW] 註冊失敗（本機開發環境可忽略）:', e));
+}
+
+// ===== 🆕 [V4.2.4] OBS-1 — 前端錯誤自動上報 =====
+// window.onerror + unhandledrejection → 寫入 Firestore，讓「畫面壞掉」可追蹤。
+// 設計：① 節流（session 上限 + 同錯誤去重）防刷爆 Firestore；
+//       ② 過濾 chunk error（PWA 自癒，非真 bug）；
+//       ③ 上報失敗靜默（絕不造成二次錯誤迴圈）。
+const ErrorReporter = (() => {
+    const MAX_REPORTS_PER_SESSION = 20;   // 單次 session 上報上限
+    const DEDUP_WINDOW_MS = 60000;        // 同一錯誤 60 秒內只報一次
+    let _reportCount = 0;
+    const _recentKeys = new Map();        // dedup key -> lastReportTs
+
+    // chunk error / SW 自癒 / 已知無害的瀏覽器雜訊 → 不報
+    const _isIgnorable = (msg) =>
+        /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|ResizeObserver loop|Script error\.?$/i.test(msg || '');
+
+    async function report(kind, message, extra = {}) {
+        try {
+            if (!message) return;
+            if (_isIgnorable(message)) return;
+            if (_reportCount >= MAX_REPORTS_PER_SESSION) return;
+
+            const key = (kind + '|' + message + '|' + (extra.source || '') + ':' + (extra.lineno || '')).slice(0, 300);
+            const now = Date.now();
+            const last = _recentKeys.get(key);
+            if (last && (now - last) < DEDUP_WINDOW_MS) return;
+            _recentKeys.set(key, now);
+            _reportCount++;
+
+            // 無教室代碼時（登入前 / 入口頁）丟到 _global_ 桶，仍可追蹤
+            const cc = classroomCode || '_global_';
+            const errId = `${now}_${Math.random().toString(36).slice(2, 8)}`;
+            const ref = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', cc, 'errors', errId);
+            await setDoc(ref, {
+                kind,
+                message: String(message).slice(0, 1000),
+                stack: extra.stack ? String(extra.stack).slice(0, 2000) : null,
+                source: extra.source || null,
+                lineno: extra.lineno ?? null,
+                colno: extra.colno ?? null,
+                role: currentRole || 'unknown',
+                studentName: (currentRole === 'student' ? studentName : null),
+                mode: currentInteractionMode || null,
+                url: String(location.href).slice(0, 500),
+                userAgent: String(navigator.userAgent).slice(0, 300),
+                ts: serverTimestamp(),
+                tsLocal: now
+            });
+        } catch (e) {
+            // 上報本身失敗就放棄，絕不能讓錯誤上報造成二次錯誤迴圈
+            console.warn('[ErrorReporter] 上報失敗（已忽略）:', e?.message);
+        }
+    }
+
+    function install() {
+        window.addEventListener('error', (event) => {
+            // 僅處理 JS 執行錯誤（資源載入錯誤 event.message 為空，跳過避免噪音）
+            if (!event || !event.message) return;
+            report('error', event.message, {
+                stack: event.error?.stack,
+                source: event.filename,
+                lineno: event.lineno,
+                colno: event.colno
+            });
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+            const reason = event?.reason;
+            const msg = reason?.message || String(reason ?? '');
+            report('promise', msg, { stack: reason?.stack });
+        });
+    }
+
+    return { install, report };
+})();
+ErrorReporter.install();
+
+// ===== 🆕 [V4.2.4] OBS-1：教師端「系統健康」檢視 =====
+async function openSystemHealthModal() {
+    const modal = document.getElementById('system-health-modal');
+    if (modal) modal.classList.remove('hidden');
+    await loadSystemHealthErrors();
+}
+
+function _shEsc(s) {
+    return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+async function loadSystemHealthErrors() {
+    const listEl = document.getElementById('system-health-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<p class="text-gray-400 text-center py-8">載入中…</p>';
+    try {
+        const buckets = [];
+        if (classroomCode) buckets.push(classroomCode);
+        buckets.push('_global_');
+        const cutoff = Date.now() - 24 * 3600 * 1000;
+        let errors = [];
+        for (const cc of buckets) {
+            const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', cc, 'errors');
+            const snap = await getDocs(colRef);
+            snap.forEach(d => {
+                const data = d.data();
+                if ((data.tsLocal || 0) >= cutoff) errors.push({ id: d.id, ...data });
+            });
+        }
+        errors.sort((a, b) => (b.tsLocal || 0) - (a.tsLocal || 0));
+        errors = errors.slice(0, 60);
+
+        if (errors.length === 0) {
+            listEl.innerHTML = '<div class="text-center py-10"><div style="font-size:42px;margin-bottom:10px;">✅</div>'
+                + '<p class="text-gray-500 font-medium">近 24 小時沒有錯誤紀錄</p>'
+                + '<p class="text-gray-400 text-sm mt-1">系統運作正常</p></div>';
+            return;
+        }
+
+        const roleBadge = (r) => r === 'teacher'
+            ? '<span style="background:#7AA874;color:#fff;padding:1px 7px;border-radius:3px;font-size:11px;">教師</span>'
+            : r === 'student'
+                ? '<span style="background:#E07856;color:#fff;padding:1px 7px;border-radius:3px;font-size:11px;">學生</span>'
+                : '<span style="background:#999;color:#fff;padding:1px 7px;border-radius:3px;font-size:11px;">未知</span>';
+        const kindIcon = (k) => k === 'promise' ? '⛓️' : '💥';
+
+        listEl.innerHTML = errors.map(e => {
+            const tStr = new Date(e.tsLocal || 0).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+            const ua = _shEsc((e.userAgent || '').slice(0, 80));
+            const loc = e.source ? _shEsc(String(e.source).split('/').pop()) + (e.lineno ? ':' + e.lineno : '') : '';
+            return '<div style="background:#fff;border:1px solid rgba(45,58,31,0.18);border-radius:6px;box-shadow:2px 2px 0 rgba(45,36,22,0.12);padding:10px 12px;margin-bottom:8px;text-align:left;">'
+                + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">'
+                + '<span style="font-size:15px;">' + kindIcon(e.kind) + '</span>'
+                + roleBadge(e.role)
+                + (e.studentName ? '<span style="font-size:12px;color:#555;">' + _shEsc(e.studentName) + '</span>' : '')
+                + (e.mode ? '<span style="background:#F4D35E;color:#2d3a1f;padding:1px 7px;border-radius:3px;font-size:11px;">' + _shEsc(e.mode) + '</span>' : '')
+                + '<span style="margin-left:auto;font-size:11px;color:#999;">' + tStr + '</span>'
+                + '</div>'
+                + '<div style="font-size:13px;color:#2d3a1f;font-weight:600;word-break:break-word;line-height:1.5;">' + _shEsc(e.message) + '</div>'
+                + (loc ? '<div style="font-size:11px;color:#888;margin-top:2px;">📍 ' + loc + '</div>' : '')
+                + '<div style="font-size:10px;color:#aaa;margin-top:3px;">' + ua + '</div>'
+                + (e.stack ? '<details style="margin-top:4px;"><summary style="font-size:11px;color:#777;cursor:pointer;">stack trace</summary><pre style="font-size:10px;color:#666;white-space:pre-wrap;word-break:break-word;margin-top:4px;max-height:120px;overflow:auto;">' + _shEsc(e.stack) + '</pre></details>' : '')
+                + '</div>';
+        }).join('');
+    } catch (err) {
+        listEl.innerHTML = '<p class="text-red-500 text-center py-8">載入失敗：' + _shEsc(err?.message || err) + '</p>';
+    }
+}
+
+async function clearSystemHealthErrors() {
+    if (!confirm('確定要清空近期錯誤紀錄嗎？此操作無法復原。')) return;
+    const listEl = document.getElementById('system-health-list');
+    try {
+        const buckets = [];
+        if (classroomCode) buckets.push(classroomCode);
+        buckets.push('_global_');
+        for (const cc of buckets) {
+            const colRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', cc, 'errors');
+            const snap = await getDocs(colRef);
+            const dels = [];
+            snap.forEach(d => dels.push(deleteDoc(d.ref)));
+            await Promise.all(dels);
+        }
+        await loadSystemHealthErrors();
+    } catch (err) {
+        if (listEl) listEl.innerHTML = '<p class="text-red-500 text-center py-8">清空失敗：' + _shEsc(err?.message || err) + '</p>';
+    }
 }
 
 // ===== 🆕 [V4.0.0] 老師帳號輔助函式 (Phase 1 + 2 + 3) =====
