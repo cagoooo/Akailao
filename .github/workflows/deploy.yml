@@ -71,15 +71,28 @@ jobs:
           echo "✓ set.html 版本號已注入：${APP_VERSION}"
 
       # 🆕 [V4.1.0] BUILD-A: 所有替換完成後，確認 dist/ 無殘留 sentinel（防止 V3.9.4 類型的 sed 自覆蓋雷）
+      # 分兩條線：① Vite sentinel（import.meta.env.VITE_*）② set.html APP_VERSION sentinel
       - name: 🔍 Build smoke test — sentinel 殘留偵測
         run: |
-          FOUND=$(grep -rE '__[A-Z_]+__' dist/index.html dist/set.html 2>/dev/null || true)
-          if [ -n "$FOUND" ]; then
-            echo "::error::❌ dist/ 內發現未替換的 sentinel，請確認 Vite define 設定 / GitHub Secrets："
-            echo "$FOUND"
-            exit 1
+          FAIL=0
+          # ① dist/index.html：Vite 未替換的 import.meta.env.VITE_XXX
+          VITE_LEFT=$(grep -oE 'import\.meta\.env\.VITE_[A-Z_]+' dist/index.html 2>/dev/null || true)
+          if [ -n "$VITE_LEFT" ]; then
+            echo "::error::❌ dist/index.html 仍有未替換的 Vite sentinel，請確認 GitHub Secrets："
+            echo "$VITE_LEFT"
+            FAIL=1
+          else
+            echo "✓ dist/index.html：Vite sentinel 全部已替換"
           fi
-          echo "✓ 未發現殘留 sentinel"
+          # ② dist/set.html：__APP_VERSION__ 是否仍存在（sed 替換失敗才會殘留）
+          VER_LEFT=$(grep -o '__APP_VERSION__' dist/set.html 2>/dev/null || true)
+          if [ -n "$VER_LEFT" ]; then
+            echo "::error::❌ dist/set.html 仍有 __APP_VERSION__ sentinel，sed 替換失敗"
+            FAIL=1
+          else
+            echo "✓ dist/set.html：版本 sentinel 已正確替換"
+          fi
+          exit $FAIL
 
       - name: 📦 上傳網站檔案
         uses: actions/upload-pages-artifact@v3
