@@ -1,6 +1,63 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V3.9.4** ｜ 更新時間：2026-04-24
+> **版本：V4.0.1** ｜ 更新時間：2026-06-16
+
+---
+
+## 🆕 最近更新（V4.0 — 老師 Google 帳號登入 + 題庫雲端同步 + AI API 通知）
+
+### ✅ V4.0.1：AI API 呼叫 Google Chat 通知（2026-06-16）
+- [x] **`functions/index.js`：新增 `ai_api` 事件類型**
+  - `EVENT_META` 加入 `ai_api: { emoji: '🤖', title: 'AI API 呼叫' }`
+  - `buildCard()` 新增卡片欄位：AI 功能名稱、主題/輸入、生成數量、API Key 類型（系統內建 / 自訂）
+  - 已透過 `firebase deploy --only functions` 部署完畢
+- [x] **`src/usage-notify.js`：新增 `UsageNotify.aiApi()` 方法**
+  - 不使用 `ssOnce` 去重 → **每次成功呼叫都發送**，可追蹤完整用量與頻率
+  - 參數：`(feature, label, details, classroom)`
+- [x] **`src/app.js`：6 個 AI 功能成功路徑全部插入通知**
+  - 🤖 **AI 文字雲分析**：分析學生文字回答後，回報分析了幾則 + 找到幾個詞
+  - 🤖 **AI 生成選擇題**：回報主題 + 生成題數 + Key 類型
+  - 🤖 **AI 生成排序題**：回報主題 + 生成項目數 + Key 類型
+  - 🤖 **AI 生成配對題**：回報主題 + 生成組數 + Key 類型
+  - 🤖 **AI 圖片辨識（是非題/選擇題）**：回報上傳圖片張數 + 辨識模式
+  - 🤖 **AI 生成閱讀測驗**：回報主題或圖片張數 + Key 類型（支援圖片模式）
+
+---
+
+### ✅ V4.0.0：老師 Google 帳號登入 + 教室代碼跨裝置同步 + 四種題庫雲端備份（2026-06-16）
+
+#### Phase 1 — Google 登入核心
+- [x] **`src/app.js`：加入 `signInWithPopup`、`GoogleAuthProvider` Firebase Auth**
+  - 全域變數：`googleProvider`、`currentTeacherGoogleUser`、`_teacherAuthInProgress`（防 Popup 競態）
+  - `teacher-entry-btn` 改為：點擊 → Google 登入 Popup → 成功後顯示教室代碼輸入頁
+  - Back 按鈕：登出 Google 帳號並返回入口頁
+  - `endClassSession()`：登出 Google、清空 UI 顯示
+  - `onAuthStateChanged`：完整重寫，Google 用戶走專屬流程、`_teacherAuthInProgress` 旗標防止 Popup 期間誤跳轉
+- [x] **`index.html`：新增老師帳號 UI 元件**
+  - `#teacher-google-profile` chip：教室代碼輸入頁的頭像 + 姓名 + Email + ✓ 已驗證徽章（預設隱藏，登入後顯示）
+  - `#teacher-menu-profile` badge：教師面板工具列右上角的頭像 + 姓名迷你標誌
+
+#### Phase 2 — 教室代碼跨裝置持久化
+- [x] **`saveTeacherProfile(uid, code)`**：寫入 `teachers/{uid}/private/profile`（含代碼、displayName、email、photoURL、updatedAt）
+- [x] **`loadTeacherProfile(uid)`**：登入後讀取 Firestore，若本機無教室代碼則自動帶入（跨裝置同步）
+- [x] **`updateTeacherProfileUI()`**：更新頭像、姓名、email 到兩個 UI chip
+
+#### Phase 3 — 四種題庫雲端同步
+- [x] **`_cloudSyncBank(type, bank)`**：儲存/更新題庫至 `teachers/{uid}/questionBanks/{bankId}`，自動回寫 `bank.firestoreId`
+- [x] **`_cloudDeleteBank(firestoreId)`**：從 Firestore 刪除指定題庫文件
+- [x] **`loadQuestionBanksFromCloud(uid)`**：登入後讀取所有題庫（選擇題、排序、配對、閱讀），同步到本機並刷新 UI
+- [x] **四種題庫函式全部加入雲端同步鉤子**：
+  - 選擇題庫：`saveMcBank` 呼叫 `_cloudSyncBank`、`deleteMcBank` 呼叫 `_cloudDeleteBank`
+  - 排序題庫：同上
+  - 配對題庫：同上
+  - 閱讀題庫：同上
+
+#### Firestore 安全規則更新（V4.0）
+- [x] **`firestore.rules`：新增 `/teachers/{uid}` 路徑**
+  - `match /teachers/{teacherId}/private/{document=**}`：只有本人（非匿名）可讀寫
+  - `match /teachers/{teacherId}/questionBanks/{bankId}`：只有本人（非匿名）可讀寫
+  - `match .../settings/{settingId}`：寫入改為非匿名限定（防止學生覆蓋教室設定）
+  - 已透過 `firebase deploy --only firestore:rules` 部署完畢
 
 ---
 
@@ -18,6 +75,239 @@
     不是有效格式才 fallback。完全不依賴 sentinel 字面字串，sed 替換不到
   - **教訓**：用 sed 全域替換 build artifact 時，要避免在同檔案 inline script
     裡寫 sentinel literal — 改用 dynamic 字串建構或內容驗證
+
+---
+
+## 🚀 V3.9.4 之後 — 黑板筆記版延伸優化建議（2026-04-27 規劃）
+
+> V3.9.0 ~ V3.9.4 完成了「入口三件套（首頁 / 教師登入 / 學生登入）+ set.html + 中斷彈窗 + 版本徽章自動同步」的黑板筆記版重塑。
+> 視覺語言已成形（牛皮紙 / 便條紙 / 紙膠帶 / 朱紅圖章 / 深綠黑板 / Noto Serif TC + Huninn），
+> 下一步是把這套語言**往內延伸到 13 個互動模式的學生端與教師面板**，
+> 並把「版本徽章」這次踩到的 build-pipeline 雷固化成自動化檢查。
+
+---
+
+### 🎨 階段 V3.9.5 ~ V3.9.9：視覺語言「往內」延伸（高 ROI、純 CSS）
+
+#### V3.9.5 — 設計 Token 系統化（cb-* 抽成 CSS variables）⭐⭐⭐
+- **問題**：目前 `src/styles.css` 已超過 2,900 行，`cb-*`（chalkboard-notebook）class 散在多處（首頁 / 教師登入 / 學生登入 / set.html / kicked-out），改色很難一次改完
+- **做法**：在 `:root` 定義一組設計 token：
+  ```css
+  :root {
+    --cb-paper: #F8F2DE;        /* 便條紙底 */
+    --cb-paper-bright: #FFFDF4; /* 輸入框底 */
+    --cb-craft: #C9B085;         /* 牛皮紙底 */
+    --cb-board: #2d3a1f;         /* 黑板深綠 */
+    --cb-chalk: #FAF7E8;         /* 粉筆白 */
+    --cb-vermilion: #C8443A;     /* 朱紅圖章 */
+    --cb-tape-yellow: #F4D35E;
+    --cb-tape-red: #E07856;
+    --cb-tape-green: #7AA874;
+    --cb-shadow-hard: 4px 4px 0 rgba(0,0,0,0.15);
+    --cb-rotate-l: -0.5deg;
+    --cb-rotate-r: 0.5deg;
+  }
+  ```
+- **收益**：未來 dark mode（夜間黑板）/ 高對比模式（弱視學生）只要換一組變數即可
+- **預估工時**：半天
+
+#### V3.9.6 — 13 個互動模式「學生端」統一筆記本卡片風 ⭐⭐⭐
+- **現況**：學生端每個模式（是非 / 選擇 / 排序 / 配對 / 文字 / 繪圖 / 錄音 / 閱讀 / 搶答 / 投票 / 文字雲 / 相片牆 / 課後回饋）還是原本的 Tailwind indigo/purple 漸層風，與入口頁脫節
+- **做法**：包裝層共用一個 `.cb-student-paper` 卡片容器（米色便條紙 + 紙膠帶 + 微傾斜 + 圓形圖章標題），題目區、選項按鈕、提交 CTA 統一改為紙感樣式
+- **執行策略**：
+  1. 先做最高頻的 3 個模式（是非、選擇、文字輸入）— 1 天
+  2. 中頻 5 個模式（排序、配對、搶答、投票、課後回饋）— 1.5 天
+  3. 特殊模式（繪圖、錄音、閱讀測驗、文字雲、相片牆）— 各自客製化 — 2 天
+- **收益**：學生整節課的視覺一致性，品牌記憶度大幅提升
+- **預估工時**：4-5 天（可分版本逐步推進）
+
+#### V3.9.7 — 教師面板側邊欄改為「老師備課桌」風 ⭐⭐
+- **現況**：教師面板（`#teacher-monitor` 主畫面 + 13 個按鈕）還是原本配色
+- **做法**：
+  - 左側 13 個互動模式按鈕改為「彩色筆筒」造型：每顆按鈕是一支立起來的鉛筆/粉筆，hover 時微微浮起
+  - 上方狀態列（教室代碼 / 在線人數 / 已答人數）改為「黑板上的粉筆字」
+  - 學生卡片格線改為「貼在白板上的便利貼」（每張隨機 ±1°）
+- **收益**：老師打開後台就有「備課儀式感」，分享給其他老師時辨識度極高
+- **預估工時**：2 天
+
+#### V3.9.8 — 動畫降級（prefers-reduced-motion）♿ ⭐⭐
+- **現況**：粉筆繪線動畫、紙張傾斜、跑者彈跳、像素 loading 條，對前庭敏感學生（暈眩傾向）可能造成不適
+- **做法**：在 `styles.css` 全域加：
+  ```css
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    .cb-card, .cb-tape { transform: none !important; }
+  }
+  ```
+- **收益**：無障礙合規、特教融合班可放心使用
+- **預估工時**：半天 + 全站 QA
+
+#### V3.9.9 — 色彩對比驗證（WCAG AA） ♿ ⭐⭐
+- **疑慮**：朱紅 `#C8443A` 在米色 `#F8F2DE` 上、粉筆白在深綠黑板上，對比比是否 ≥ 4.5:1（正文）/ 3:1（大字）？
+- **做法**：用 `axe-core` 或 `pa11y-ci` 跑入口頁、教師登入、學生登入、set.html 四頁
+- **若不過**：朱紅可微調為 `#B83A30`、粉筆白可微調為 `#FFFDF4`
+- **預估工時**：1 天
+
+---
+
+### 🛡️ 階段 V3.9.10 ~ V3.9.12：Build Pipeline 加固（V3.9.4 踩雷後的固化）
+
+#### V3.9.10 — Build Smoke Test：sentinel 殘留偵測 ⭐⭐⭐
+- **背景**：V3.9.4 修了「sed 自我覆蓋」雷，但**現在沒有任何自動檢查能在下次同類問題發生時擋下來**
+- **做法**：在 `.github/workflows/deploy.yml` 部署前加一步：
+  ```yaml
+  - name: 🔍 Build smoke test — 檢查 sentinel 是否都已替換
+    run: |
+      if grep -rE '__[A-Z_]+__' dist/; then
+        echo "::error::Found unreplaced sentinels in dist/"
+        exit 1
+      fi
+      # 檢查版本徽章格式
+      grep -oE 'V[0-9]+\.[0-9]+\.[0-9]+' dist/index.html dist/set.html
+  ```
+- **預估工時**：1 小時
+
+#### V3.9.11 — Service Worker 版本通知 ⭐⭐⭐
+- **問題**：目前部署新版後，學生 PWA / 瀏覽器快取仍會看到舊版（要硬重整才有效）
+- **做法**：
+  1. 新增 `sw.js`，cache-first + 背景更新策略
+  2. 新版上線時 `controllerchange` 事件觸發 → 顯示黑板筆記版 toast「📝 老師更新教材了！點這裡看新版 →」
+  3. 用戶按下 → `skipWaiting()` + `location.reload()`
+- **收益**：消滅「老師說有新功能但學生看不到」的客訴
+- **預估工時**：1 天
+- **依賴**：可參考 `~/.claude/skills/pwa-cache-bust`
+
+#### V3.9.12 — CHANGELOG.md 自動產生 ⭐
+- **做法**：用 `git log --oneline` + emoji prefix 解析，自動生成 `CHANGELOG.md`，部署時連同 dist 上傳
+- **入口頁加入「📜 更新日誌」紙膠帶連結**（黑板筆記風格）
+- **預估工時**：半天
+
+---
+
+### 📲 階段 V3.10.x：入口頁「智慧化」（黑板筆記版深化）
+
+#### V3.10.0 — 教師端「最近班級」快速入口 ⭐⭐⭐
+- **做法**：教師登入頁加一張便條紙「📌 最近進過的教室」，列出 localStorage 內最多 3 個近期教室代碼
+- **單擊直接進入**，省去重複輸入
+- **資料結構**：`localStorage.setItem('akailao:recent_classrooms', JSON.stringify([{code, lastUsed, label}]))`
+- **預估工時**：半天
+
+#### V3.10.1 — 學生端「我的暱稱們」清單 ⭐⭐
+- **現況**：V3.7.x 已記住「上次姓名」自動帶入
+- **升級**：改為紙膠帶 chip 列出近期 3-5 個暱稱，學生點擊任一即可（適合多教室共用裝置的情境）
+- **預估工時**：半天
+
+#### V3.10.2 — 「今日課題」黑板動態抽取 ⭐
+- **做法**：首頁左半邊黑板的 6 個粉筆標籤（投票 / QA / 閱讀 / 小組 / 點名 / AI）改為從 Firestore aggregate 讀取「過去 7 天最常用的 6 種模式」
+- **若 Firestore 無資料則 fallback 預設值**
+- **預估工時**：1 天（需先做 D-3 aggregate）
+
+#### V3.10.3 — 「So easy」slogan 輪播 ⭐
+- **做法**：黃色斜體口號改為每次刷新隨機顯示一句（10-15 句教學名言池），維持視覺新鮮感
+- **預估工時**：1 小時
+
+#### V3.10.4 — 「我是訪客」Demo 模式 ⭐⭐
+- **做法**：入口頁加第三張卡（P.03 灰色紙膠帶 · DEMO），點擊進入沙盒 Firestore 教室（每 24h 自動清空），讓潛在使用者免綁定試玩
+- **收益**：對外推廣時降低嘗鮮門檻
+- **預估工時**：1.5 天（含 Firestore 子集合 + Cloud Scheduler 清理）
+
+---
+
+### 🎨 階段 V3.11.x：印刷風匯出（與 V3.8.5 PDF 匯出整合）
+
+#### V3.11.0 — PDF 匯出改為「手寫筆記紙」風 ⭐⭐
+- **現況**：V3.8.5 做了 Chart.js 折線圖 + jsPDF 個人成績匯出，但版面是普通白底
+- **升級**：套用黑板筆記版視覺：
+  - A4 米色紙底 + 細橫線（筆記本紋）
+  - 標題用紙膠帶風
+  - 章節分頁用「紙膠帶 + 圓形圖章」
+  - 圖表用蠟筆/粉筆色系（黃 / 朱紅 / 深綠 / 牛皮紙）
+- **依賴 skill**：`pdf-export-print-best-practice`（建議改用 `window.print()` + `@media print` 而非 jsPDF）
+- **預估工時**：2 天
+
+#### V3.11.1 — 課後回饋的「家長聯絡簿」匯出格式 ⭐
+- **做法**：把單一學生整堂課的表現（答題、繪圖、錄音、課後回饋）匯出成一張 A4「家長聯絡簿」風 PDF，老師可直接列印帶回家
+- **預估工時**：1 天
+
+---
+
+### 🚦 階段 V3.12.x：可觀測性與韌性
+
+#### V3.12.0 — 前端錯誤追蹤（無需付費） ⭐⭐⭐
+- **做法**：window.onerror + window.onunhandledrejection → 寫入 Firestore `errors/{auto-id}` 子集合
+- 教師後台加一個「🐛 系統健康」頁籤，列出近 24h 錯誤（含 user agent / 教室代碼 / 模式）
+- **收益**：學生回報「畫面壞掉」時老師能直接看到 stack trace
+- **預估工時**：1 天
+
+#### V3.12.1 — 教室「狀態快照」一鍵複製給開發者 ⭐⭐
+- **做法**：教師面板加一個 hidden shortcut（Ctrl+Shift+D），複製當前教室所有 state 為 JSON
+- 出問題時學生家長/老師可貼給開發者快速重現
+- **預估工時**：半天
+
+#### V3.12.2 — Firestore 用量儀表板 ⭐
+- **做法**：教師後台顯示本月讀寫次數、目前用量百分比（Free Tier 50K reads/day）
+- 接近上限時黑板筆記風 toast 警告
+- **預估工時**：1 天
+
+---
+
+### 🌗 階段 V3.13.x：夜間黑板模式（Dark Mode）
+
+- 套用 V3.9.5 的 design token：把 `--cb-paper` 從米色換成深灰、`--cb-board` 從深綠換成純黑
+- 入口頁切換按鈕用「🌙 夜間自習 / ☀️ 日間課堂」紙膠帶
+- 自動偵測 `prefers-color-scheme`
+- **收益**：晚上備課的老師護眼、夜間補習班適用
+- **預估工時**：2 天（依賴 V3.9.5 token 系統）
+
+---
+
+### 📈 V3.9.4 後 ROI 排序總表
+
+| 優先級 | 項目 | 工時 | 收益 | 依賴 |
+|---|---|---|---|---|
+| ⭐⭐⭐ | **V3.9.5** Design Token 系統化 | 半天 | 解鎖後續所有視覺改動 | — |
+| ⭐⭐⭐ | **V3.9.10** Build Smoke Test | 1h | 防止 V3.9.4 同類雷再發 | — |
+| ⭐⭐⭐ | **V3.9.6** 13 模式學生端筆記紙化（Top 3） | 1 天 | 視覺一致性 | V3.9.5 |
+| ⭐⭐⭐ | **V3.9.11** SW 版本更新通知 | 1 天 | 消滅「沒看到新版」客訴 | — |
+| ⭐⭐⭐ | **V3.10.0** 教師「最近班級」 | 半天 | 老師日常 UX | — |
+| ⭐⭐⭐ | **V3.12.0** 前端錯誤追蹤 | 1 天 | 維運能力上一階 | — |
+| ⭐⭐ | **V3.9.7** 教師面板「備課桌」風 | 2 天 | 品牌儀式感 | V3.9.5 |
+| ⭐⭐ | **V3.9.8/9** 動畫降級 + 對比驗證 | 1.5 天 | 無障礙合規 | — |
+| ⭐⭐ | **V3.10.4** Demo 模式 | 1.5 天 | 對外推廣 | — |
+| ⭐⭐ | **V3.11.0** PDF 改筆記紙風 | 2 天 | 家長感受度 | V3.9.5 |
+| ⭐⭐ | **V3.6** 13 模式中頻 5 個 | 1.5 天 | 視覺收尾 | V3.9.5/6 |
+| ⭐ | **V3.10.1/2/3** 入口智慧化小品 | 各半天 | 趣味性 | — |
+| ⭐ | **V3.13** Dark Mode | 2 天 | 進階體驗 | V3.9.5 |
+| ⭐ | **V3.9.12** CHANGELOG | 半天 | 透明度 | — |
+| ⭐ | **V3.12.1/2** 觀測性小品 | 各半天-1 天 | 維運深化 | V3.12.0 |
+
+---
+
+### 🎁 個人推薦下一步（2026-04-27 更新）
+
+#### 🔥 本週可做（共 ~2.5 天，立即見效）
+1. **V3.9.5 Design Token**（半天）— 為後續所有視覺改動鋪路，CP 值最高
+2. **V3.9.10 Build Smoke Test**（1h）— 把 V3.9.4 的踩雷固化成自動防線
+3. **V3.10.0 教師最近班級**（半天）— 老師每天用得到的小體驗
+4. **V3.9.6 Top 3 學生端筆記紙化**（1 天）— 是非 / 選擇 / 文字輸入三大高頻模式
+
+#### ⚡ 兩週內（共 ~5 天，視覺與韌性）
+5. **V3.9.11 SW 版本通知**（1 天）
+6. **V3.12.0 前端錯誤追蹤**（1 天）
+7. **V3.9.6 中頻 5 模式**（1.5 天）
+8. **V3.9.8/9 動畫降級 + 對比**（1.5 天）
+
+#### 🏗️ 一個月內（共 ~5-7 天，往外推廣準備）
+9. **V3.9.7 教師備課桌**（2 天）
+10. **V3.10.4 Demo 模式**（1.5 天）
+11. **V3.11.0 PDF 筆記紙化**（2 天）
+12. **V3.13 Dark Mode**（2 天）
+
+#### 💡 提醒：原 V3.9.x 路線圖中的「學生互動深化」（B 系列：成就徽章 / 週榜 / 個人儀表板）已被視覺重塑佔走，建議併入 **V3.14.x** 系列重新規劃，依託 V3.9.5 token 系統，整套以黑板筆記版視覺實作（如「徽章 = 圖章」「週榜 = 黑板上的粉筆名次」）。
 
 ---
 
@@ -456,12 +746,12 @@
 - 整合 Firebase Auth Google Provider
 - 用 UID 作主鍵，支援跨裝置、跨課堂的個人歷史記錄
 - 老師可看到學生的 Google 帳號頭像，確認身份
+- ⚠️ 學生端 Google 登入待做；**[V4.0] 老師端 Google 登入已完成**（頭像 chip + 跨裝置持久化）
 
-**ARCH-4. 題庫管理系統**
-- 教師可儲存常用題組（選擇題、閱讀測驗文章+題目）
-- 個人題庫列表，下次一鍵載入，不用重新輸入
-- 可分享題庫給其他老師（產生分享連結）
-- 資料存 Firestore `teachers/{uid}/questionBanks`
+**ARCH-4. 題庫管理系統** ✅ **已完成（V3.8.0 本機 + V4.0 雲端同步）**
+- ✅ V3.8.0：`QuizBankManager` 模組（localStorage）—選擇題、排序、配對、閱讀四種題庫本機存取
+- ✅ V4.0：雲端同步完成 — 老師 Google 登入後，題庫自動備份至 `teachers/{uid}/questionBanks`，跨裝置同步
+- 可分享題庫給其他老師（產生分享連結）— 待做
 
 **ARCH-5. 班級出席記錄** ✅ **已部分完成（V3.8.22 自動打卡，統計/匯出待做）**
 - ~~學生掃 QR Code 加入課堂，同時自動記錄出席打卡時間~~
