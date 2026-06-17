@@ -14795,6 +14795,59 @@ async function clearSystemHealthErrors() {
     }
 }
 
+// ===== 🆕 [V4.2.8] PUB-2：題庫分享連結 =====
+function _showShareLinkBox(link, name) {
+    const existing = document.getElementById('share-link-box');
+    if (existing) existing.remove();
+    const box = document.createElement('div');
+    box.id = 'share-link-box';
+    box.style.cssText = 'position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(45,36,22,0.45);';
+    box.innerHTML =
+        '<div style="background:var(--cb-paper,#F8F2DE);border:2px solid rgba(45,58,31,0.25);border-radius:8px;box-shadow:6px 6px 0 rgba(45,36,22,0.3);padding:20px;max-width:92%;width:440px;text-align:center;font-family:\'Noto Serif TC\',serif;">'
+        + '<div style="font-size:17px;font-weight:700;color:#2d3a1f;margin-bottom:4px;">🔗 題庫分享連結</div>'
+        + '<div style="font-size:13px;color:#666;margin-bottom:12px;">「' + _shEsc(name) + '」· 已複製到剪貼簿，貼給其他老師即可</div>'
+        + '<input id="share-link-input" readonly value="' + _shEsc(link) + '" style="width:100%;padding:8px;border:2px solid rgba(45,58,31,0.22);border-radius:4px;font-size:12px;background:#FFFDF4;color:#2d3a1f;margin-bottom:12px;box-sizing:border-box;" />'
+        + '<div style="display:flex;gap:8px;justify-content:center;">'
+        + '<button id="share-link-copy" style="padding:8px 18px;background:#2d3a1f;color:#f0ebdf;border:none;border-radius:4px;font-weight:700;cursor:pointer;">📋 複製</button>'
+        + '<button id="share-link-close" style="padding:8px 18px;background:#fff;color:#2d3a1f;border:2px solid rgba(45,58,31,0.25);border-radius:4px;font-weight:700;cursor:pointer;">關閉</button>'
+        + '</div></div>';
+    document.body.appendChild(box);
+    const inp = box.querySelector('#share-link-input');
+    box.querySelector('#share-link-copy').addEventListener('click', () => {
+        inp.select();
+        try { navigator.clipboard.writeText(link); } catch (e) { try { document.execCommand('copy'); } catch (_) {} }
+        showMessage('📋 已複製連結', 'success');
+    });
+    const close = () => box.remove();
+    box.querySelector('#share-link-close').addEventListener('click', close);
+    box.addEventListener('click', (e) => { if (e.target === box) close(); });
+    setTimeout(() => { try { inp.select(); } catch (e) {} }, 100);
+}
+
+async function _maybeImportSharedBank() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const shareId = params.get('sharedBank');
+        if (!shareId) return;
+        // 先清掉 URL 參數，避免重整重複觸發
+        try {
+            const u = new URL(window.location.href);
+            u.searchParams.delete('sharedBank');
+            history.replaceState(null, '', u.toString());
+        } catch (e) {}
+        const ref = doc(db, 'artifacts', baseAppId, 'public', 'data', 'sharedBanks', shareId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) { showMessage('❌ 找不到此分享題庫（可能已被刪除）', 'error'); return; }
+        const data = snap.data();
+        const typeLabel = data.type === 'tf' ? '是非題' : data.type === 'mc' ? '選擇題' : data.type;
+        if (confirm(`發現分享題庫「${data.name}」（${typeLabel}）\n分享者：${data.sharedBy || '匿名老師'}\n\n要加入你的題庫嗎？`)) {
+            if (typeof QuizBankManager !== 'undefined') QuizBankManager.importSharedBank(data);
+        }
+    } catch (e) {
+        console.warn('[ImportSharedBank] 失敗:', e);
+    }
+}
+
 // ===== 🆕 [V4.0.0] 老師帳號輔助函式 (Phase 1 + 2 + 3) =====
 
 function updateTeacherProfileUI() {
@@ -15056,6 +15109,8 @@ async function initialize() {
                     showView('entry');
                 }
             }
+            // 🆕 [V4.2.8] PUB-2：偵測 ?sharedBank= 分享連結 → 提示匯入題庫（auth 已就緒）
+            _maybeImportSharedBank();
         } else {
             // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
             console.log("[Auth] Waiting for authentication...");
@@ -21246,6 +21301,10 @@ const QuizBankManager = (() => {
                     <div class="flex gap-0.5 flex-shrink-0">
                         <button type="button" data-bank-action="load" data-bank-name="${safeName}"
                             class="px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white text-xs rounded font-bold" title="載入到目前設定">📂 載入</button>
+                        <button type="button" data-bank-action="share" data-bank-name="${safeName}"
+                            class="text-purple-600 hover:text-purple-700 px-1.5" title="產生分享連結（給其他老師）">
+                            <i class="fas fa-share-nodes text-xs"></i>
+                        </button>
                         <button type="button" data-bank-action="export" data-bank-name="${safeName}"
                             class="text-green-600 hover:text-green-700 px-1.5" title="匯出 JSON">
                             <i class="fas fa-download text-xs"></i>
@@ -21269,6 +21328,8 @@ const QuizBankManager = (() => {
                 if (action === 'load') {
                     if (typeof onLoad === 'function') onLoad(bank.content);
                     showMessage(`📂 已載入題庫「${name}」`, 'success');
+                } else if (action === 'share') {
+                    shareBank(type, name);
                 } else if (action === 'export') {
                     exportBank(type, name);
                 } else if (action === 'delete') {
@@ -21279,11 +21340,52 @@ const QuizBankManager = (() => {
         });
     }
 
+    // 🆕 [V4.2.8] PUB-2：產生題庫分享連結（寫公開 sharedBanks，其他老師可一鍵複製）
+    async function shareBank(type, name) {
+        const bank = banks[type].find(b => b.name === name);
+        if (!bank) return;
+        try {
+            showMessage('產生分享連結中…', 'info');
+            const shareId = type + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const ref = doc(db, 'artifacts', baseAppId, 'public', 'data', 'sharedBanks', shareId);
+            await setDoc(ref, {
+                type,
+                name: bank.name,
+                content: bank.content,
+                sharedAt: new Date().toISOString(),
+                sharedBy: (typeof currentTeacherGoogleUser !== 'undefined' && currentTeacherGoogleUser?.displayName) || '匿名老師'
+            });
+            const link = `${location.origin}${location.pathname}?sharedBank=${shareId}`;
+            try { await navigator.clipboard.writeText(link); } catch (e) {}
+            _showShareLinkBox(link, bank.name);
+        } catch (e) {
+            console.error('[ShareBank] 失敗:', e);
+            showMessage('❌ 產生分享連結失敗：' + (e?.message || e), 'error');
+        }
+    }
+
+    // 🆕 [V4.2.8] PUB-2：把分享來的題庫加入本機題庫（供載入時 ?sharedBank= 匯入呼叫）
+    function importSharedBank(data) {
+        if (!data || !data.type || !data.name || !data.content) return false;
+        const type = data.type;
+        if (!banks[type]) return false;
+        const idx = banks[type].findIndex(b => b.name === data.name);
+        if (idx >= 0) {
+            if (!confirm(`你已有同名題庫「${data.name}」，是否覆蓋？`)) return false;
+            banks[type][idx] = { name: data.name, content: data.content, savedAt: new Date().toISOString() };
+        } else {
+            banks[type].push({ name: data.name, content: data.content, savedAt: new Date().toISOString() });
+        }
+        saveToStorage(type);
+        showMessage(`✅ 已加入分享題庫「${data.name}」`, 'success');
+        return true;
+    }
+
     // 啟動時載入兩個 type 的 banks
     loadFromStorage('tf');
     loadFromStorage('mc');
 
-    return { save, deleteBank, exportBank, importBank, renderList, getList, loadFromStorage };
+    return { save, deleteBank, exportBank, importBank, renderList, getList, loadFromStorage, shareBank, importSharedBank };
 })();
 
 // ==========================================================
