@@ -2175,9 +2175,10 @@ function showView(viewName) {
         if (['entry', 'teacherClassroomCode', 'studentName'].includes(viewName)) {
             body.classList.add('initial-view-background');
         }
-        // 🆕 [V4.1.0] UX-A: 顯示最近使用教室 chip
+        // 🆕 [V4.1.0] UX-A: 顯示最近使用教室 chip ＋ 🆕 [V4.2.9] ARCH-1：我的班級清單
         if (viewName === 'teacherClassroomCode') {
             _renderRecentClassrooms();
+            _renderMyClasses();
         }
         // 🆕 NEW [v3.8.15]: 進入教師監控頁時，先把所有可選按鈕隱藏
         // 這樣在 setInteractionMode 執行 Step 2 之前，不會閃出無關按鈕
@@ -11037,6 +11038,7 @@ function setupEventListeners() {
                 listenToClassroomPresence(); // Ensure presence listener is active
                 // 🆕 [V4.1.0] UX-A + NOTIFY-A: 存最近教室 + 記錄開始時間
                 _saveRecentClassroom(classroomCode);
+                _upsertMyClass(classroomCode); // 🆕 [V4.2.9] ARCH-1：加入/更新「我的班級」清單（保留既有標籤）
                 classStartTime = Date.now();
                 showView('teacherMenu');
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
@@ -14471,6 +14473,93 @@ function _renderRecentClassrooms() {
     } catch (e) {}
 }
 
+// ===== 🆕 [V4.2.9] ARCH-1：多班級管理（我的班級清單 + 切換，雲端同步）=====
+// 資料模型：myClasses = [{code, label, lastUsed}]，鏡像 localStorage + teachers/{uid}/private/profile.classrooms
+// 互動資料仍存 artifacts/.../classrooms/{code}/（不變）；本功能只是「教師端命名班級清單 + 快速切換」
+let myClasses = [];
+const MY_CLASSES_KEY = 'akailao:my_classes';
+
+function _loadMyClassesLocal() {
+    try { myClasses = JSON.parse(localStorage.getItem(MY_CLASSES_KEY) || '[]'); }
+    catch (e) { myClasses = []; }
+    if (!Array.isArray(myClasses)) myClasses = [];
+}
+
+async function _syncMyClassesToCloud() {
+    try {
+        if (typeof currentTeacherGoogleUser === 'undefined' || !currentTeacherGoogleUser) return;
+        const profileRef = doc(db, 'teachers', currentTeacherGoogleUser.uid, 'private', 'profile');
+        await setDoc(profileRef, { classrooms: myClasses.slice(0, 30), updatedAt: serverTimestamp() }, { merge: true });
+    } catch (e) { console.warn('[MyClasses] 雲端同步失敗:', e); }
+}
+
+function _persistMyClasses() {
+    try { localStorage.setItem(MY_CLASSES_KEY, JSON.stringify(myClasses.slice(0, 30))); } catch (e) {}
+    _syncMyClassesToCloud(); // fire-and-forget
+}
+
+function _upsertMyClass(code, label) {
+    if (!code) return;
+    _loadMyClassesLocal();
+    const idx = myClasses.findIndex(c => c.code === code);
+    if (idx >= 0) {
+        myClasses[idx].lastUsed = Date.now();
+        if (label) myClasses[idx].label = label;
+    } else {
+        myClasses.push({ code, label: label || code, lastUsed: Date.now() });
+    }
+    myClasses.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+    _persistMyClasses();
+}
+
+function _deleteMyClass(code) {
+    _loadMyClassesLocal();
+    myClasses = myClasses.filter(c => c.code !== code);
+    _persistMyClasses();
+    _renderMyClasses();
+}
+
+function _renameMyClass(code) {
+    _loadMyClassesLocal();
+    const c = myClasses.find(x => x.code === code);
+    if (!c) return;
+    const nl = prompt(`班級名稱（教室代碼：${code}）`, c.label || code);
+    if (nl && nl.trim()) { c.label = nl.trim().slice(0, 30); _persistMyClasses(); _renderMyClasses(); }
+}
+
+function _enterClass(code) {
+    const inp = document.getElementById('teacher-classroom-code-input');
+    if (inp) inp.value = code;
+    document.getElementById('teacher-classroom-code-submit-btn')?.click();
+}
+
+function _renderMyClasses() {
+    try {
+        _loadMyClassesLocal();
+        const container = document.getElementById('teacher-my-classes');
+        const listEl = document.getElementById('teacher-my-classes-list');
+        if (!container || !listEl) return;
+        if (myClasses.length === 0) { container.classList.add('hidden'); return; }
+        const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+        listEl.innerHTML = myClasses.map(c => {
+            const label = esc(c.label || c.code);
+            const codeShow = (c.label && c.label !== c.code) ? '<span class="cb-myclass-code">' + esc(c.code) + '</span>' : '';
+            return '<div class="cb-myclass-row">'
+                + '<button type="button" class="cb-myclass-enter" data-code="' + esc(c.code) + '" title="進入此教室">🏫 <span class="cb-myclass-label">' + label + '</span>' + codeShow + '</button>'
+                + '<button type="button" class="cb-myclass-icon cb-myclass-rename" data-code="' + esc(c.code) + '" title="重新命名">✏️</button>'
+                + '<button type="button" class="cb-myclass-icon cb-myclass-del" data-code="' + esc(c.code) + '" title="從清單移除">🗑️</button>'
+                + '</div>';
+        }).join('');
+        listEl.querySelectorAll('.cb-myclass-enter').forEach(b => b.addEventListener('click', () => _enterClass(b.dataset.code)));
+        listEl.querySelectorAll('.cb-myclass-rename').forEach(b => b.addEventListener('click', () => _renameMyClass(b.dataset.code)));
+        listEl.querySelectorAll('.cb-myclass-del').forEach(b => b.addEventListener('click', () => {
+            const c = myClasses.find(x => x.code === b.dataset.code);
+            if (confirm('確定從清單移除班級「' + (c?.label || b.dataset.code) + '」？\n（只移除清單捷徑，不會刪除教室裡的學生資料）')) _deleteMyClass(b.dataset.code);
+        }));
+        container.classList.remove('hidden');
+    } catch (e) { console.warn('[MyClasses] render 失敗:', e); }
+}
+
 // ===== 🆕 [V4.1.1] UX-G — Service Worker 版本更新通知（prompt-to-refresh 雙線偵測）=====
 // 參考 pwa-cache-bust skill：陷阱#12（sw.js byte 不變 → updatefound 從不 fire）
 // 修法：BUILD_VERSION 由 CI sed 注入，每次 byte 都不同；register 加 updateViaCache:"none"
@@ -14891,6 +14980,15 @@ async function loadTeacherProfile(uid) {
             if (codeInput && data.classroomCode && !codeInput.value) {
                 codeInput.value = data.classroomCode;
             }
+            // 🆕 [V4.2.9] ARCH-1：雲端班級清單為準 + 遷移舊單一代碼（非破壞性）
+            _loadMyClassesLocal();
+            if (Array.isArray(data.classrooms) && data.classrooms.length) {
+                myClasses = data.classrooms;
+            } else if (data.classroomCode && !myClasses.some(c => c.code === data.classroomCode)) {
+                myClasses.push({ code: data.classroomCode, label: '我的教室', lastUsed: Date.now() });
+            }
+            try { localStorage.setItem(MY_CLASSES_KEY, JSON.stringify(myClasses.slice(0, 30))); } catch (e) {}
+            _renderMyClasses();
             return data;
         }
     } catch (e) {

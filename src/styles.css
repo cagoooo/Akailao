@@ -58,7 +58,8 @@
     box-shadow: 3px 3px 0 rgba(45,36,22,0.18);
 }
 .cb-recent-chip:active { transform: translate(1px,1px); box-shadow: 1px 1px 0 rgba(45,36,22,0.12); }
-#teacher-recent-classrooms .recent-label {
+#teacher-recent-classrooms .recent-label,
+#teacher-my-classes .recent-label {
     font-size: 11px;
     font-weight: 600;
     color: rgba(45,58,31,0.55);
@@ -66,6 +67,59 @@
     margin-bottom: 6px;
     font-family: "Noto Serif TC", serif;
 }
+
+/* 🆕 [V4.2.9] ARCH-1：我的班級清單 */
+.cb-myclass-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+}
+.cb-myclass-enter {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px 12px;
+    background: var(--cb-paper);
+    border: 1.5px solid rgba(45, 58, 31, 0.25);
+    border-radius: 3px;
+    font-family: "Noto Serif TC", serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--cb-board);
+    cursor: pointer;
+    box-shadow: 2px 2px 0 rgba(45, 36, 22, 0.12);
+    transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+    text-align: left;
+}
+.cb-myclass-enter:hover {
+    background: var(--cb-tape-green);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 rgba(45, 36, 22, 0.18);
+}
+.cb-myclass-enter:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(45, 36, 22, 0.12); }
+.cb-myclass-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-myclass-code {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(45, 58, 31, 0.55);
+    flex-shrink: 0;
+    margin-left: auto;
+    padding-left: 6px;
+}
+.cb-myclass-icon {
+    flex: 0 0 auto;
+    width: 34px;
+    background: var(--cb-paper-bright);
+    border: 1.5px solid rgba(45, 58, 31, 0.2);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s, transform 0.1s;
+}
+.cb-myclass-icon:hover { background: var(--cb-tape-yellow); }
+.cb-myclass-icon:active { transform: scale(0.92); }
 
 /* 🆕 [V4.1.0] UX-G — Service Worker 版本更新 toast */
 #sw-update-toast {
