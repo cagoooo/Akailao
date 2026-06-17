@@ -1,13 +1,37 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.2.6** ｜ 更新時間：2026-06-17
+> **版本：V4.2.9** ｜ 更新時間：2026-06-17
 
 ---
 
-## 🆕 最近更新（V4.2 — 黑板筆記版「往內延伸」+ 可觀測性 + 課堂便利）
+## 🆕 最近更新（V4.2 — 黑板筆記版「往內延伸」+ 可觀測性 + 課堂便利 + 多班級/題庫分享）
 
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
-> 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播」可觀測性、以及互動自動計時鎖定。
+> 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
+> 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.2.9：ARCH-1 多班級管理（我的班級清單 + 切換，雲端同步）（2026-06-17）
+- [x] **資料模型（非破壞性）**：`myClasses = [{code, label, lastUsed}]` 鏡像 localStorage + `teachers/{uid}/private/profile.classrooms`
+  - 互動資料仍存 `artifacts/.../classrooms/{code}/` **完全不動** —— 本功能只是教師端「命名班級清單 + 快速切換」
+- [x] **`src/app.js` 資料層**：`_loadMyClassesLocal` / `_persistMyClasses` / `_syncMyClassesToCloud` / `_upsertMyClass` / `_deleteMyClass` / `_renameMyClass` / `_enterClass` / `_renderMyClasses`
+- [x] **遷移**：`loadTeacherProfile` 雲端 `classrooms` 為準；無清單但有舊單一 `classroomCode` → 自動 seed「我的教室」
+- [x] **整合**：進教室成功 `_upsertMyClass`（保留既有標籤）；`showView('teacherClassroomCode')` 渲染清單；雲端同步沿用既有 profile merge（登入才寫）
+- [x] **`index.html` + `src/styles.css`**：teacher-classroom-code-view 新增「🏫 我的班級」清單（label+code、點擊進入 / ✏️改名 / 🗑️移除），紙感樣式
+- **驗證**：無語法/載入錯誤、HTML+CSS 到位（computed styles 正確）；render/雲端同步/遷移需教師 Google 登入，preview 無法 E2E（資料層為純 localStorage+陣列、雲端沿用已驗證 profile merge、遷移非破壞性）
+- **過程發現**：Vite dev server 會服務啟動時的 index.html 快照、HTML 改動未必熱載入 → 重啟 dev server 解決
+
+### ✅ V4.2.8：PUB-2 題庫分享連結（教師社群傳播）（2026-06-17）
+- [x] **`QuizBankManager.shareBank()`**：是非/選擇題庫寫入公開 `artifacts/{appId}/public/data/sharedBanks/{shareId}`（底層 catch-all rule 已允許登入者讀寫，**無需改 rules/部署**）
+  - 生成 `?sharedBank={id}` 連結 + 複製剪貼簿 + `_showShareLinkBox` 顯示（含複製鈕，防 clipboard 靜默失敗）
+- [x] **`QuizBankManager.importSharedBank()`**：加入本機題庫（同名提示覆蓋）；renderList 每題庫加「🔗 分享」鈕
+- [x] **`_maybeImportSharedBank()`**：載入時偵測 `?sharedBank=` → getDoc → confirm 預覽 → 匯入（auth 就緒後呼叫；replaceState 清參數防重整重複）
+- **驗證**：`?sharedBank=fake` 重載 → 參數被清掉 + 公開路徑讀取成功（rules 允許）、不存在優雅處理；分享寫入/happy-path 匯入需教師 Google 登入 UI（preview 無法 E2E）
+
+### ✅ V4.2.7：OBS-2/3/4 健康面板摘要趨勢 + 錯誤自動清理 + 用量估算（2026-06-17）
+- [x] **OBS-2 摘要+趨勢**：系統健康 modal 頂部「近 24h 總筆數 + 最常見錯誤(×次數) + 依瀏覽器/模式分組 chips」（統計用完整 24h 集合）
+- [x] **OBS-3 自動清理**：`endClassSession` 刪除該教室 7 天前 errors（沿用 teamScores 清理同模式）
+- [x] **OBS-4 用量估算**：`_fsTrack` 每日 localStorage 累計，instrument 4 個 studentResponses 即時監聽（`docChanges().length`）；面板顯示「今日讀取估算 N / 50,000」進度條 + 超 80% toast 警告，**明確標示「估算、非精確帳單」**
+- **驗證**：preview 端到端 — 派發測試錯誤 → 摘要正確（總數 + topMsg×2 + 瀏覽器分組）、seed 用量 → 進度條、清空 → 空狀態，無 console 錯誤
 
 ### ✅ V4.2.6：OBS-1b 嚴重錯誤接 Google Chat 通知（2026-06-17）
 - [x] **`src/app.js`：`ErrorReporter.report()` 寫 Firestore 前先呼叫 `UsageNotify.error()`**
