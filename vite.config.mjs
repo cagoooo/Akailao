@@ -33,10 +33,8 @@ export default defineConfig(({ mode }) => {
         || process.env.FIREBASE_API_KEY
         || dotEnv.FIREBASE_API_KEY
         || '__FIREBASE_API_KEY__';
-    const geminiKey = process.env.VITE_GEMINI_API_KEY
-        || process.env.GEMINI_API_KEY
-        || dotEnv.GEMINI_API_KEY
-        || '__GEMINI_API_KEY__';
+    // Gemini 共用金鑰已移到 Firebase Functions Secret，前端永遠只保留 placeholder。
+    const geminiKey = '__GEMINI_API_KEY__';
 
     return {
         // 開發伺服器配置

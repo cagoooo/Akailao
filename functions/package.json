@@ -1,0 +1,13 @@
+{
+  "name": "functions",
+  "description": "使用情形 Google Chat 通知（Callable Cloud Function）",
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.2.5"
+  },
+  "private": true
+}

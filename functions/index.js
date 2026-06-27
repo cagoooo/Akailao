@@ -11,12 +11,24 @@
  * 區域固定 asia-east1，前端呼叫端也要用同一區域。
  */
 
-const { onCall } = require('firebase-functions/v2/https');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const logger = require('firebase-functions/logger');
+const admin = require('firebase-admin');
+const crypto = require('crypto');
 
 const GOOGLE_CHAT_WEBHOOK = defineSecret('GOOGLE_CHAT_WEBHOOK');
+const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const REGION = 'asia-east1';
+const AI_RATE_LIMIT = {
+  maxCalls: 5,
+  windowMs: 60 * 60 * 1000,
+};
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+const db = admin.firestore();
 
 const EVENT_META = {
   session_start: { emoji: '👀', title: '首頁啟用' },
@@ -46,6 +58,70 @@ function identityOf(auth, data) {
 }
 
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
+
+function getClientKey(request) {
+  const uid = request.auth && request.auth.uid;
+  const ip = request.rawRequest?.ip || request.rawRequest?.headers?.['x-forwarded-for'] || 'unknown-ip';
+  const ua = request.rawRequest?.headers?.['user-agent'] || '';
+  return crypto.createHash('sha256').update(`${uid || 'no-auth'}|${ip}|${ua}`).digest('hex').slice(0, 40);
+}
+
+async function reserveAiQuota(request) {
+  const now = Date.now();
+  const key = getClientKey(request);
+  const ref = db.collection('aiRateLimits').doc(key);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    const recentCalls = Array.isArray(data.calls)
+      ? data.calls.map(Number).filter(ts => Number.isFinite(ts) && now - ts < AI_RATE_LIMIT.windowMs)
+      : [];
+
+    if (recentCalls.length >= AI_RATE_LIMIT.maxCalls) {
+      const waitMs = AI_RATE_LIMIT.windowMs - (now - recentCalls[0]);
+      return {
+        ok: false,
+        retryAfterSeconds: Math.max(60, Math.ceil(waitMs / 1000)),
+        remaining: 0,
+      };
+    }
+
+    recentCalls.push(now);
+    tx.set(ref, {
+      calls: recentCalls,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      uid: request.auth?.uid || null,
+    }, { merge: true });
+
+    return {
+      ok: true,
+      remaining: AI_RATE_LIMIT.maxCalls - recentCalls.length,
+      retryAfterSeconds: 0,
+    };
+  });
+}
+
+function assertGeminiPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'Gemini payload 格式錯誤。');
+  }
+  if (!Array.isArray(payload.contents) || payload.contents.length === 0) {
+    throw new HttpsError('invalid-argument', 'Gemini payload 缺少 contents。');
+  }
+
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > 900000) {
+    throw new HttpsError('invalid-argument', 'AI 請求內容太大，請減少圖片數量或縮短文本。');
+  }
+}
+
+function allowedGeminiModel(model) {
+  const value = String(model || 'gemini-2.5-flash').trim();
+  return ['gemini-2.5-flash', 'gemini-2.5-flash-lite'].includes(value)
+    ? value
+    : 'gemini-2.5-flash';
+}
 
 function buildCard(type, data, who) {
   const meta = EVENT_META[type] || { emoji: '🔔', title: '使用事件' };
@@ -177,6 +253,84 @@ exports.notifyUsage = onCall(
     } catch (err) {
       logger.error('Google Chat 推送失敗', err);
       return { ok: false, reason: 'fetch-failed' };
+    }
+  }
+);
+
+exports.callGemini = onCall(
+  {
+    region: REGION,
+    secrets: [GEMINI_API_KEY],
+    cors: true,
+    maxInstances: 10,
+    timeoutSeconds: 120,
+    memory: '512MiB',
+  },
+  async (request) => {
+    const apiKey = (GEMINI_API_KEY.value() || '').trim();
+    if (!apiKey) {
+      logger.error('GEMINI_API_KEY secret 未設定');
+      throw new HttpsError('failed-precondition', 'AI 服務尚未完成設定，請稍後再試。');
+    }
+
+    const quota = await reserveAiQuota(request);
+    if (!quota.ok) {
+      throw new HttpsError(
+        'resource-exhausted',
+        `為了保護共用 Gemini 額度，每小時最多 ${AI_RATE_LIMIT.maxCalls} 次。請稍後再試。`,
+        quota
+      );
+    }
+
+    const payload = request.data?.payload;
+    assertGeminiPayload(payload);
+    const model = allowedGeminiModel(request.data?.model);
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // Some existing Gemini keys are protected by browser referrer rules.
+          // The key is still server-side only; this header keeps compatibility
+          // until a billing-enabled server key is available.
+          'Referer': 'https://cagoooo.github.io/',
+        },
+        body: JSON.stringify(payload),
+      });
+      const bodyText = await resp.text();
+      let body = null;
+      try {
+        body = bodyText ? JSON.parse(bodyText) : {};
+      } catch (err) {
+        body = { raw: bodyText.slice(0, 1000) };
+      }
+
+      if (!resp.ok) {
+        logger.warn('Gemini API 回傳錯誤', {
+          status: resp.status,
+          model,
+          feature: clip(request.data?.feature, 80),
+          classroom: clip(request.data?.classroom, 40),
+        });
+        throw new HttpsError('internal', body?.error?.message || `Gemini API 請求失敗：${resp.status}`, {
+          status: resp.status,
+          body,
+        });
+      }
+
+      logger.info('Gemini proxy success', {
+        model,
+        remaining: quota.remaining,
+        feature: clip(request.data?.feature, 80),
+        classroom: clip(request.data?.classroom, 40),
+      });
+      return { ok: true, data: body, quota };
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      logger.error('Gemini proxy failed', err);
+      throw new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
     }
   }
 );

@@ -45,7 +45,6 @@ jobs:
         run: npm run build
         env:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       # 備用：對 dist/index.html 執行 inject.py 替換殘留佔位符
       - name: 🔑 注入環境變數（備用）
@@ -53,7 +52,6 @@ jobs:
           python .github/inject.py --target dist/index.html 2>/dev/null || true
         env:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       # 複製 set.html 和其他靜態資源到 dist/
       - name: 📋 複製靜態資源

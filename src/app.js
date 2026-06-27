@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, enableIndexedDbPersistence } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
 
 // --- Global Variables ---
@@ -29,6 +30,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const functions = getFunctions(app, 'asia-east1');
+const callGeminiFunction = httpsCallable(functions, 'callGemini');
 initUsageNotify(app);
 
 // 🆕 [V4.0.0] 老師 Google 帳號登入
@@ -341,7 +344,7 @@ let quizEntryTargetMode = null;
 let aiSettings = {
     aiSource: 'gemini-default', // 'gemini-default' or 'gemini-custom'
     geminiApiKey: '', // Custom API key if 'gemini-custom' is selected
-    defaultGeminiApiKey: (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__') // Placeholder for the fixed key
+    defaultGeminiApiKey: '' // Shared Gemini calls now go through Cloud Functions; no public bundled key.
 };
 
 const BUILTIN_KEY_MASK = '●●●●●●系統分流服務 (已內建)●●●●●●';
@@ -366,13 +369,11 @@ const AI_SHARED_RATE_LIMIT = {
 function getActiveGeminiApiKey() {
     return (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey)
         ? aiSettings.geminiApiKey.trim()
-        : (aiSettings.defaultGeminiApiKey || '').trim();
+        : '';
 }
 
 function isUsingSharedGeminiKey() {
-    const activeKey = getActiveGeminiApiKey();
-    const builtinKey = (aiSettings.defaultGeminiApiKey || '').trim();
-    return hasValidBuiltinKey() && activeKey === builtinKey;
+    return aiSettings.aiSource !== 'gemini-custom';
 }
 
 function getGeminiApiUrl(apiKey, model = 'gemini-2.5-flash') {
@@ -405,6 +406,69 @@ function reserveSharedAiCall(featureLabel = 'AI 出題') {
     const noticeType = remaining <= 1 ? 'warning' : 'info';
     showMessage(`共用 AI 額度保護：本小時還可使用 ${remaining} 次。請將 AI 出題保留給實際備課或課堂使用。`, noticeType, 6000);
     return true;
+}
+
+async function callGeminiContent(payload, options = {}) {
+    const model = options.model || 'gemini-2.5-flash';
+
+    if (isUsingSharedGeminiKey()) {
+        const result = await callGeminiFunction({
+            payload,
+            model,
+            feature: options.feature || 'AI 出題',
+            classroom: classroomCode || ''
+        });
+        return result.data?.data;
+    }
+
+    const apiKey = getActiveGeminiApiKey();
+    const response = await fetch(getGeminiApiUrl(apiKey, model), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        const err = new Error(`Gemini API request failed with status ${response.status}`);
+        err.response = response;
+        err.status = response.status;
+        err.body = errorBody;
+        throw err;
+    }
+
+    return response.json();
+}
+
+async function fetchGeminiContent(payload, options = {}) {
+    const model = options.model || 'gemini-2.5-flash';
+
+    if (!isUsingSharedGeminiKey()) {
+        return fetch(getGeminiApiUrl(getActiveGeminiApiKey(), model), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    }
+
+    try {
+        const data = await callGeminiContent(payload, options);
+        return {
+            ok: true,
+            status: 200,
+            json: async () => data,
+            text: async () => JSON.stringify(data)
+        };
+    } catch (err) {
+        const status = err.code === 'functions/resource-exhausted' ? 429 : 500;
+        const message = err.message || 'AI 服務暫時無法使用，請稍後再試。';
+        return {
+            ok: false,
+            status,
+            json: async () => ({ error: { message }, details: err.details || null }),
+            text: async () => JSON.stringify({ error: { message }, details: err.details || null })
+        };
+    }
 }
 
 // MODIFIED: Combined Dispatch Settings Global Object
@@ -8877,6 +8941,8 @@ function showApiKeyGuide(retryCallback) {
  * @returns {boolean} 如果 API KEY 通過基本檢查返回 true，否則返回 false
  */
 function checkAPIKey() {
+    if (aiSettings.aiSource !== 'gemini-custom') return true;
+
     const apiKey = aiSettings.geminiApiKey?.trim();
 
     // 檢查是否為空或預設值
@@ -8914,8 +8980,8 @@ function checkAPIKey() {
 }
 
 function loadAISettings() {
-    // 🆕 v3.6.1：教師下載版無內建金鑰，geminiApiKey 保持空字串，讓 UI 提示設定自己的 Key
-    const fallbackKey = hasValidBuiltinKey() ? aiSettings.defaultGeminiApiKey : '';
+    // 共用 Gemini 已改走 Cloud Functions proxy，公開版不再需要前端內建 Gemini Key。
+    const fallbackKey = '';
 
     const savedSettings = localStorage.getItem('aiSettings');
     if (savedSettings) {
@@ -8926,19 +8992,18 @@ function loadAISettings() {
             aiSettings.geminiApiKey = parsedSettings.geminiApiKey || fallbackKey;
             // 自動判斷是否為內建，校正來源狀態
             if (!parsedSettings.geminiApiKey || parsedSettings.geminiApiKey === aiSettings.defaultGeminiApiKey || parsedSettings.geminiApiKey === (import.meta.env.VITE_GEMINI_API_KEY || '__GEMINI_API_KEY__')) {
-                // 🆕 v3.6.1：無內建金鑰時改回 custom，避免 UI 誤認已有內建可用
-                aiSettings.aiSource = hasValidBuiltinKey() ? 'gemini-default' : 'gemini-custom';
+                aiSettings.aiSource = 'gemini-default';
             }
         } catch (e) {
             console.error("Failed to parse AI settings from localStorage:", e);
             // If parsing fails, set default API key
             aiSettings.geminiApiKey = fallbackKey;
+            aiSettings.aiSource = 'gemini-default';
         }
     } else {
         // If no settings are saved at all, set default API key
         aiSettings.geminiApiKey = fallbackKey;
-        // 🆕 v3.6.1：無內建金鑰時預設為 custom
-        if (!hasValidBuiltinKey()) aiSettings.aiSource = 'gemini-custom';
+        aiSettings.aiSource = 'gemini-default';
     }
 }
 
@@ -12259,8 +12324,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { "word": { "type": "STRING" }, "count": { "type": "NUMBER" } }, "propertyOrdering": ["word", "count"] } } }
             };
-            const apiKey = getActiveGeminiApiKey();
-            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 文字雲分析' });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12700,8 +12764,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 } // Adjust temperature for creativity
             };
-            const apiKey = getActiveGeminiApiKey();
-            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成選擇題' });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12835,8 +12898,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const apiKey = getActiveGeminiApiKey();
-            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成排序題' });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12964,8 +13026,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const apiKey = getActiveGeminiApiKey();
-            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成配對題' });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -19471,12 +19532,9 @@ async function recognizeQuizImages(composerId, targetTextareaId, mode) {
             generationConfig: { temperature: 0.4, maxOutputTokens: 4096 }
         };
 
-        const apiKey = getActiveGeminiApiKey();
-
-        const response = await fetch(
-            getGeminiApiUrl(apiKey),
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
-        );
+        const response = await fetchGeminiContent(payload, {
+            feature: `AI 辨識題目（${mode === 'tf' ? '是非題' : '選擇題'}）`
+        });
         if (!response.ok) {
             const errorBody = await response.text();
             console.error(`[QuizRecognize:${composerId}] API ${response.status}:`, errorBody);
@@ -19789,13 +19847,7 @@ ${existingText}
             }
         };
 
-        const apiKey = getActiveGeminiApiKey();
-        const apiUrl = getGeminiApiUrl(apiKey);
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const response = await fetchGeminiContent(payload, { feature: 'AI 生成閱讀測驗' });
 
         if (!response.ok) {
             const errorBody = await response.text();
@@ -19894,11 +19946,7 @@ ${parsedQs.map(q => q.question).join('\n')}`;
 
                     try {
                         const retryPayload = { contents: [{ role: "user", parts: [{ text: supplementPrompt }] }] };
-                        const retryRes = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(retryPayload)
-                        });
+                        const retryRes = await fetchGeminiContent(retryPayload, { feature: 'AI 補齊閱讀測驗' });
                         const retryData = await retryRes.json();
                         const retryText = retryData.candidates?.[0]?.content?.parts?.[0]?.text || '';
                         if (retryText) {
