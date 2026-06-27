@@ -357,6 +357,56 @@ function hasValidBuiltinKey() {
     return k.length >= 30 && k.startsWith('AIzaSy');
 }
 
+const AI_SHARED_RATE_LIMIT = {
+    maxCalls: 5,
+    windowMs: 60 * 60 * 1000,
+    storageKey: 'akailaoSharedAiRateLimitV1'
+};
+
+function getActiveGeminiApiKey() {
+    return (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey)
+        ? aiSettings.geminiApiKey.trim()
+        : (aiSettings.defaultGeminiApiKey || '').trim();
+}
+
+function isUsingSharedGeminiKey() {
+    const activeKey = getActiveGeminiApiKey();
+    const builtinKey = (aiSettings.defaultGeminiApiKey || '').trim();
+    return hasValidBuiltinKey() && activeKey === builtinKey;
+}
+
+function getGeminiApiUrl(apiKey, model = 'gemini-2.5-flash') {
+    return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+}
+
+function reserveSharedAiCall(featureLabel = 'AI 出題') {
+    if (!isUsingSharedGeminiKey()) return true;
+
+    const now = Date.now();
+    let recentCalls = [];
+    try {
+        const saved = JSON.parse(localStorage.getItem(AI_SHARED_RATE_LIMIT.storageKey) || '[]');
+        recentCalls = Array.isArray(saved) ? saved.filter(ts => now - Number(ts) < AI_SHARED_RATE_LIMIT.windowMs) : [];
+    } catch (err) {
+        recentCalls = [];
+    }
+
+    if (recentCalls.length >= AI_SHARED_RATE_LIMIT.maxCalls) {
+        const waitMs = AI_SHARED_RATE_LIMIT.windowMs - (now - recentCalls[0]);
+        const waitMinutes = Math.max(1, Math.ceil(waitMs / 60000));
+        showMessage(`為了保護共用 Gemini 額度，${featureLabel} 每小時最多 ${AI_SHARED_RATE_LIMIT.maxCalls} 次。請約 ${waitMinutes} 分鐘後再試；正式備課可在「AI 設定」改用自己的 Gemini API Key。`, 'warning', 9000);
+        return false;
+    }
+
+    recentCalls.push(now);
+    localStorage.setItem(AI_SHARED_RATE_LIMIT.storageKey, JSON.stringify(recentCalls));
+
+    const remaining = AI_SHARED_RATE_LIMIT.maxCalls - recentCalls.length;
+    const noticeType = remaining <= 1 ? 'warning' : 'info';
+    showMessage(`共用 AI 額度保護：本小時還可使用 ${remaining} 次。請將 AI 出題保留給實際備課或課堂使用。`, noticeType, 6000);
+    return true;
+}
+
 // MODIFIED: Combined Dispatch Settings Global Object
 let dispatchSettings = {
     type: 'url', // 'url' or 'html'
@@ -12196,6 +12246,7 @@ function setupEventListeners() {
 
         const textResponses = allStudentResponses.filter(r => currentInteractionMode === 'text_input' && r.answer && r.answer.trim()).map(r => r.answer);
         if (textResponses.length === 0) return showMessage('目前沒有文字回答可供 AI 分析。', 'info');
+        if (!reserveSharedAiCall('AI 文字分析')) return;
         const aiSummaryModal = document.getElementById('ai-summary-modal');
         const aiLoadingSpinner = document.getElementById('ai-loading-spinner');
         const aiSummaryResultList = document.getElementById('ai-summary-result-list');
@@ -12208,8 +12259,8 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "OBJECT", properties: { "word": { "type": "STRING" }, "count": { "type": "NUMBER" } }, "propertyOrdering": ["word", "count"] } } }
             };
-            const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : aiSettings.defaultGeminiApiKey;
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const apiKey = getActiveGeminiApiKey();
+            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12629,6 +12680,7 @@ function setupEventListeners() {
             showMessage('出題數量必須介於 1 到 10 之間！', 'error');
             return;
         }
+        if (!reserveSharedAiCall('AI 選擇題出題')) return;
 
         // Show loading state
         aiGenerateMcBtn.disabled = true;
@@ -12648,8 +12700,8 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 } // Adjust temperature for creativity
             };
-            const apiKey = aiSettings.geminiApiKey;
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const apiKey = getActiveGeminiApiKey();
+            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12764,6 +12816,7 @@ function setupEventListeners() {
             showMessage('項目數量必須介於 3 到 10 之間！', 'error');
             return;
         }
+        if (!reserveSharedAiCall('AI 排序題出題')) return;
 
         // Show loading state
         aiGenerateSeqBtn.disabled = true;
@@ -12782,8 +12835,8 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const apiKey = aiSettings.geminiApiKey;
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const apiKey = getActiveGeminiApiKey();
+            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12891,6 +12944,7 @@ function setupEventListeners() {
             showMessage('配對數量必須介於 3 到 10 之間！', 'error');
             return;
         }
+        if (!reserveSharedAiCall('AI 配對題出題')) return;
 
         // Show loading state
         aiGenerateMatchBtn.disabled = true;
@@ -12910,8 +12964,8 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const apiKey = aiSettings.geminiApiKey;
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            const apiKey = getActiveGeminiApiKey();
+            const response = await fetch(getGeminiApiUrl(apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -19355,6 +19409,7 @@ async function recognizeQuizImages(composerId, targetTextareaId, mode) {
     }
     const textarea = document.getElementById(targetTextareaId);
     if (!textarea) return;
+    if (!reserveSharedAiCall(`AI 辨識題目（${mode === 'tf' ? '是非題' : '選擇題'}）`)) return;
 
     const btn = document.getElementById(`${composerId}-recognize-image-btn`);
     const originalHtml = btn ? btn.innerHTML : '';
@@ -19416,12 +19471,10 @@ async function recognizeQuizImages(composerId, targetTextareaId, mode) {
             generationConfig: { temperature: 0.4, maxOutputTokens: 4096 }
         };
 
-        const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey)
-            ? aiSettings.geminiApiKey
-            : aiSettings.defaultGeminiApiKey;
+        const apiKey = getActiveGeminiApiKey();
 
         const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+            getGeminiApiUrl(apiKey),
             { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
         );
         if (!response.ok) {
@@ -19583,6 +19636,7 @@ async function generatePIRLSQuestions() {
         showMessage('請輸入出題要求或上傳至少一張圖片！', 'error');
         return;
     }
+    if (!reserveSharedAiCall('AI 閱讀測驗出題')) return;
 
     // 🆕 NEW [v3.8.2] A-3: 讀取課綱對齊選項，組成 prompt 增益指引
     const grade = (document.getElementById('ai-reading-grade-select') || {}).value || '';
@@ -19735,8 +19789,9 @@ ${existingText}
             }
         };
 
-        const apiKey = (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey) ? aiSettings.geminiApiKey : aiSettings.defaultGeminiApiKey;
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        const apiKey = getActiveGeminiApiKey();
+        const apiUrl = getGeminiApiUrl(apiKey);
+        const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -21964,4 +22019,3 @@ document.getElementById('reset-game-btn').addEventListener('click', resetGame);
 // --- Start Application ---
 initialize();
 setupEventListeners(); // Call setupEventListeners only once here.
-
