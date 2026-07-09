@@ -4,6 +4,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- 🛡️ App 內建瀏覽器防護 (LINE 自動跳轉，FB/IG 引導提示) -->
+    <script>
+        (function () {
+            var ua = navigator.userAgent || "";
+            var isLine = /\bLine\//i.test(ua);
+            var isOtherInApp = /FBAN|FBAV|FB_IAB|Instagram|Messenger|MicroMessenger|KAKAOTALK/i.test(ua);
+
+            if (isLine && location.search.indexOf("openExternalBrowser=1") === -1) {
+                var sep = location.search ? "&" : "?";
+                location.replace(location.href.split("#")[0] + sep + "openExternalBrowser=1" + location.hash);
+                return;
+            }
+            if (isOtherInApp || isLine) {
+                document.addEventListener("DOMContentLoaded", function () {
+                    var d = document.createElement("div");
+                    d.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(45, 36, 22, 0.95);display:flex;align-items:center;justify-content:center;padding:24px;font-family:'Huninn', 'Noto Sans TC', system-ui, sans-serif;";
+                    d.innerHTML = '<div style="max-width:400px;width:100%;text-align:center;background:#f1e9d6;border:3px solid #2d2416;border-radius:16px;padding:32px 24px;box-shadow:6px 6px 0 rgba(45, 36, 22, 0.2);">'
+                        + '<div style="font-size:64px;margin-bottom:12px;">🏫</div>'
+                        + '<h4 style="font-size:22px;font-weight:900;margin:0 0 16px;color:#2d2416;font-family:\'Noto Serif TC\', serif;letter-spacing:0.05em;">請改用瀏覽器開啟</h4>'
+                        + '<p style="font-size:15px;line-height:1.8;color:#5a4a28;margin:0;text-align:left;">'
+                        + '您目前在 <b style="color:#d97706;border-bottom:1.5px solid #d97706;padding-bottom:1px;">App 內建瀏覽器</b>（LINE／FB 等）中開啟「剛好學」。<br><br>'
+                        + '由於 Google 基於安全政策<b>禁止在 App 內建瀏覽器中登入</b>，請進行以下操作：<br><br>'
+                        + '1. 點選右上角或右下角的「<b>⋯</b>」按鈕<br>'
+                        + '2. 點選「<b>在瀏覽器中開啟</b>」或「<b>用預設瀏覽器開啟</b>」<br><br>'
+                        + '即可正常進行登入與操作！'
+                        + '</p>'
+                        + '</div>';
+                    document.body.appendChild(d);
+                });
+            }
+        })();
+    </script>
+
     <title>剛好學：課堂互動so easy</title>
 
     <!-- 🆕 [v3.8.30] SEO / 基本描述 -->
