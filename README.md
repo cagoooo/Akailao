@@ -1,6 +1,8 @@
 # 🎓 剛好學（Akailao）— 課堂互動 So Easy
 
-> **版本：V3.8.9** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
+> **版本：V4.2.9** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
+
+🌐 **線上使用：[剛好學：課堂互動so easy](https://cagoooo.github.io/Akailao/)**
 
 ---
 
@@ -244,7 +246,7 @@ A：一般課堂使用（每天 10-30 人）完全在 Firebase 免費方案之�
 - Repository：`cagoooo/Akailao`
 - 可見性：公開
 - 主要技術：JavaScript、Vite、Firebase、Tailwind CSS
-- 線上入口：未在 GitHub repository metadata 設定
+- 線上入口：<https://cagoooo.github.io/Akailao/>
 
 ### 可以怎麼應用
 
