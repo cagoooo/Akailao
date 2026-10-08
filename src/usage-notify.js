@@ -51,11 +51,17 @@ function saveQ(q) {
     } catch (e) {}
 }
 
+// 🆕 NEW [v4.2.11]: 來源系統標記。notifyUsage 與班級小管家共用（同一個 Firebase 專案），
+//     兩站又同在 cagoooo.github.io、共用 un_queue_v1 佇列，排隊時就寫進事件，
+//     後端才能在通知上標「剛好學」，不會被誤認成班級小管家的錯誤。
+const APP = 'akailao';
+
 export function enqueue(type, data) {
     const ev = Object.assign({
         type: type,
         ts: new Date().toISOString(),
-        ua: navigator.userAgent
+        ua: navigator.userAgent,
+        app: APP
     }, data || {});
     ev._id = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const q = loadQ();
