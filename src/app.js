@@ -11404,6 +11404,9 @@ function setupEventListeners() {
 
         document.getElementById('multiple-choice-settings-modal').classList.remove('hidden');
     }
+    // 🆕 FIX [v4.2.10]: 這個函式定義在 setupEventListeners 裡，但呼叫端 startQuizPreparedMode 在外層，
+    //     模組作用域看不到它 → 選擇題「備題作答」一按就 ReferenceError。比照其他函式掛到 window。
+    window.openMultipleChoiceSettingsFromPreparedMode = openMultipleChoiceSettingsFromPreparedMode;
 
     // Open Sequencing Settings from B menu
     document.getElementById('open-sequencing-settings-btn').addEventListener('click', () => {

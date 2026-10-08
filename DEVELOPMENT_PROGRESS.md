@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.2.9** ｜ 更新時間：2026-06-17
+> **版本：V4.2.10** ｜ 更新時間：2026-10-08
 
 ---
 
@@ -9,6 +9,11 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.2.10：修正選擇題「備題作答」按下就出錯（2026-10-08）
+- [x] `openMultipleChoiceSettingsFromPreparedMode` 定義在 `setupEventListeners()` 裡，呼叫端 `startQuizPreparedMode()` 在模組外層看不到它，老師選「選擇題 → 備題作答」就噴 `ReferenceError`（2026-10-08 12:57 線上老師回報）。
+- [x] 比照檔案內既有作法掛到 `window`；掃過 `setupEventListeners` 內其他函式，沒有別的被外層呼叫卻未掛載。
+- **驗證**：`vite build` 成功、建置後頁面上 `window.openMultipleChoiceSettingsFromPreparedMode` 為 function；完整點擊流程需教師登入與正式金鑰，本機未能 E2E。
 
 ### ✅ V4.2.9：ARCH-1 多班級管理（我的班級清單 + 切換，雲端同步）（2026-06-17）
 - [x] **資料模型（非破壞性）**：`myClasses = [{code, label, lastUsed}]` 鏡像 localStorage + `teachers/{uid}/private/profile.classrooms`
