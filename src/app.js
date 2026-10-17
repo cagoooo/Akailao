@@ -11244,11 +11244,31 @@ function setupEventListeners() {
 
         classroomCode = studentClassroomCode; // Set global classroom code for student
 
-        // Check if the classroom exists and is active
-        const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
+        // 🆕 NEW [v4.2.10]: 容錯比對教室代碼——iPad 自動大寫首字、中文輸入法全形數字（６６０３）
+        //     都會讓代碼對不上；依序嘗試原樣 → 全形轉半形 → 全大寫 → 全小寫，找到開啟中的教室就用它
+        const _normalizedCode = studentClassroomCode.normalize('NFKC').replace(/\s+/g, '');
+        const codeCandidates = [...new Set([
+            studentClassroomCode,
+            _normalizedCode,
+            _normalizedCode.toUpperCase(),
+            _normalizedCode.toLowerCase()
+        ])].filter(c => c && !/[\/\\#$\[\]\u0000-\u001f]/.test(c));
+
         try {
-            const docSnap = await getDoc(controlRef);
-            if (docSnap.exists() && docSnap.data().teacherId) { // Check if control document exists and has a teacher ID
+            let docSnap = null;
+            for (const candidate of codeCandidates) {
+                const snap = await getDoc(doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', candidate, 'settings', 'control'));
+                if (snap.exists() && snap.data().teacherId) {
+                    docSnap = snap;
+                    if (candidate !== studentClassroomCode) {
+                        console.log(`[Student] 教室代碼容錯比對成功：「${studentClassroomCode}」→「${candidate}」`);
+                        document.getElementById('student-classroom-code-input').value = candidate;
+                    }
+                    classroomCode = candidate;
+                    break;
+                }
+            }
+            if (docSnap) { // Check if control document exists and has a teacher ID
                 studentName = name;
                 updateStudentJoinProgress(45, '🧹 清理舊資料...', '關卡 2/4');
 
@@ -11332,13 +11352,13 @@ function setupEventListeners() {
                     console.log('[Student] 加入完成，當前模式:', currentInteractionMode);
                 }, 400);
             } else {
-                showMessage('教室代碼不存在或老師尚未開啟教室！', 'error');
+                showMessage(`找不到教室「${studentClassroomCode}」：請確認代碼有沒有打錯，或等老師開啟教室後再試一次`, 'error', 6000);
                 hideStudentJoinProgress();
                 submitBtn.disabled = false;
                 submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-                
-                // 遙測：學生加入失敗（教室不存在）
-                UsageNotify.error('教室代碼不存在或老師尚未開啟教室', 'student-join-classroom-not-exists', classroomCode);
+
+                // 遙測：學生加入失敗（教室不存在）——屬使用者輸入問題，訊息帶出實際輸入的代碼方便判讀
+                UsageNotify.error(`學生輸入的教室代碼「${studentClassroomCode}」查無開啟中的教室（多為代碼打錯或老師尚未開課，非系統故障）`, 'student-join-classroom-not-exists', studentClassroomCode);
             }
         } catch (error) {
             console.error("檢查教室代碼失敗:", error);
