@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 課堂互動 So Easy
 
-> **版本：V4.2.9** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
+> **版本：V4.2.12** ｜ 靜態單頁應用 · Firebase 後端 · GitHub Pages 免費部署
 
 🌐 **線上使用：[剛好學：課堂互動so easy](https://cagoooo.github.io/Akailao/)**
 
@@ -136,7 +136,7 @@ service cloud.firestore {
 ### 👨‍🎓 學生端
 
 1. 以手機或電腦瀏覽器開啟課堂網址
-2. 掃描 QR Code 或輸入教室代碼加入課堂
+2. 掃描 QR Code 或輸入教室代碼加入課堂（代碼會自動容錯：全形轉半形、大小寫不同也能加入；iPad 不會自動改大寫）
 3. 輸入姓名後即可開始作答
 4. 作答後永久鎖定，不得再修改
 
@@ -208,6 +208,9 @@ service cloud.firestore {
 **Q：學生無法加入課堂？**  
 A：確認 Firestore 安全性規則已正確設定，且資料庫狀態正常（非暫停）。
 
+**Q：學生說「查無教室」？**  
+A：先請學生核對代碼。V4.2.12 起系統會自動處理全形字與大小寫差異，錯誤通知也會附上學生實際輸入的代碼，方便判斷是打錯字而不是系統故障。
+
 **Q：教師忘記密碼怎麼辦？**  
 A：進入 Firebase Console → Firestore Database → 找到 classroom 集合 → 刪除對應的教師設定文件，重新設定。
 
@@ -221,6 +224,7 @@ A：一般課堂使用（每天 10-30 人）完全在 Firebase 免費方案之�
 
 ## 📋 開發文件
 
+- [DEVELOPMENT_PROGRESS.md](./DEVELOPMENT_PROGRESS.md) — 開發進度與各版本更新紀錄（最新：V4.2.10 修正選擇題「備題作答」、V4.2.11 錯誤通知標明來自剛好學、V4.2.12 教室代碼容錯）
 - [OPTIMIZATION_PLAN.md](./OPTIMIZATION_PLAN.md) — 優化計劃（含技術實作細節）
 - [replit.md](./replit.md) — 系統架構說明（英文技術文件）
 
