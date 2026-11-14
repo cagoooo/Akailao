@@ -3,7 +3,7 @@
 ## 專案概述
 - **用途**：國小課堂互動工具（13 種互動模式 + AI 出題 + 即時排行榜）
 - **架構**：Vite 構建 → 單一 HTML 輸出 + Firebase Firestore 後端 + GitHub Pages 部署
-- **版本**：V3.9.4+（V3.9.x 為三大入口頁 + set.html + 學生中斷彈窗「黑板筆記版」全新視覺；版本徽章 build-time 自動同步）
+- **版本**：V4.3.0+（V4.3.0 新增 Chrome 擴充套件）；V3.9.4+（V3.9.x 為三大入口頁 + set.html + 學生中斷彈窗「黑板筆記版」全新視覺；版本徽章 build-time 自動同步）
 - **Firebase 專案 ID**：`class-4719f`
 - **GitHub Pages**：https://cagoooo.github.io/Akailao/
 
@@ -17,6 +17,7 @@ H:/Akailao/
 │   └── styles.css          # 全部 CSS（~2,900 行）
 ├── dist/                   # Vite 構建輸出（單一 HTML，不 commit）
 │   └── index.html          # 構建產物（JS/CSS 內聯，gzip ~291KB）
+├── chrome-extension/       # 🆕 V4.3.0 Chrome 擴充套件（側邊欄 iframe + 分頁出閱讀測驗，見其 README）
 ├── set.html                # Firebase 配置生成器（老師下載用）
 ├── firestore.rules         # Firestore 安全規則
 ├── vite.config.mjs         # Vite 構建配置

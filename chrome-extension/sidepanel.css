@@ -1,0 +1,163 @@
+:root {
+  --bg: #f6f1e7;
+  --paper: #fffdf8;
+  --ink: #2b2b2b;
+  --muted: #6b6559;
+  --board: #2f4a3a;
+  --board-ink: #f3efe4;
+  --accent: #c2502c;
+  --accent-ink: #ffffff;
+  --line: #ddd3c0;
+  --ok: #2e7d4f;
+  --warn: #a66a00;
+  --err: #b3261e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.45 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.hidden { display: none !important; }
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--board);
+  color: var(--board-ink);
+  flex: none;
+}
+.logo { width: 22px; height: 22px; border-radius: 5px; }
+.brand { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.brand strong { font-size: 14px; letter-spacing: 1px; }
+
+.chip {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.chip-wait { background: #5d7466; color: #e8efe9; }
+.chip-login { background: #f4d58d; color: #5a3d00; }
+.chip-ok { background: #b9e4c9; color: #134d2b; }
+.chip-err { background: #f6c1bd; color: #6d1410; }
+
+.icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--board-ink);
+  font-size: 15px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex: none;
+}
+.icon-btn:hover { background: rgba(255, 255, 255, .14); }
+.icon-btn:focus-visible, .btn:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tools {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 10px 9px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab-line { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.tab-label { color: var(--muted); font-size: 11px; flex: none; }
+.tab-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 1 1 auto;
+}
+.seg label { flex: 1; cursor: pointer; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+  display: block;
+  text-align: center;
+  padding: 4px 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.seg input:checked + span { background: var(--board); color: var(--board-ink); font-weight: 600; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  transition: filter .15s, transform .05s;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+.btn-soft { background: #fff; border-color: var(--line); color: var(--ink); flex: 1 1 auto; font-size: 12px; }
+.btn-soft:hover:not(:disabled) { background: #f3ede1; }
+
+.hint { margin: -2px 0 0; color: var(--muted); font-size: 11px; }
+
+.shots { display: flex; gap: 5px; flex-wrap: wrap; }
+.shot { position: relative; width: 52px; height: 36px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shot button {
+  position: absolute; top: 0; right: 0;
+  border: 0; background: rgba(0, 0, 0, .6); color: #fff;
+  width: 16px; height: 16px; font-size: 10px; line-height: 16px; padding: 0; cursor: pointer;
+}
+
+.status { margin: 0; min-height: 0; font-size: 12px; white-space: pre-line; }
+.status:empty { display: none; }
+.status.ok { color: var(--ok); }
+.status.warn { color: var(--warn); }
+.status.err { color: var(--err); }
+.status.info { color: var(--muted); }
+
+.app-wrap { flex: 1; min-height: 0; background: #fff; }
+#app-frame { width: 100%; height: 100%; border: 0; display: block; }
+
+body.tools-collapsed .tools { display: none; }

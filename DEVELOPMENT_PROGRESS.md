@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.2.12** ｜ 更新時間：2026-10-18
+> **版本：V4.3.0** ｜ 更新時間：2026-11-14
 
 ---
 
@@ -9,6 +9,19 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.3.0：Chrome 擴充套件「剛好學 課堂互動助手」（2026-11-14）
+- [x] **新資料夾 `chrome-extension/`**（Manifest V3）：側邊欄上方是工具列、下方 iframe 載入正式站，老師不用在分頁間切換
+  - 📖 用目前分頁出閱讀測驗（有反白選取就只用選取文字）；「原文出題 / 改寫成適齡短文」兩種方式 + 年級
+  - 📸 截圖出題（最多 8 張，給 PDF / Google 文件等抓不到文字的頁面）、🔗 派送目前網址（按兩次確認）
+  - 右鍵選單：用選取文字 / 這個網頁出題、派送網頁 / 連結；快捷鍵 `Alt+Shift+K`
+  - 權限：`activeTab` + 選用 `<all_urls>`（第一次按按鈕才詢問）；`host_permissions` 只有 `cagoooo.github.io`，讓 iframe 與一般分頁共用登入狀態（已實測）
+- [x] **`src/app.js` `ExtensionBridge`**：只接受 `chrome-extension://` 父視窗的 `postMessage`；未登入／未進教室先排隊，進到老師選單後自動接續
+- [x] **`generatePIRLSQuestions(opts)`**：新增 `sourceText` + `sourceMode`（original 只出題不改文本 / rewrite 參考資料改寫後出題）；按鈕呼叫行為不變
+- [x] AI 額度用完（credits depleted / 429）時改顯示中文說明，不再只有「status 500」
+- [x] **部署**：GitHub Actions 打包 `dist/akailao-chrome-extension.zip` 供老師下載
+- **驗證**：Playwright 載入擴充套件實測——維基百科擷取（排除資訊框雜訊）、握手、未登入排隊、匿名老師身分下原文/改寫各產生 10 題（AI 回應以測試替身代替）；Google 登入彈窗、截圖出題、派送網址在真實 Chrome 未實測
+- ⚠️ 測試時發現**共用 Gemini 額度已用完**（prepayment credits are depleted），正式站 AI 出題暫時失敗，需到 AI Studio 儲值或老師改用自己的金鑰
 
 ### ✅ V4.2.12：學生加入教室代碼容錯 + 錯誤通知去誤報（2026-10-18）
 - [x] **起因**：Google Chat 收到「教室代碼不存在或老師尚未開啟教室」錯誤通知（iPad Safari、2026-10-17 23:05），通知內看不出學生輸入了什麼代碼

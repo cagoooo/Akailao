@@ -61,6 +61,14 @@ jobs:
           cp manifest.json dist/manifest.json 2>/dev/null || true
           cp sw.js dist/sw.js 2>/dev/null || true
 
+      # 🆕 [V4.3.0] 打包 Chrome 擴充套件，讓老師可從網站下載
+      - name: 🧩 打包 Chrome 擴充套件
+        run: |
+          cd chrome-extension
+          zip -r ../dist/akailao-chrome-extension.zip . -x 'README.md'
+          cd ..
+          ls -la dist/akailao-chrome-extension.zip
+
       # 🆕 [V4.1.1] 注入 BUILD_VERSION 到 sw.js（git hash + 時間戳）
       # 讓每次 CI build 後 sw.js byte 都不同 → 瀏覽器一定偵測到更新 → updatefound 正確 fire
       - name: 🔧 注入 Build Version 到 sw.js

@@ -2302,6 +2302,8 @@ function showView(viewName) {
     } else {
         console.error('找不到視圖:', viewName);
     }
+    // 🆕 [V4.3.0] 通知 Chrome 擴充套件側邊欄（有待處理的分頁內容時自動接續）
+    window.__akailaoExtBridge?.onViewChanged(viewName);
 }
 
 // 🆕 NEW [v3.8.15]: 全局函數 — 隱藏所有教師端可選按鈕
@@ -19696,7 +19698,15 @@ function buildCurriculumHint(grade, subject) {
     return lines.join('\n');
 }
 
-async function generatePIRLSQuestions() {
+// 🆕 MODIFIED [V4.3.0]: 支援 Chrome 擴充套件帶入「分頁文本」出題
+//   opts.sourceText：外部帶入的文本；opts.sourceMode：'original'（原文直接出題）| 'rewrite'（AI 改寫成適齡短文再出題）
+//   按鈕 click 會傳入 Event，所以只接受一般物件參數
+async function generatePIRLSQuestions(opts) {
+    const extOpts = (opts && typeof opts === 'object' && !(opts instanceof Event)) ? opts : {};
+    const sourceText = typeof extOpts.sourceText === 'string' ? extOpts.sourceText.trim() : '';
+    const sourceMode = extOpts.sourceMode === 'rewrite' ? 'rewrite' : 'original';
+    const sourceTitle = typeof extOpts.sourceTitle === 'string' ? extOpts.sourceTitle.trim() : '';
+
     // 🚀 UX: 檢查 API KEY 是否已設定
     if (!checkAPIKey()) return;
 
@@ -19713,7 +19723,7 @@ async function generatePIRLSQuestions() {
     // 🆕 NEW: 判斷是否有上傳圖片（與文字要求二擇一即可）
     const hasImages = readingAiUploadedImages && readingAiUploadedImages.length > 0;
 
-    if (!topic && !hasImages) {
+    if (!topic && !hasImages && !sourceText) {
         showMessage('請輸入出題要求或上傳至少一張圖片！', 'error');
         return;
     }
@@ -19724,12 +19734,13 @@ async function generatePIRLSQuestions() {
     const subject = (document.getElementById('ai-reading-subject-select') || {}).value || '';
     const curriculumHint = buildCurriculumHint(grade, subject);
 
-    // 自動清除舊內容，提供更好的 UX 體驗
-    readingTextTextarea.value = '';
-    questionsTextarea.value = '';
+    // 🆕 [V4.3.0] 擴充套件「原文出題」時 existingText = 分頁文本；「改寫」時交給 rewriteSource
+    const existingText = (sourceText && sourceMode === 'original' && !hasImages) ? sourceText : '';
+    const rewriteSource = (sourceText && sourceMode === 'rewrite' && !hasImages) ? sourceText : '';
 
-    // 清除後，existingText 永遠為空，每次都生成新文本和題目
-    const existingText = '';
+    // 自動清除舊內容（原文出題時保留原文），提供更好的 UX 體驗
+    readingTextTextarea.value = existingText;
+    questionsTextarea.value = '';
 
     // 🎯 進度條輔助函數
     const progressWrap = document.getElementById('ai-gen-progress-wrap');
@@ -19739,7 +19750,9 @@ async function generatePIRLSQuestions() {
     // 🆕 NEW: 依模式調整進度條文字（圖片模式下步驟1改為「辨識圖片」）
     const stepMsgs = hasImages
         ? ['⚙️ 正在準備圖片與請求...', '🔍 AI 正在辨識圖片中的文字...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！']
-        : ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
+        : existingText
+            ? ['⚙️ 正在準備請求...', '📖 AI 正在閱讀分頁文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！']
+            : ['⚙️ 正在準備請求...', '📝 AI 正在生成閱讀文本...', '❓ AI 正在生成測驗題目...', '✅ 整理完成！'];
 
     function setAiStep(stepIndex) {
         for (let i = 0; i < 4; i++) {
@@ -19816,23 +19829,62 @@ ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
 - 禁止輸出 JSON、表格或其他結構化格式
 - 禁止用全形逗號（，）分隔欄位`;
         } else if (existingText) {
-            prompt = `根據以下文本，依照 PIRLS 閱讀理解的 4 個層次生成「剛好 10 題」選擇題（不可多不可少）：
+            // 🆕 MODIFIED [V4.3.0]: 擴充套件「原文出題」— 只出題、不改寫文本
+            prompt = `你是一位專業的國小閱讀理解老師。請只根據下方文本的內容，依照 PIRLS 閱讀理解的 4 個層次生成「剛好 10 題」選擇題（不可多不可少）：
 層次1（直接提取資訊）：3題
 層次2（直接推論）：3題
 層次3（詮釋整合資訊）：2題
 層次4（比較評估內容）：2題
 ⚠️ 必須輸出完整 10 題，3+3+2+2=10，缺一不可
-
+⚠️ 題目與正確答案都必須能從文本中找到依據，不要考文本以外的知識
+${sourceTitle ? `\n文本來源標題：${sourceTitle}\n` : ''}
 文本：
 ${existingText}
-
-要求：${topic}${curriculumHint}
-
-請按照以下格式輸出，每行一題：
-題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+【輸出格式 — 非常重要，請嚴格遵守】
+1. 不要重複輸出文本，不要任何說明文字，只輸出題目
+2. 不要使用 markdown code fence（\`\`\`）或標題
+3. 每行一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
 
 範例：
-主角的名字是什麼?,2,小明,小華,小美,小強,1`;
+主角的名字是什麼?,2,小明,小華,小美,小強,1
+
+【絕對禁止】
+- 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
+- 禁止在題目前加題號
+- 禁止用全形逗號（，）分隔欄位`;
+        } else if (rewriteSource) {
+            // 🆕 NEW [V4.3.0]: 擴充套件「改寫成適齡短文」— 參考分頁內容改寫文本後再出題
+            prompt = `你是一位專業的國小閱讀理解老師。下方是老師從網頁擷取的參考資料，請依照下列步驟完成任務：
+
+【步驟 1：改寫成閱讀文本】
+- 根據參考資料的重點，改寫成一篇適合學生閱讀的完整文章（約 500～900 字，低年級可縮短為 250～400 字）。
+- 用字遣詞、句子長度要符合學生程度；保留重要事實與數據，不要捏造參考資料沒有的內容。
+- 忽略網頁中的選單、廣告、留言、版權宣告等雜訊。
+${sourceTitle ? `- 參考資料標題：${sourceTitle}\n` : ''}
+【步驟 2：依 PIRLS 四層次出剛好 10 題選擇題】
+- 層次1（直接提取資訊）：3題
+- 層次2（直接推論）：3題
+- 層次3（詮釋整合資訊）：2題
+- 層次4（比較評估內容）：2題
+- 題目必須根據你改寫後的文章出題，3+3+2+2=10，請務必輸出完整 10 題
+${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+【輸出格式 — 非常重要，請嚴格遵守】
+1. 不要使用 markdown code fence（\`\`\`）包裝輸出
+2. 不要加「文本：」「題目：」等標題，直接開始輸出文章
+3. 先輸出完整的閱讀文本（純文字段落）
+4. 空一行後，輸出「---題目---」作為分隔
+5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
+
+【絕對禁止】
+- 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
+- 禁止在題目前加題號
+- 禁止用全形逗號（，）分隔欄位
+
+【參考資料】
+${rewriteSource}`;
         } else {
             prompt = `請根據以下主題生成一篇適合的閱讀文本，並依照 PIRLS 閱讀理解的 4 個層次生成「剛好 10 題」選擇題（不可多不可少）：
 層次1（直接提取資訊）：3題
@@ -19881,12 +19933,16 @@ ${existingText}
             if (response.status === 413) {
                 throw new Error('❌ 圖片檔案過大，請減少圖片數量或使用較小的截圖後再試！');
             }
+            // 🆕 [V4.3.0] 額度用完時給老師看得懂的說明（原本只顯示 status 500）
+            if (response.status === 429 || /credits are depleted|RESOURCE_EXHAUSTED|quota/i.test(errorBody)) {
+                throw new Error('❌ 共用 AI 額度目前已用完，請稍後再試，或在「AI 設定」改用自己的 Gemini API Key。');
+            }
             throw new Error(`AI API request failed with status ${response.status}`);
         }
 
         const result = await response.json();
         let generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        UsageNotify.aiApi('ai_reading_gen', 'AI 生成閱讀測驗', { topic: (topic || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '')).slice(0, 80), keyType: aiSettings.aiSource }, classroomCode);
+        UsageNotify.aiApi('ai_reading_gen', 'AI 生成閱讀測驗', { topic: (topic || (sourceText ? `擴充套件：${sourceTitle || '分頁文本'}` : '') || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '')).slice(0, 80), keyType: aiSettings.aiSource }, classroomCode);
 
         if (generatedText) {
             // 🆕 MODIFIED [v3.7.14]: 強化輸出清理 — 剝除 markdown code fence 與其他雜訊
@@ -20032,6 +20088,228 @@ ${parsedQs.map(q => q.question).join('\n')}`;
         }, 800);
     }
 }
+
+// 🆕 NEW [V4.3.0]: Chrome 擴充套件橋接 —— 側邊欄（chrome-extension://）把剛好學放在 iframe 裡，
+//   透過 postMessage 把「目前分頁的文字 / 截圖 / 網址」交給老師端，直接出閱讀測驗或派送網址。
+//   安全：只接受 chrome-extension:// 來源、且必須是包住本頁的父視窗；動作一律要「老師已登入並進入教室」才執行。
+const ExtensionBridge = (() => {
+    const MAX_ORIGINAL_CHARS = 6000;   // 原文出題：學生要讀的文本上限
+    const MAX_REWRITE_CHARS = 15000;   // 改寫模式：給 AI 參考的資料上限
+    const isEmbedded = window.parent && window.parent !== window;
+    let extOrigin = null;
+    let extWindow = null;
+    let pending = null;
+    let running = false;
+
+    const isExtensionOrigin = origin => /^chrome-extension:\/\/[a-p]{32}$/.test(origin || '');
+    const teacherReady = () => currentRole === 'teacher' && !!classroomCode;
+
+    function getState() {
+        return {
+            teacherReady: teacherReady(),
+            loggedIn: !!currentTeacherGoogleUser,
+            classroomCode: teacherReady() ? classroomCode : '',
+            hasPending: !!pending,
+            busy: running,
+            version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
+        };
+    }
+
+    function post(type, data = {}) {
+        if (!extWindow || !extOrigin) return;
+        try {
+            extWindow.postMessage({ source: 'akailao-app', type, state: getState(), ...data }, extOrigin);
+        } catch (e) {
+            console.warn('[ExtensionBridge] postMessage 失敗', e);
+        }
+    }
+
+    function normalizeText(text) {
+        return String(text || '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/[ \t 　]+/g, ' ')
+            .replace(/ *\n */g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    // 在上限內找最後一個句尾符號截斷，避免切在句子中間
+    function cutAtSentence(text, limit) {
+        const slice = text.slice(0, limit);
+        const idx = Math.max(...['。', '！', '？', '.', '!', '?', '\n'].map(ch => slice.lastIndexOf(ch)));
+        return (idx > limit * 0.6 ? slice.slice(0, idx + 1) : slice).trim();
+    }
+
+    function openReadingModal(payload) {
+        showReadingComprehensionModal();
+        const gradeSel = document.getElementById('ai-reading-grade-select');
+        if (gradeSel && payload.grade && [...gradeSel.options].some(o => o.value === payload.grade)) {
+            gradeSel.value = payload.grade;
+        }
+        // 從擴充套件來的請求，舊的「出題要求」不要混進 prompt
+        const topicEl = document.getElementById('ai-reading-topic-textarea');
+        if (topicEl) topicEl.value = typeof payload.extraRequest === 'string' ? payload.extraRequest.slice(0, 500) : '';
+        document.getElementById('reading-questions-preview')?.classList.add('hidden');
+    }
+
+    // generatePIRLSQuestions 會自己處理錯誤並顯示訊息，這裡用「有沒有解析出題目」判斷成敗
+    function assertQuestionsGenerated() {
+        const n = parseReadingQuestions(document.getElementById('reading-questions-textarea')?.value || '')?.length || 0;
+        if (!n) {
+            const err = new Error('AI 沒有產生題目（可能是 AI 額度用完或網路問題），請看下方剛好學畫面的錯誤訊息。');
+            err.silent = true; // 剛好學畫面已顯示過錯誤，不再重複跳通知
+            throw err;
+        }
+        return n;
+    }
+
+    function scrollToQuestions() {
+        setTimeout(() => {
+            const target = document.getElementById('reading-questions-preview')?.classList.contains('hidden')
+                ? document.getElementById('reading-questions-textarea')
+                : document.getElementById('reading-questions-preview');
+            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 400);
+    }
+
+    async function runReadingText(p) {
+        const mode = p.mode === 'rewrite' ? 'rewrite' : 'original';
+        let text = normalizeText(p.text);
+        if (text.length < 30) {
+            throw new Error('擷取到的文字太少（不到 30 字）。請先在網頁上選取文章段落，或改用「截圖出題」。');
+        }
+        const limit = mode === 'rewrite' ? MAX_REWRITE_CHARS : MAX_ORIGINAL_CHARS;
+        const originalLength = text.length;
+        if (text.length > limit) text = cutAtSentence(text, limit);
+
+        openReadingModal(p);
+        if (text.length < originalLength) {
+            showMessage(`📏 文本有 ${originalLength} 字，已取前 ${text.length} 字${mode === 'original' ? '給學生閱讀' : '給 AI 參考'}。可在「閱讀文本」欄自行調整。`, 'warning', 7000);
+        }
+        if (p.autoGenerate === false) {
+            document.getElementById('reading-text-textarea').value = text;
+            return;
+        }
+        await generatePIRLSQuestions({ sourceText: text, sourceMode: mode, sourceTitle: String(p.title || '').slice(0, 120) });
+        assertQuestionsGenerated();
+        scrollToQuestions();
+    }
+
+    function addImageFromDataUrl(dataUrl, name) {
+        return new Promise((resolve, reject) => {
+            if (!/^data:image\/(png|jpeg|webp);base64,/.test(dataUrl || '')) {
+                reject(new Error('截圖格式不正確'));
+                return;
+            }
+            const img = new Image();
+            img.onload = () => {
+                let { width, height } = img;
+                const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(width, height));
+                width = Math.round(width * scale);
+                height = Math.round(height * scale);
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                const jpegUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+                readingAiUploadedImages.push({ dataUrl: jpegUrl, base64: jpegUrl.split(',')[1] || '', mimeType: 'image/jpeg', name });
+                renderReadingAiImagesPreview();
+                resolve();
+            };
+            img.onerror = () => reject(new Error('無法讀取分頁截圖'));
+            img.src = dataUrl;
+        });
+    }
+
+    async function runReadingImage(p) {
+        const shots = Array.isArray(p.images) ? p.images.slice(0, 8) : [p.dataUrl];
+        openReadingModal(p); // 會清空舊的上傳圖片
+        for (let i = 0; i < shots.length; i++) {
+            await addImageFromDataUrl(shots[i], `分頁截圖${shots.length > 1 ? `-${i + 1}` : ''}`);
+        }
+        if (p.autoGenerate === false) return;
+        await generatePIRLSQuestions();
+        assertQuestionsGenerated();
+        scrollToQuestions();
+    }
+
+    async function runDispatchUrl(p) {
+        let url;
+        try { url = new URL(String(p.url || '')); } catch (e) { throw new Error('網址格式不正確'); }
+        if (!/^https?:$/.test(url.protocol)) throw new Error('只能派送 http / https 網址');
+        const isYoutubeHost = /(^|\.)youtube\.com$|(^|\.)youtu\.be$/.test(url.hostname);
+        dispatchSettings.type = 'url';
+        dispatchSettings.url = url.href;
+        dispatchSettings.isYoutube = isYoutubeHost && !!getYouTubeVideoId(url.href);
+        dispatchSettings.htmlContent = null;
+        localStorage.setItem('dispatchSettings', JSON.stringify(dispatchSettings));
+        hideReadingComprehensionModal();
+        showView('teacherMonitor');
+        await setInteractionMode('url_dispatch');
+        showMessage(`🔗 已派送給學生：${p.title || url.href}`, 'success', 5000);
+    }
+
+    async function run(action) {
+        if (running || document.getElementById('ai-generate-reading-btn')?.disabled) {
+            post('ack', { id: action.id, status: 'error', message: 'AI 正在出題中，請等這一輪完成再送。' });
+            showMessage('AI 正在出題中，請等這一輪完成再送。', 'warning');
+            return;
+        }
+        running = true;
+        post('ack', { id: action.id, status: 'running' });
+        try {
+            if (action.type === 'reading-text') await runReadingText(action.payload);
+            else if (action.type === 'reading-image') await runReadingImage(action.payload);
+            else if (action.type === 'dispatch-url') await runDispatchUrl(action.payload);
+            running = false;
+            post('ack', { id: action.id, status: 'done' });
+        } catch (err) {
+            running = false;
+            console.error('[ExtensionBridge] 動作失敗:', err);
+            if (!err.silent) showMessage(err.message || '擴充套件動作失敗', 'error', 7000);
+            post('ack', { id: action.id, status: 'error', message: err.message || '' });
+        }
+    }
+
+    function onMessage(event) {
+        if (event.source !== window.parent || !isExtensionOrigin(event.origin)) return;
+        const msg = event.data;
+        if (!msg || msg.source !== 'akailao-ext' || typeof msg.type !== 'string') return;
+        extOrigin = event.origin;
+        extWindow = event.source;
+
+        if (msg.type === 'hello') {
+            post('ready');
+            return;
+        }
+        if (!['reading-text', 'reading-image', 'dispatch-url'].includes(msg.type)) return;
+        const action = { type: msg.type, payload: msg.payload || {}, id: msg.id || '' };
+        if (!teacherReady()) {
+            pending = action;
+            post('ack', { id: action.id, status: 'pending' });
+            showMessage('📥 已收到分頁內容！請先登入老師帳號並進入教室，系統會自動接著處理。', 'info', 7000);
+            return;
+        }
+        run(action);
+    }
+
+    function onViewChanged(viewName) {
+        if (!isEmbedded) return;
+        if (pending && teacherReady() && viewName === 'teacherMenu') {
+            const action = pending;
+            pending = null;
+            setTimeout(() => run(action), 400);
+        }
+        post('state');
+    }
+
+    if (isEmbedded) {
+        window.addEventListener('message', onMessage);
+        document.documentElement.classList.add('in-extension-frame');
+    }
+    return { onViewChanged, getState };
+})();
+window.__akailaoExtBridge = ExtensionBridge;
 
 /**
  * Show reading comprehension questions modal for teacher

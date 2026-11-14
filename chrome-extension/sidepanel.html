@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>剛好學 課堂互動助手</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="bar">
+    <img src="icons/icon-32.png" alt="" class="logo">
+    <div class="brand">
+      <strong>剛好學</strong>
+      <span id="conn-chip" class="chip chip-wait">連線中…</span>
+    </div>
+    <button id="reload-btn" class="icon-btn" title="重新整理剛好學">⟳</button>
+    <button id="open-tab-btn" class="icon-btn" title="在新分頁開啟剛好學">↗</button>
+    <button id="toggle-tools-btn" class="icon-btn" title="收合 / 展開工具列" aria-expanded="true">▴</button>
+  </header>
+
+  <section id="tools" class="tools">
+    <div class="tab-line" title="目前分頁">
+      <span class="tab-label">目前分頁</span>
+      <span id="tab-title" class="tab-title">—</span>
+    </div>
+
+    <div class="row">
+      <div class="seg" role="radiogroup" aria-label="出題方式">
+        <label><input type="radio" name="mode" value="original" checked><span>原文出題</span></label>
+        <label><input type="radio" name="mode" value="rewrite"><span>改寫成適齡短文</span></label>
+      </div>
+      <select id="grade-select" aria-label="年級">
+        <option value="">年級不限</option>
+        <option value="小1">一年級</option>
+        <option value="小2">二年級</option>
+        <option value="小3">三年級</option>
+        <option value="小4">四年級</option>
+        <option value="小5">五年級</option>
+        <option value="小6">六年級</option>
+        <option value="國1">七年級</option>
+        <option value="國2">八年級</option>
+        <option value="國3">九年級</option>
+      </select>
+    </div>
+
+    <button id="reading-btn" class="btn btn-primary">📖 用這頁出閱讀測驗</button>
+    <p class="hint">先在網頁上<strong>反白選取</strong>段落，就只用選取的文字出題。</p>
+
+    <div class="row">
+      <button id="shot-btn" class="btn btn-soft" title="把目前看到的畫面截圖（可捲動後多截幾張，最多 8 張）">📸 截圖</button>
+      <button id="shot-gen-btn" class="btn btn-soft" disabled>🧠 用截圖出題</button>
+      <button id="dispatch-btn" class="btn btn-soft" title="把目前分頁的網址派送到學生畫面">🔗 派送網址</button>
+    </div>
+    <div id="shots" class="shots hidden"></div>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <main class="app-wrap">
+    <iframe id="app-frame" title="剛好學" allow="clipboard-read; clipboard-write; microphone; camera; fullscreen; autoplay"></iframe>
+  </main>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
