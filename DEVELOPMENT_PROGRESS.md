@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.4.0** ｜ 更新時間：2026-11-14
+> **版本：V4.4.1** ｜ 更新時間：2026-11-14
 
 ---
 
@@ -9,6 +9,13 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.4.1：金鑰格式檢查不再限定 AIza 開頭（2026-11-14）
+- [x] **起因**：使用者回報貼上新格式的 Gemini 金鑰，「測試 API Key」顯示「請先貼上有效的 API Key（應以 AIzaSy 開頭）」——Google 金鑰格式已多樣化
+- [x] `src/app.js` 新增 `looksLikeApiKey()`：只擋空白、少於 20 字元、含空格的輸入；是否有效交給「測試 API Key」實際呼叫 Google。套用到儲存、測試、`checkAPIKey()`、擴充套件的 `hasOwnGeminiKey()`
+- [x] 金鑰放進網址時加 `encodeURIComponent`；輸入框提示改為「貼上從 Google AI Studio 複製的 API Key」
+- **驗證**：「abc 123」被擋；`AQ.` 開頭含 `-`、`_`、`.` 的測試金鑰可測試、儲存並自動出題 10 題（直連 Google、共用服務 0 次）
+- `set.html` 裡的 `AIza` 檢查是 Firebase 專案設定金鑰，與 Gemini 無關，未更動
 
 ### ✅ V4.4.0：擴充套件改用老師自己的 Gemini 金鑰 + 網站安裝教學頁（2026-11-14）
 - [x] **只限擴充套件**：側邊欄 iframe 網址帶 `?from=chrome-extension`，`IN_EXTENSION_PANEL` 為真時 `isUsingSharedGeminiKey()` 回傳 false、`checkAPIKey()` 要求老師自己的金鑰；一般網頁版仍走共用額度（不變）

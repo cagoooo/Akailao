@@ -384,14 +384,20 @@ function isUsingSharedGeminiKey() {
 // 擴充套件模式下：老師是否已設定自己的金鑰
 function hasOwnGeminiKey() {
     const key = getActiveGeminiApiKey();
-    return key.length >= 30 && key.startsWith('AIza');
+    return looksLikeApiKey(key);
 }
 
 // 🆕 [V4.3.1] gemini-2.5 系列已不開放給新申請的金鑰，預設改用 3.1 flash-lite
 const GEMINI_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 
 function getGeminiApiUrl(apiKey, model = GEMINI_DEFAULT_MODEL) {
-    return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+}
+
+// 🆕 [V4.4.1] Google 金鑰格式已多樣化，不一定是 AIza 開頭：只擋掉明顯不是金鑰的輸入（空白、太短、含空格），
+//   真正能不能用交給「測試 API Key」實際呼叫 Google 判斷
+function looksLikeApiKey(key) {
+    return typeof key === 'string' && key.length >= 20 && !/\s/.test(key) && key !== BUILTIN_KEY_MASK;
 }
 
 function reserveSharedAiCall(featureLabel = 'AI 出題') {
@@ -8843,8 +8849,8 @@ function showApiKeyGuide(retryCallback) {
             key = aiSettings.defaultGeminiApiKey;
         }
 
-        if (!key || !key.startsWith('AIzaSy')) {
-            showMessage('請貼上有效的 Gemini API Key（應以 AIzaSy 開頭）', 'error');
+        if (!looksLikeApiKey(key)) {
+            showMessage('請貼上完整的 Gemini API Key（從 Google AI Studio 複製，中間不要有空格）', 'error');
             input.focus();
             return;
         }
@@ -8874,9 +8880,9 @@ function showApiKeyGuide(retryCallback) {
             key = aiSettings.defaultGeminiApiKey;
         }
 
-        if (!key || !key.startsWith('AIzaSy')) {
+        if (!looksLikeApiKey(key)) {
             testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
-            testResult.innerHTML = '<i class="fas fa-times-circle"></i> 請先貼上有效的 API Key（應以 AIzaSy 開頭）';
+            testResult.innerHTML = '<i class="fas fa-times-circle"></i> 請先貼上完整的 API Key（從 Google AI Studio 複製，中間不要有空格）';
             return;
         }
         // 顯示載入中
@@ -8887,7 +8893,7 @@ function showApiKeyGuide(retryCallback) {
         const start = Date.now();
         try {
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_DEFAULT_MODEL}:generateContent?key=${key}`,
+                getGeminiApiUrl(key),
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -8985,9 +8991,9 @@ function checkAPIKey() {
         return false;
     }
 
-    // 檢查基本格式：Google API Key 通常至少 30 字符
-    if (apiKey.length < 30) {
-        const errorMsg = `❌ API KEY 格式錯誤！通常至少需要 30 個字符，您只輸入了 ${apiKey.length} 個字符。`;
+    // 檢查基本格式（🆕 [V4.4.1] 不再要求特定開頭；長度與空白檢查交給 looksLikeApiKey）
+    if (!looksLikeApiKey(apiKey)) {
+        const errorMsg = `❌ API KEY 格式不完整（目前 ${apiKey.length} 個字元），請從 Google AI Studio 重新複製完整的金鑰。`;
         console.error('[API KEY 驗證] 格式檢查失敗:', {
             errorType: 'KEY_TOO_SHORT',
             expectedMinLength: 30,
