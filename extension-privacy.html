@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剛好學 課堂互動助手｜隱私權政策</title>
+<meta name="description" content="剛好學 課堂互動助手（Chrome 擴充套件）的隱私權政策：讀取哪些資料、送到哪裡、如何保護。">
+<link rel="icon" href="icons/favicon-32.png">
+<style>
+  :root {
+    --bg: #f6f1e7; --paper: #fffdf8; --ink: #2b2b2b; --muted: #5f594d;
+    --board: #2f4a3a; --accent: #c2502c; --line: #ddd3c0;
+    --fs-base: clamp(16px, 1.05vw + 12px, 18px); --fs-sm: clamp(14px, .6vw + 11px, 15px);
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: var(--fs-base)/1.8 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  .hero { background: var(--board); color: #f3efe4; padding: 40px 16px 32px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+  .hero .wrap { display: flex; gap: 16px; align-items: center; }
+  .hero img { width: 64px; height: 64px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25); flex: none; }
+  .hero h1 { margin: 0; font-size: clamp(22px, 2.4vw + 12px, 32px); line-height: 1.3; }
+  .hero p { margin: 4px 0 0; opacity: .85; font-size: var(--fs-sm); }
+  main { padding: 28px 0 40px; }
+  .card { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 18px; }
+  h2 { font-size: 1.15em; margin: 0 0 8px; color: var(--board); }
+  ul { padding-left: 1.3em; margin: 6px 0; }
+  li { margin: 4px 0; }
+  .meta { font-size: var(--fs-sm); color: var(--muted); }
+  .highlight { border-left: 4px solid var(--accent); }
+  a { color: var(--accent); }
+  /* 頁尾 */
+  .site-footer { background: linear-gradient(#f1ebdf, #ebe3d3); border-top: 1px solid var(--line); position: relative; }
+  .site-footer::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 4px; background: linear-gradient(90deg, var(--board), var(--accent)); }
+  .footer-inner { max-width: 880px; margin: 0 auto; padding: 28px 16px 18px; display: grid; grid-template-columns: 1.2fr 2fr; gap: 24px; }
+  .footer-brand { display: flex; gap: 12px; align-items: flex-start; }
+  .footer-brand img { width: 48px; height: 48px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  .footer-brand strong { display: block; font-size: 1.05em; }
+  .footer-brand span, .footer-points small { font-size: var(--fs-sm); color: var(--muted); }
+  .footer-points { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .footer-points li { display: flex; gap: 8px; margin: 0; }
+  .footer-points strong { display: block; font-size: var(--fs-sm); }
+  .fp-icon { font-size: 22px; line-height: 1.2; }
+  .footer-links { max-width: 880px; margin: 0 auto; padding: 0 16px 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .footer-link { font-size: var(--fs-sm); text-decoration: none; color: var(--ink); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; }
+  .footer-link:hover { border-color: var(--accent); color: var(--accent); }
+  .footer-bottom { max-width: 880px; margin: 0 auto; padding: 12px 16px 22px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .site-credit { margin: 0; font-size: var(--fs-sm); }
+  .site-credit__heart { display: inline-block; margin: 0 2px; }
+  .site-credit__author { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+  .site-credit__author:hover { color: var(--accent); }
+  .version-tag { margin: 0; font-size: var(--fs-sm); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 999px; padding: 2px 12px; }
+  @media (max-width: 760px) {
+    .footer-inner { grid-template-columns: 1fr; }
+    .footer-points { grid-template-columns: 1fr; }
+    .footer-bottom { flex-direction: column; text-align: center; }
+    .footer-school { display: block; }
+    .footer-dot { display: none; }
+    .footer-links { justify-content: center; }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <img src="icons/icon-192.png" alt="">
+    <div>
+      <h1>剛好學 課堂互動助手 隱私權政策</h1>
+      <p>Chrome 擴充套件｜生效日期：2026 年 11 月 14 日</p>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card highlight">
+    <h2>重點摘要</h2>
+    <ul>
+      <li>擴充套件<strong>只在老師按下按鈕或右鍵選單時</strong>，讀取「當下這一個分頁」的文字、截圖或網址，不會在背景收集瀏覽紀錄。</li>
+      <li>讀到的內容只會交給側邊欄裡的「剛好學」網站，用來產生閱讀測驗或派送網址給學生。</li>
+      <li>擴充套件本身沒有廣告、沒有使用分析，也不會販售或轉讓任何資料。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>一、擴充套件會處理哪些資料</h2>
+    <ul>
+      <li><strong>網頁內容</strong>：老師按「用這頁出閱讀測驗」時，讀取目前分頁的標題、網址與正文文字（有反白選取時只讀選取的文字）。</li>
+      <li><strong>分頁截圖</strong>：老師按「📸 截圖」時，擷取目前分頁看得到的畫面。</li>
+      <li><strong>分頁網址</strong>：老師按「🔗 派送網址」或右鍵派送時，取得該網頁或連結的網址。</li>
+      <li><strong>偏好設定</strong>：出題方式、年級、工具列是否收合，存在這台電腦的 Chrome 本機儲存空間（chrome.storage.local）。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>二、資料會送到哪裡</h2>
+    <ul>
+      <li><strong>剛好學網站</strong>（<a href="https://cagoooo.github.io/Akailao/">https://cagoooo.github.io/Akailao/</a>）：側邊欄下方就是這個網站。擴充套件把讀到的內容交給它，填入「閱讀測驗設定」。</li>
+      <li><strong>AI 出題服務</strong>：剛好學會透過開發者在 Google Firebase 上的出題服務，把文本或截圖送到 Google Gemini 產生題目。共用 AI 使用 Google 的免費方案，依 Google 條款，送出的內容可能被 Google 用來改進產品。<strong>請不要擷取含學生姓名、成績或其他個人資料的畫面或文字。</strong></li>
+      <li><strong>學生裝置</strong>：只有老師按下「開始閱讀測驗」或確認派送網址後，閱讀文本、題目或網址才會出現在學生畫面。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>三、權限用途</h2>
+    <ul>
+      <li><strong>sidePanel</strong>：在 Chrome 側邊欄顯示剛好學。</li>
+      <li><strong>activeTab、scripting</strong>：老師操作當下，讀取目前分頁的正文文字。</li>
+      <li><strong>選用的「所有網站」權限</strong>：第一次按出題、截圖或派送時才詢問，讓側邊欄按鈕能讀取目前分頁並截圖；老師可隨時在擴充功能設定中移除。</li>
+      <li><strong>contextMenus</strong>：提供右鍵「用選取文字出閱讀測驗」「派送給學生」。</li>
+      <li><strong>storage</strong>：記住出題方式與年級等偏好，以及把右鍵選單的動作轉交給側邊欄。</li>
+      <li><strong>cagoooo.github.io</strong>：讓側邊欄裡的剛好學與一般分頁共用老師的登入狀態。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>四、保存與刪除</h2>
+    <ul>
+      <li>擴充套件本身只保存偏好設定；移除擴充套件時會一併刪除。</li>
+      <li>老師登入剛好學後建立的教室互動、題庫等資料，依剛好學網站的設計保存在 Google Firebase，老師可在網站內刪除題庫或結束教室。</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>五、聯絡我們</h2>
+    <p class="meta">開發者：阿凱老師（桃園市龍潭區石門國民小學）<br>聯絡信箱：<a href="mailto:cagooo@gmail.com">cagooo@gmail.com</a><br>政策若有修改，會更新本頁並註明生效日期。</p>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="icons/icon-192.png" alt="" width="48" height="48">
+      <div><strong>剛好學 課堂互動助手</strong><span>在 Chrome 側邊欄直接使用剛好學，一鍵把網頁變成閱讀測驗。</span></div>
+    </div>
+    <ul class="footer-points">
+      <li><span class="fp-icon">🖱️</span><div><strong>按了才讀</strong><small>只在老師操作當下讀取目前分頁</small></div></li>
+      <li><span class="fp-icon">🚫</span><div><strong>不追蹤</strong><small>沒有廣告與使用分析</small></div></li>
+      <li><span class="fp-icon">🧒</span><div><strong>保護學生</strong><small>請勿擷取含學生個資的內容</small></div></li>
+    </ul>
+  </div>
+  <nav class="footer-links" aria-label="快速連結">
+    <a class="footer-link" href="https://cagoooo.github.io/Akailao/">🏫 開啟剛好學</a>
+    <a class="footer-link" href="https://github.com/cagoooo/Akailao/blob/main/chrome-extension/README.md">📘 安裝與使用說明</a>
+    <a class="footer-link" href="mailto:cagooo@gmail.com">✉️ 聯絡開發者</a>
+  </nav>
+  <div class="footer-bottom">
+    <p class="site-credit">Made with <span class="site-credit__heart" aria-label="愛心">❤️</span> by
+      <a href="https://www.smes.tyc.edu.tw/modules/school/index.php?department_id=2&zone_id=0&page_id=2&content_id=11&type=news&from_op=all_news#a5" target="_blank" rel="noopener noreferrer" class="site-credit__author">阿凱老師</a>
+      <span class="footer-school"><span class="footer-dot" aria-hidden="true">・</span>桃園市龍潭區石門國民小學</span></p>
+    <p class="version-tag">擴充套件 v1.0.0</p>
+  </div>
+</footer>
+</body>
+</html>
