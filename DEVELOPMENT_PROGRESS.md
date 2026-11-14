@@ -13,7 +13,7 @@
 ### ✅ V4.3.1：共用 AI 恢復（改用免費層金鑰 + 新一代模型）（2026-11-14）
 - [x] **根因**：`class-4719f` 的後端專用金鑰（Secret 版本 4，7/1 建立）仍有效，但 AI Studio 預付儲值用完（HTTP 402）；不是被盜用（近 30 天成功呼叫僅 3 次）。`.env` 與 Secret 版本 1～3 的舊金鑰都已失效
 - [x] 在無帳單的免費專案 `gen-lang-client-0690798495`（近 30 天 0 次呼叫）建立 `Akailao callGemini free tier (secret-only)` 金鑰，只限 Gemini API；寫入 Secret `GEMINI_API_KEY` 版本 5，**只重新部署 `callGemini`**
-- [x] 新專案已不能用 `gemini-2.5-*`：`functions/index.js` 改為依序嘗試 `gemini-3.1-flash-lite` → `gemini-3.5-flash`（404/429/5xx 才換下一個），金鑰改用 `x-goog-api-key` header；舊前端送 2.5 型號也自動轉換
+- [x] 新專案已不能用 `gemini-2.5-*`：`functions/index.js` 改為依序嘗試 `gemini-3.1-flash-lite` → `gemini-3.5-flash-lite`（404/429/5xx 才換下一個；備援原為 3.5-flash，同日依使用者要求改 lite 較划算，實測 2.2 秒），金鑰改用 `x-goog-api-key` header；舊前端送 2.5 型號也自動轉換
 - [x] `src/app.js`：老師自填金鑰的預設模型與「測試連線」改用 `gemini-3.1-flash-lite`
 - **驗證**：直接呼叫正式 `callGemini`，送 `gemini-2.5-flash` 實際由 `gemini-3.1-flash-lite` 回應（6.2 秒）
 - ⚠️ 免費層資料條款允許 Google 用送出內容改進產品（AI 文字雲分析會送學生回答）；本機 `.env` 的 `GEMINI_API_KEY` 仍是失效舊金鑰（後端不讀它）

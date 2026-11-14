@@ -117,8 +117,9 @@ function assertGeminiPayload(payload) {
 }
 
 // 2026-11-14：gemini-2.5 系列已不開放給新專案，共用金鑰改用免費層新專案。
-// 依序嘗試：先用快速的 flash-lite，遇到滿載／暫時錯誤再換 flash。舊版前端送來的 2.5 型號一律改走這條鏈。
-const GEMINI_MODEL_CHAIN = ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+// 依序嘗試：先用 3.1 flash-lite，遇到滿載／暫時錯誤再換 3.5 flash-lite（同為 lite 等級較划算）。
+// 舊版前端送來的 2.5 型號一律改走這條鏈。
+const GEMINI_MODEL_CHAIN = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'];
 const RETRYABLE_GEMINI_STATUS = [404, 429, 500, 503];
 
 function geminiModelChain(model) {
