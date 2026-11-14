@@ -376,7 +376,10 @@ function isUsingSharedGeminiKey() {
     return aiSettings.aiSource !== 'gemini-custom';
 }
 
-function getGeminiApiUrl(apiKey, model = 'gemini-2.5-flash') {
+// 🆕 [V4.3.1] gemini-2.5 系列已不開放給新申請的金鑰，預設改用 3.1 flash-lite
+const GEMINI_DEFAULT_MODEL = 'gemini-3.1-flash-lite';
+
+function getGeminiApiUrl(apiKey, model = GEMINI_DEFAULT_MODEL) {
     return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 }
 
@@ -409,7 +412,7 @@ function reserveSharedAiCall(featureLabel = 'AI 出題') {
 }
 
 async function callGeminiContent(payload, options = {}) {
-    const model = options.model || 'gemini-2.5-flash';
+    const model = options.model || GEMINI_DEFAULT_MODEL;
 
     if (isUsingSharedGeminiKey()) {
         const result = await callGeminiFunction({
@@ -441,7 +444,7 @@ async function callGeminiContent(payload, options = {}) {
 }
 
 async function fetchGeminiContent(payload, options = {}) {
-    const model = options.model || 'gemini-2.5-flash';
+    const model = options.model || GEMINI_DEFAULT_MODEL;
 
     if (!isUsingSharedGeminiKey()) {
         return fetch(getGeminiApiUrl(getActiveGeminiApiKey(), model), {
@@ -8872,7 +8875,7 @@ function showApiKeyGuide(retryCallback) {
         const start = Date.now();
         try {
             const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_DEFAULT_MODEL}:generateContent?key=${key}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

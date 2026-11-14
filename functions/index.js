@@ -116,11 +116,16 @@ function assertGeminiPayload(payload) {
   }
 }
 
-function allowedGeminiModel(model) {
-  const value = String(model || 'gemini-2.5-flash').trim();
-  return ['gemini-2.5-flash', 'gemini-2.5-flash-lite'].includes(value)
-    ? value
-    : 'gemini-2.5-flash';
+// 2026-11-14：gemini-2.5 系列已不開放給新專案，共用金鑰改用免費層新專案。
+// 依序嘗試：先用快速的 flash-lite，遇到滿載／暫時錯誤再換 flash。舊版前端送來的 2.5 型號一律改走這條鏈。
+const GEMINI_MODEL_CHAIN = ['gemini-3.1-flash-lite', 'gemini-3.5-flash'];
+const RETRYABLE_GEMINI_STATUS = [404, 429, 500, 503];
+
+function geminiModelChain(model) {
+  const value = String(model || '').trim();
+  return GEMINI_MODEL_CHAIN.includes(value)
+    ? [value, ...GEMINI_MODEL_CHAIN.filter((m) => m !== value)]
+    : GEMINI_MODEL_CHAIN;
 }
 
 function buildCard(type, data, who) {
@@ -284,53 +289,57 @@ exports.callGemini = onCall(
 
     const payload = request.data?.payload;
     assertGeminiPayload(payload);
-    const model = allowedGeminiModel(request.data?.model);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    let lastError = new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
 
-    try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          // Some existing Gemini keys are protected by browser referrer rules.
-          // The key is still server-side only; this header keeps compatibility
-          // until a billing-enabled server key is available.
-          'Referer': 'https://cagoooo.github.io/',
-        },
-        body: JSON.stringify(payload),
-      });
-      const bodyText = await resp.text();
+    for (const model of geminiModelChain(request.data?.model)) {
+      let resp;
       let body = null;
       try {
-        body = bodyText ? JSON.parse(bodyText) : {};
+        resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+            // Some existing Gemini keys are protected by browser referrer rules.
+            'Referer': 'https://cagoooo.github.io/',
+          },
+          body: JSON.stringify(payload),
+        });
+        const bodyText = await resp.text();
+        try {
+          body = bodyText ? JSON.parse(bodyText) : {};
+        } catch (err) {
+          body = { raw: bodyText.slice(0, 1000) };
+        }
       } catch (err) {
-        body = { raw: bodyText.slice(0, 1000) };
+        logger.error('Gemini proxy failed', { model, message: err.message });
+        continue; // 網路錯誤：換下一個模型試
       }
 
-      if (!resp.ok) {
-        logger.warn('Gemini API 回傳錯誤', {
-          status: resp.status,
+      if (resp.ok) {
+        logger.info('Gemini proxy success', {
           model,
+          remaining: quota.remaining,
           feature: clip(request.data?.feature, 80),
           classroom: clip(request.data?.classroom, 40),
         });
-        throw new HttpsError('internal', body?.error?.message || `Gemini API 請求失敗：${resp.status}`, {
-          status: resp.status,
-          body,
-        });
+        return { ok: true, data: body, quota, model };
       }
 
-      logger.info('Gemini proxy success', {
+      logger.warn('Gemini API 回傳錯誤', {
+        status: resp.status,
         model,
-        remaining: quota.remaining,
         feature: clip(request.data?.feature, 80),
         classroom: clip(request.data?.classroom, 40),
       });
-      return { ok: true, data: body, quota };
-    } catch (err) {
-      if (err instanceof HttpsError) throw err;
-      logger.error('Gemini proxy failed', err);
-      throw new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
+      lastError = new HttpsError('internal', body?.error?.message || `Gemini API 請求失敗：${resp.status}`, {
+        status: resp.status,
+        body,
+      });
+      // 只有模型滿載／不存在／暫時性錯誤才換下一個模型；金鑰或額度問題（400/402/403）直接回報
+      if (!RETRYABLE_GEMINI_STATUS.includes(resp.status)) break;
     }
+
+    throw lastError;
   }
 );
