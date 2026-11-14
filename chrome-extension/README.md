@@ -13,9 +13,11 @@
 | 🔗 **派送網址** | 把目前分頁直接派送到學生畫面（按兩次確認，避免誤觸） |
 | 🧩 **其他 13 種互動** | 側邊欄下方就是完整的剛好學，投票、搶答、文字雲……都能直接用 |
 
-出完題目後，在下方剛好學畫面檢查文本與題目，沒問題就按「開始閱讀測驗」，學生端就會收到。
+出完題目後，在下方剛好學畫面檢查文本與題目，沒問題就按「確認並開始互動」，學生端就會收到。
 
 ## 安裝（未上架商店前的作法）
+
+> 📖 圖文安裝教學：<https://cagoooo.github.io/Akailao/extension.html>
 
 1. 下載擴充套件壓縮檔：<https://cagoooo.github.io/Akailao/akailao-chrome-extension.zip>，解壓縮到一個**固定不會搬動**的資料夾（例如 `文件\剛好學擴充套件`）。
 2. Chrome 網址列輸入 `chrome://extensions`，打開右上角「開發人員模式」。
@@ -29,6 +31,7 @@
 
 - 第一次按「用這頁出閱讀測驗」時，Chrome 會詢問是否允許**讀取網頁內容**，請按「允許」。擴充套件只會在你按按鈕時讀取目前這一頁，不會在背景收集資料。
 - 在側邊欄下方用 Google 帳號登入老師身分並進入教室。
+- **設定自己的免費 Gemini 金鑰**：擴充套件出題使用老師自己的金鑰，第一次出題時會跳出設定視窗。打開 Google AI Studio 金鑰頁面，用**個人 Gmail 帳號**登入。**不要用學校信箱**，用個人帳號申請才能使用免費額度。金鑰只存在這台電腦的瀏覽器，出題時直接連到 Google。
   - 如果登入視窗沒有跳出來：按側邊欄右上角 **↗** 在新分頁登入一次，再按 **⟳**，側邊欄就會同步登入狀態。
 
 ## 常見問題
@@ -41,5 +44,6 @@
 
 - 側邊欄的 iframe 預設載入正式站 `https://cagoooo.github.io/Akailao/`；本機測試可在擴充套件的 service worker 主控台執行
   `chrome.storage.local.set({ appUrl: 'http://localhost:8082/' })` 後重新開啟側邊欄。
+- 側邊欄載入網址會加上 `?from=chrome-extension`，剛好學據此改用老師自己的 Gemini 金鑰（`IN_EXTENSION_PANEL`），不走共用額度。
 - 溝通方式：側邊欄 → iframe 用 `postMessage`（`source: 'akailao-ext'`），剛好學端在 `src/app.js` 的 `ExtensionBridge` 只接受 `chrome-extension://` 來源的父視窗訊息。
 - `manifest.json` 不要加 `key` 欄位（未封裝擴充套件事後加 key 會讓 Chrome 重開後擴充套件消失）。

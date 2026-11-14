@@ -5,6 +5,8 @@ import { extractPageContent } from './extract.js';
 const DEFAULT_APP_URL = 'https://cagoooo.github.io/Akailao/';
 const ALL_SITES = { origins: ['<all_urls>'] };
 const MAX_SHOTS = 8;
+// 金鑰申請提醒（定稿文字）：學校信箱申請的金鑰沒有免費額度
+const KEY_HELP = '打開 Google AI Studio 金鑰頁面，用個人 Gmail 帳號登入。不要用學校信箱，用個人帳號申請才能使用免費額度。';
 
 const $ = (sel) => document.querySelector(sel);
 const frame = $('#app-frame');
@@ -52,6 +54,13 @@ function isAllowedAppUrl(u) {
   } catch (e) {
     return false;
   }
+}
+
+// 側邊欄載入的網址帶 from=chrome-extension：剛好學據此改用老師自己的 Gemini 金鑰
+function panelUrl() {
+  const u = new URL(appUrl);
+  u.searchParams.set('from', 'chrome-extension');
+  return u.href;
 }
 
 async function getActiveTab() {
@@ -111,6 +120,7 @@ function renderState(state) {
   appState = state || appState;
   if (!appState) return;
   if (appState.busy) setChip('AI 處理中…', 'wait');
+  else if (appState.teacherReady && appState.hasOwnKey === false) setChip(`教室 ${appState.classroomCode}・🔑 未設金鑰`, 'login');
   else if (appState.teacherReady) setChip(`教室 ${appState.classroomCode}`, 'ok');
   else if (appState.loggedIn) setChip('請選擇教室', 'login');
   else setChip('請先登入老師帳號', 'login');
@@ -136,14 +146,16 @@ window.addEventListener('message', (event) => {
 
   if (msg.type === 'ack') {
     const type = actionTypes.get(msg.id) || '';
-    if (msg.status === 'pending') {
+    if (msg.status === 'need-key') {
+      setStatus(`🔑 出題要用你自己的免費 Gemini 金鑰，請在下方視窗貼上，存好後會自動接著出題。\n申請方式：${KEY_HELP}`, 'warn');
+    } else if (msg.status === 'pending') {
       setStatus('📥 已收到！請在下方登入老師帳號並進入教室，會自動接著處理。（登入視窗沒出現時，按 ↗ 在新分頁登入一次，再按 ⟳）', 'warn');
     } else if (msg.status === 'running') {
       setStatus(type === 'dispatch-url' ? '⏳ 派送中…' : '⏳ AI 出題中，大約 10～30 秒…', 'info');
     } else if (msg.status === 'done') {
       setStatus(type === 'dispatch-url'
         ? '✅ 已派送到學生畫面！'
-        : `✅ 題目完成！請在下方檢查文本與題目，沒問題就按「開始閱讀測驗」。${lastTip}`, 'ok');
+        : `✅ 題目完成！請在下方檢查文本與題目，沒問題就按「確認並開始互動」。${lastTip}`, 'ok');
     } else if (msg.status === 'error') {
       setStatus(`⚠️ ${msg.message || '處理失敗，請再試一次。'}`, 'err');
     }
@@ -291,7 +303,7 @@ chrome.permissions.onAdded.addListener(async () => { hasAllSites = await chrome.
 chrome.permissions.onRemoved.addListener(async () => { hasAllSites = await chrome.permissions.contains(ALL_SITES); updateTabInfo(); });
 
 // ---------- 頂端按鈕 ----------
-$('#reload-btn').addEventListener('click', () => { frame.src = appUrl; });
+$('#reload-btn').addEventListener('click', () => { frame.src = panelUrl(); });
 $('#open-tab-btn').addEventListener('click', () => chrome.tabs.create({ url: appUrl }));
 $('#toggle-tools-btn').addEventListener('click', (e) => {
   const collapsed = document.body.classList.toggle('tools-collapsed');
@@ -318,7 +330,7 @@ document.querySelectorAll('input[name="mode"]').forEach((r) =>
   appOrigin = new URL(appUrl).origin;
 
   frame.addEventListener('load', startHandshake);
-  frame.src = appUrl;
+  frame.src = panelUrl();
 
   hasAllSites = await chrome.permissions.contains(ALL_SITES);
   updateTabInfo();

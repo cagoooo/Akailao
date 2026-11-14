@@ -61,6 +61,8 @@ jobs:
           cp manifest.json dist/manifest.json 2>/dev/null || true
           cp sw.js dist/sw.js 2>/dev/null || true
           cp extension-privacy.html dist/extension-privacy.html
+          cp extension.html dist/extension.html
+          cp -r extension-guide dist/extension-guide
 
       # 🆕 [V4.3.0] 打包 Chrome 擴充套件，讓老師可從網站下載
       - name: 🧩 打包 Chrome 擴充套件

@@ -130,6 +130,7 @@
                     </div>
                     <nav class="cb-nav" aria-label="主選單">
                         <a href="./set.html" target="_blank" rel="noopener noreferrer">使用說明</a>
+                        <a href="./extension.html" target="_blank" rel="noopener noreferrer" title="在 Chrome 側邊欄使用剛好學：下載與安裝教學">🧩 Chrome 擴充套件</a>
                         <a href="https://github.com/cagoooo/Akailao/issues" target="_blank" rel="noopener noreferrer">意見回饋</a>
                         <a href="https://github.com/cagoooo/Akailao/commits/main" target="_blank" rel="noopener noreferrer">更新日誌</a>
                         <span class="cb-status"><span class="cb-status-dot"></span>採集中</span>
@@ -1647,6 +1648,7 @@
                             <i class="fas fa-key mr-1"></i>取得免費 API Key
                         </a>
                     </div>
+                    <p class="text-xs text-red-700 font-semibold mb-2">⚠️ 請用個人 Gmail 帳號申請，不要用學校信箱，用個人帳號申請才能使用免費額度。</p>
                     <input type="password" id="gemini-api-key-input" placeholder="請貼上您的 Gemini API Key"
                         class="w-full px-3 py-2 sm:px-4 sm:py-3 border border-gray-300 rounded-lg text-sm sm:text-base md:text-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
@@ -2673,12 +2675,17 @@
                     class="text-white opacity-70 hover:opacity-100 text-3xl leading-none font-light">&times;</button>
             </div>
             <div class="p-6 space-y-3">
+                <!-- 🆕 [V4.3.4] Chrome 擴充套件專屬說明 -->
+                <p id="api-key-guide-ext-note" class="hidden text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded-xl p-3">
+                    🧩 <strong>剛好學擴充套件</strong>使用你自己的免費 Gemini 金鑰出題。金鑰只存在這台電腦的瀏覽器，出題時直接連到 Google，不會經過開發者的伺服器。
+                </p>
                 <!-- 步驟 1 -->
                 <div class="flex items-start gap-3 p-3 bg-blue-50 rounded-xl">
                     <span
                         class="flex-shrink-0 w-7 h-7 bg-blue-600 text-white text-sm font-bold rounded-full flex items-center justify-center">1</span>
                     <div>
                         <p class="font-semibold text-gray-800 text-sm">前往 Google AI Studio 取得免費 API Key</p>
+                        <p class="text-xs text-red-700 font-semibold mt-1">⚠️ 請用<strong>個人 Gmail 帳號</strong>登入，不要用學校信箱，用個人帳號申請才能使用免費額度。</p>
                         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
                             class="inline-flex items-center gap-1.5 mt-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm">
                             <i class="fas fa-external-link-alt"></i> 開啟 Google AI Studio

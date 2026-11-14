@@ -95,8 +95,8 @@
     <h2>二、資料會送到哪裡</h2>
     <ul>
       <li><strong>剛好學網站</strong>（<a href="https://cagoooo.github.io/Akailao/">https://cagoooo.github.io/Akailao/</a>）：側邊欄下方就是這個網站。擴充套件把讀到的內容交給它，填入「閱讀測驗設定」。</li>
-      <li><strong>AI 出題服務</strong>：剛好學會透過開發者在 Google Firebase 上的出題服務，把文本或截圖送到 Google Gemini 產生題目。共用 AI 使用 Google 的免費方案，依 Google 條款，送出的內容可能被 Google 用來改進產品。<strong>請不要擷取含學生姓名、成績或其他個人資料的畫面或文字。</strong></li>
-      <li><strong>學生裝置</strong>：只有老師按下「開始閱讀測驗」或確認派送網址後，閱讀文本、題目或網址才會出現在學生畫面。</li>
+      <li><strong>Google Gemini（老師自己的金鑰）</strong>：在擴充套件裡出題時，剛好學使用<strong>老師自己申請的 Gemini 金鑰</strong>，由老師的瀏覽器直接把文本或截圖送到 Google Gemini（generativelanguage.googleapis.com）產生題目，不經過開發者的伺服器。金鑰請用<strong>個人 Gmail 帳號</strong>申請（不要用學校信箱，用個人帳號申請才能使用免費額度）；依 Google 條款，免費方案送出的內容可能被 Google 用來改進產品。<strong>請不要擷取含學生姓名、成績或其他個人資料的畫面或文字。</strong></li>
+      <li><strong>學生裝置</strong>：只有老師按下「確認並開始互動」或確認派送網址後，閱讀文本、題目或網址才會出現在學生畫面。</li>
     </ul>
   </section>
 
@@ -116,6 +116,7 @@
     <h2>四、保存與刪除</h2>
     <ul>
       <li>擴充套件本身只保存偏好設定；移除擴充套件時會一併刪除。</li>
+      <li>老師的 Gemini 金鑰存在這台電腦瀏覽器中剛好學網站的本機儲存空間（localStorage），不會上傳到開發者的伺服器；可在剛好學的 AI 設定中更換或清除。</li>
       <li>老師登入剛好學後建立的教室互動、題庫等資料，依剛好學網站的設計保存在 Google Firebase，老師可在網站內刪除題庫或結束教室。</li>
     </ul>
   </section>
@@ -140,14 +141,14 @@
   </div>
   <nav class="footer-links" aria-label="快速連結">
     <a class="footer-link" href="https://cagoooo.github.io/Akailao/">🏫 開啟剛好學</a>
-    <a class="footer-link" href="https://github.com/cagoooo/Akailao/blob/main/chrome-extension/README.md">📘 安裝與使用說明</a>
+    <a class="footer-link" href="extension.html">📘 安裝與使用說明</a>
     <a class="footer-link" href="mailto:cagooo@gmail.com">✉️ 聯絡開發者</a>
   </nav>
   <div class="footer-bottom">
     <p class="site-credit">Made with <span class="site-credit__heart" aria-label="愛心">❤️</span> by
       <a href="https://www.smes.tyc.edu.tw/modules/school/index.php?department_id=2&zone_id=0&page_id=2&content_id=11&type=news&from_op=all_news#a5" target="_blank" rel="noopener noreferrer" class="site-credit__author">阿凱老師</a>
       <span class="footer-school"><span class="footer-dot" aria-hidden="true">・</span>桃園市龍潭區石門國民小學</span></p>
-    <p class="version-tag">擴充套件 v1.0.0</p>
+    <p class="version-tag">擴充套件 v1.0.0｜政策更新：2026-11-14</p>
   </div>
 </footer>
 </body>

@@ -7,7 +7,7 @@
 - 類別：教育
 - 語言：中文（台灣）
 - 可見度：公開
-- 首頁網址：https://github.com/cagoooo/Akailao/blob/main/chrome-extension/README.md
+- 首頁網址：https://cagoooo.github.io/Akailao/extension.html
 - 支援網址：https://github.com/cagoooo/Akailao/issues
 - 隱私權政策：https://cagoooo.github.io/Akailao/extension-privacy.html
 - 圖片：`store-icon-128.png`、`store-screenshot-01~03.png`（1280×800）、`store-promo-small-440x280.png`
@@ -27,10 +27,11 @@
 使用方式：
 1. 點工具列上的剛好學圖示（或按 Alt+Shift+K）打開側邊欄。
 2. 在側邊欄下方用 Google 帳號登入老師身分並進入教室。
-3. 打開想用的文章，按「用這頁出閱讀測驗」；檢查題目後按「開始閱讀測驗」，學生端就會收到。
+3. 第一次出題時，依畫面指示貼上自己的免費 Gemini 金鑰：打開 Google AI Studio 金鑰頁面，用個人 Gmail 帳號登入。不要用學校信箱，用個人帳號申請才能使用免費額度。
+4. 打開想用的文章，按「用這頁出閱讀測驗」；檢查題目後按「確認並開始互動」，學生端就會收到。
 
 隱私說明：
-擴充套件只在老師按下按鈕或右鍵選單時，讀取當下這一頁的文字、截圖或網址，交給剛好學產生題目，沒有廣告也沒有使用分析。共用 AI 使用 Google Gemini 免費方案，請不要擷取含學生姓名、成績等個人資料的內容。
+擴充套件只在老師按下按鈕或右鍵選單時，讀取當下這一頁的文字、截圖或網址，交給剛好學產生題目，沒有廣告也沒有使用分析。出題使用老師自己的 Gemini 金鑰，由老師的瀏覽器直接連到 Google，不經過開發者的伺服器；免費方案送出的內容可能被 Google 用來改進產品，請不要擷取含學生姓名、成績等個人資料的內容。
 
 開發：阿凱老師，桃園市龍潭區石門國民小學。
 

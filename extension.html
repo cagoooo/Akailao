@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剛好學 Chrome 擴充套件｜下載與安裝教學</title>
+<meta name="description" content="剛好學 課堂互動助手 Chrome 擴充套件：在側邊欄直接使用剛好學，一鍵把網頁變成閱讀測驗。下載開發版、開啟開發人員模式安裝、設定自己的免費 Gemini 金鑰的完整圖文教學。">
+<meta property="og:title" content="剛好學 Chrome 擴充套件｜下載與安裝教學">
+<meta property="og:description" content="在 Chrome 側邊欄直接使用剛好學，一鍵把網頁變成 PIRLS 閱讀測驗。">
+<meta property="og:image" content="https://cagoooo.github.io/Akailao/extension-guide/use-reading.png">
+<link rel="icon" href="icons/favicon-32.png">
+<style>
+  :root {
+    --bg: #f6f1e7; --paper: #fffdf8; --ink: #2b2b2b; --muted: #5f594d;
+    --board: #2f4a3a; --board-2: #3e6450; --accent: #c2502c; --gold: #f4d58d; --line: #ddd3c0;
+    --ok: #2e7d4f; --warn-bg: #fff4dc; --warn-line: #e8c46a;
+    --fs-base: clamp(16px, .9vw + 12px, 18px); --fs-sm: clamp(14px, .5vw + 11px, 15px);
+    --wrap: 1080px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: var(--fs-base)/1.75 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--accent); }
+  .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 16px; }
+  code, kbd { font-family: ui-monospace, Consolas, monospace; background: #efe7d6; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: .92em; }
+
+  /* 頂部導覽 */
+  .topnav { background: var(--board); color: #f3efe4; }
+  .topnav .wrap { display: flex; align-items: center; gap: 12px; min-height: 52px; flex-wrap: wrap; }
+  .topnav a { color: #f3efe4; text-decoration: none; font-size: var(--fs-sm); }
+  .topnav .home { font-weight: 700; display: flex; align-items: center; gap: 8px; margin-right: auto; }
+  .topnav .home img { width: 26px; height: 26px; border-radius: 6px; }
+  .topnav nav { display: flex; gap: 14px; flex-wrap: wrap; }
+  .topnav nav a:hover { color: var(--gold); }
+
+  /* Hero */
+  .hero { background: radial-gradient(circle at 15% 0%, var(--board-2), var(--board) 60%, #24392d); color: #f3efe4; padding: 44px 0 52px; }
+  .hero .wrap { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; align-items: center; }
+  .hero h1 { font-size: clamp(28px, 3vw + 12px, 44px); line-height: 1.3; margin: 0 0 10px; letter-spacing: 1px; }
+  .hero p.lead { margin: 0 0 18px; color: #e8dcc0; }
+  .badge { display: inline-block; background: var(--gold); color: #3d2c00; font-weight: 700; font-size: var(--fs-sm); padding: 3px 12px; border-radius: 999px; margin-bottom: 14px; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 700; border-radius: 12px; padding: 12px 20px; border: 2px solid transparent; cursor: pointer; font-size: 1em; font-family: inherit; }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+  .btn-primary:hover { filter: brightness(1.07); }
+  .btn-ghost { color: #f3efe4; border-color: rgba(243,239,228,.6); }
+  .btn-ghost:hover { background: rgba(255,255,255,.08); }
+  .hero small { display: block; margin-top: 10px; color: #cfc6b0; font-size: var(--fs-sm); }
+  .hero .shot { border-radius: 14px; box-shadow: 0 18px 40px rgba(0,0,0,.4); }
+
+  section { padding: 44px 0 8px; }
+  h2 { font-size: clamp(22px, 1.4vw + 14px, 30px); margin: 0 0 6px; color: var(--board); }
+  .sub { color: var(--muted); margin: 0 0 22px; }
+
+  /* 功能卡 */
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .feature { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .feature .ic { font-size: 28px; }
+  .feature strong { display: block; margin: 4px 0 2px; }
+  .feature p { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+
+  /* 步驟 */
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: 18px; }
+  .step { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px 20px 74px; position: relative; }
+  .step::before { counter-increment: step; content: counter(step); position: absolute; left: 20px; top: 18px; width: 38px; height: 38px; border-radius: 50%; background: var(--board); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .step h3 { margin: 4px 0 6px; font-size: 1.12em; }
+  .step p { margin: 6px 0; }
+  .step img { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; }
+  .copyline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+  .copyline code { font-size: 1.05em; padding: 4px 10px; }
+  .copy-btn { background: var(--board); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: var(--fs-sm); }
+  .note { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 12px; padding: 10px 14px; margin-top: 10px; font-size: var(--fs-sm); }
+  .note.key { border-left: 6px solid var(--accent); }
+
+  /* 使用說明 */
+  .uses { display: grid; gap: 22px; }
+  .use { display: grid; grid-template-columns: 1fr 1.6fr; gap: 20px; align-items: center; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .use h3 { margin: 0 0 6px; }
+  .use ul { margin: 6px 0 0; padding-left: 1.2em; }
+  .use img { border-radius: 10px; border: 1px solid var(--line); }
+  .split { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+  .split img { border-radius: 12px; border: 1px solid var(--line); }
+
+  /* FAQ */
+  details { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: 700; }
+  details p, details ul { margin: 8px 0 2px; }
+
+  /* 頁尾 */
+  .site-footer { margin-top: 48px; background: linear-gradient(#f1ebdf, #ebe3d3); border-top: 1px solid var(--line); position: relative; }
+  .site-footer::before { content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 4px; background: linear-gradient(90deg, var(--board), var(--accent)); }
+  .footer-inner { max-width: var(--wrap); margin: 0 auto; padding: 28px 16px 18px; display: grid; grid-template-columns: 1.2fr 2fr; gap: 24px; }
+  .footer-brand { display: flex; gap: 12px; align-items: flex-start; }
+  .footer-brand img { width: 48px; height: 48px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  .footer-brand strong { display: block; font-size: 1.05em; }
+  .footer-brand span, .footer-points small { font-size: var(--fs-sm); color: var(--muted); }
+  .footer-points { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .footer-points li { display: flex; gap: 8px; }
+  .footer-points strong { display: block; font-size: var(--fs-sm); }
+  .fp-icon { font-size: 22px; line-height: 1.2; }
+  .footer-links { max-width: var(--wrap); margin: 0 auto; padding: 0 16px 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .footer-link { font-size: var(--fs-sm); text-decoration: none; color: var(--ink); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; }
+  .footer-link:hover { border-color: var(--accent); color: var(--accent); }
+  .footer-bottom { max-width: var(--wrap); margin: 0 auto; padding: 12px 16px 22px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .site-credit { margin: 0; font-size: var(--fs-sm); }
+  .site-credit__heart { display: inline-block; margin: 0 2px; }
+  .site-credit__author { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+  .site-credit__author:hover { color: var(--accent); }
+  .version-tag { margin: 0; font-size: var(--fs-sm); background: rgba(255,255,255,.7); border: 1px solid var(--line); border-radius: 999px; padding: 2px 12px; }
+
+  @media (max-width: 900px) {
+    .hero .wrap { grid-template-columns: 1fr; }
+    .features { grid-template-columns: repeat(2, 1fr); }
+    .use { grid-template-columns: 1fr; }
+    .split { grid-template-columns: 1fr; }
+    .split img { max-width: 320px; margin: 0 auto; }
+    .footer-inner { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    .features { grid-template-columns: 1fr; }
+    .step { padding: 64px 16px 16px; }
+    .step::before { top: 16px; left: 16px; }
+    .footer-points { grid-template-columns: 1fr; }
+    .footer-bottom { flex-direction: column; text-align: center; }
+    .footer-school { display: block; }
+    .footer-dot { display: none; }
+    .footer-links { justify-content: center; }
+    .topnav nav { gap: 10px; }
+  }
+</style>
+</head>
+<body>
+<header class="topnav">
+  <div class="wrap">
+    <a class="home" href="./"><img src="icons/icon-192.png" alt="">剛好學</a>
+    <nav aria-label="本頁目錄">
+      <a href="#install">安裝步驟</a>
+      <a href="#setup">第一次設定</a>
+      <a href="#use">怎麼使用</a>
+      <a href="#faq">常見問題</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <span class="badge">🧩 Chrome 擴充套件・開發版 v1.0.0</span>
+      <h1>剛好學 課堂互動助手</h1>
+      <p class="lead">把剛好學放進 Chrome 側邊欄。看到好文章，按一下就變成 PIRLS 閱讀測驗；投票、搶答、派送網址也都在旁邊，不用再切換分頁和視窗。</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="akailao-chrome-extension.zip" download>⬇️ 下載擴充套件</a>
+        <a class="btn btn-ghost" href="#install">📖 看安裝步驟</a>
+      </div>
+      <small>Chrome 線上應用程式商店版本準備上架中，上架前請先用這個開發版（要開「開發人員模式」，跟著下面步驟約 3 分鐘）。</small>
+    </div>
+    <img class="shot" src="extension-guide/use-reading.png" alt="側邊欄一鍵把網頁變成閱讀測驗的畫面" width="1280" height="800">
+  </div>
+</div>
+
+<main>
+  <section>
+    <div class="wrap">
+      <h2>可以做什麼</h2>
+      <p class="sub">側邊欄上方是小工具列，下方就是完整的剛好學。</p>
+      <div class="features">
+        <div class="feature"><div class="ic">📖</div><strong>網頁一鍵出閱讀測驗</strong><p>依 PIRLS 四層次出 10 題選擇題，附正解與層次標記。</p></div>
+        <div class="feature"><div class="ic">✂️</div><strong>只用選取的段落</strong><p>先反白一段文字，就只用那段出題；也能按右鍵出題。</p></div>
+        <div class="feature"><div class="ic">🔀</div><strong>原文或改寫成適齡短文</strong><p>選年級，讓 AI 改寫成適合學生閱讀的文章再出題。</p></div>
+        <div class="feature"><div class="ic">📸</div><strong>截圖出題</strong><p>PDF、電子書抓不到文字？捲動截幾張（最多 8 張）讓 AI 辨識。</p></div>
+        <div class="feature"><div class="ic">🔗</div><strong>派送網址給學生</strong><p>目前的網頁直接出現在學生畫面，按兩次確認避免誤觸。</p></div>
+        <div class="feature"><div class="ic">🧩</div><strong>13 種課堂互動</strong><p>是非、選擇、搶答、投票、文字雲、分組競賽……都在側邊欄。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>安裝步驟（開發版）</h2>
+      <p class="sub">用電腦版 Chrome（Windows／Mac 都可以）。Chromebook 若被學校管理政策關閉開發人員模式，就要等商店上架。</p>
+      <ol class="steps">
+        <li class="step">
+          <h3>下載擴充套件壓縮檔</h3>
+          <p><a href="akailao-chrome-extension.zip" download>⬇️ 按這裡下載 akailao-chrome-extension.zip</a></p>
+        </li>
+        <li class="step">
+          <h3>解壓縮到「不會搬動」的資料夾</h3>
+          <p>在下載的檔案上按右鍵 →「<strong>解壓縮全部</strong>」。建議放在 <code>文件\剛好學擴充套件</code>。</p>
+          <div class="note">⚠️ 安裝後這個資料夾<strong>不能刪除、搬家或改名</strong>，Chrome 是直接從這裡讀取擴充套件的。打開資料夾應該會看到 <code>manifest.json</code> 這個檔案。</div>
+        </li>
+        <li class="step">
+          <h3>打開 Chrome 的擴充功能頁</h3>
+          <p>在 Chrome 網址列貼上下面這行，按 Enter（基於安全，網頁不能直接幫你開這個頁面）：</p>
+          <div class="copyline"><code>chrome://extensions</code><button class="copy-btn" type="button" data-copy="chrome://extensions">📋 複製</button></div>
+        </li>
+        <li class="step">
+          <h3>打開右上角的「開發人員模式」</h3>
+          <img src="extension-guide/step-devmode-off.png" alt="擴充功能頁右上角的開發人員模式開關" width="1100" height="560" loading="lazy">
+        </li>
+        <li class="step">
+          <h3>按「載入未封裝項目」，選剛剛的資料夾</h3>
+          <p>選到<strong>裡面直接有 <code>manifest.json</code> 的那一層</strong>資料夾，再按「選取資料夾」。</p>
+          <img src="extension-guide/step-load-unpacked.png" alt="開啟開發人員模式後出現的載入未封裝項目按鈕" width="1100" height="560" loading="lazy">
+        </li>
+        <li class="step">
+          <h3>看到「剛好學 課堂互動助手」卡片就完成了</h3>
+          <img src="extension-guide/step-installed.png" alt="安裝完成後出現剛好學課堂互動助手的卡片" width="1100" height="560" loading="lazy">
+          <p>最後按 Chrome 右上角的🧩拼圖圖示，在「剛好學 課堂互動助手」旁按📌圖釘，把它固定在工具列上。</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="setup">
+    <div class="wrap">
+      <h2>第一次使用的設定</h2>
+      <div class="split">
+        <ol class="steps">
+          <li class="step">
+            <h3>打開側邊欄</h3>
+            <p>點工具列上的剛好學圖示，或按 <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>K</kbd>。</p>
+          </li>
+          <li class="step">
+            <h3>登入老師帳號、進入教室</h3>
+            <p>在側邊欄下方按「我是教師」，用 Google 帳號登入，輸入或選擇教室代碼。</p>
+            <div class="note">登入視窗沒有跳出來？按側邊欄右上角 <strong>↗</strong> 在新分頁登入一次，回到側邊欄按 <strong>⟳</strong> 就會同步。</div>
+          </li>
+          <li class="step">
+            <h3>設定你自己的免費 Gemini 金鑰</h3>
+            <p>擴充套件出題使用<strong>老師自己的金鑰</strong>。第一次出題時會跳出設定視窗：</p>
+            <ol>
+              <li>打開 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio 金鑰頁面</a>，用<strong>個人 Gmail 帳號</strong>登入。</li>
+              <li>按「Create API key」，複製產生的金鑰。</li>
+              <li>貼到視窗裡，按「測試 API Key」，再按「儲存並繼續」，就會自動接著出題。</li>
+            </ol>
+            <div class="note key">🔑 <strong>不要用學校信箱</strong>，用個人帳號申請才能使用免費額度。金鑰只存在這台電腦的瀏覽器，出題時直接連到 Google，不會經過開發者的伺服器。</div>
+          </li>
+          <li class="step">
+            <h3>允許「讀取網頁內容」</h3>
+            <p>第一次按「用這頁出閱讀測驗」或「截圖」時，Chrome 會詢問權限，請按「允許」。擴充套件只在你按按鈕的當下讀取這一頁。</p>
+          </li>
+        </ol>
+        <img src="extension-guide/setup-key.png" alt="側邊欄跳出設定自己 Gemini 金鑰的視窗" width="420" height="900" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <section id="use">
+    <div class="wrap">
+      <h2>怎麼使用</h2>
+      <p class="sub">出完題目後，在下方剛好學檢查文本與題目，沒問題就按「確認並開始互動」，學生端就會收到。</p>
+      <div class="uses">
+        <div class="use">
+          <div>
+            <h3>📖 一鍵把網頁變成閱讀測驗</h3>
+            <ul>
+              <li>打開文章，選「原文出題」與年級，按大大的「用這頁出閱讀測驗」。</li>
+              <li>約 10～30 秒產生 10 題，題目預覽會標出正解與 PIRLS 層次。</li>
+              <li>整頁文字太長時會提示你改用「改寫成適齡短文」或只選一段。</li>
+            </ul>
+          </div>
+          <img src="extension-guide/use-reading.png" alt="一鍵出閱讀測驗的畫面" width="1280" height="800" loading="lazy">
+        </div>
+        <div class="use">
+          <div>
+            <h3>✂️ 只用一段、或改寫成適齡短文</h3>
+            <ul>
+              <li>先在網頁上反白想用的段落，再按出題，就只用選取的文字。</li>
+              <li>也可以在反白文字上按右鍵 →「用選取文字出閱讀測驗」。</li>
+              <li>選「改寫成適齡短文」，AI 會依年級改寫文章後再出題。</li>
+            </ul>
+          </div>
+          <img src="extension-guide/use-select-rewrite.png" alt="反白一段並改寫成適齡短文的畫面" width="1280" height="800" loading="lazy">
+        </div>
+        <div class="use">
+          <div>
+            <h3>🧩 其他功能</h3>
+            <ul>
+              <li><strong>📸 截圖</strong>：PDF、Google 文件抓不到文字時，捲動後多截幾張，再按「用截圖出題」。</li>
+              <li><strong>🔗 派送網址</strong>：連按兩次，目前的網頁就出現在學生畫面。</li>
+              <li><strong>▴</strong> 收合工具列，讓下方剛好學更大；<strong>↗</strong> 在新分頁開啟完整剛好學。</li>
+              <li>下方就是完整剛好學：投票、搶答、文字雲、分組競賽都能用。</li>
+            </ul>
+          </div>
+          <img src="extension-guide/use-panel.png" alt="側邊欄中的剛好學老師選單" width="1280" height="800" loading="lazy">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="update">
+    <div class="wrap">
+      <h2>更新到新版</h2>
+      <ol>
+        <li>從本頁重新下載壓縮檔，解壓縮後<strong>覆蓋原本的資料夾</strong>（同一個位置）。</li>
+        <li>到 <code>chrome://extensions</code>，在「剛好學 課堂互動助手」卡片按 <strong>⟳</strong> 重新載入。</li>
+      </ol>
+      <p>等擴充套件在 Chrome 線上應用程式商店上架後，改從商店安裝就會自動更新；屆時記得把開發版移除，避免出現兩個。</p>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2>常見問題</h2>
+      <details>
+        <summary>重開 Chrome 後擴充套件不見了？</summary>
+        <p>多半是資料夾被搬走、改名或刪除了。請把資料夾放回原位置，或重新做一次「載入未封裝項目」。</p>
+      </details>
+      <details>
+        <summary>按出題說「需要設定金鑰」或金鑰無效？</summary>
+        <p>請確認是用<strong>個人 Gmail 帳號</strong>到 Google AI Studio 申請的金鑰（學校信箱申請的沒有免費額度），貼上後按「測試 API Key」看是否顯示有效。</p>
+      </details>
+      <details>
+        <summary>抓到的文字太少或抓錯內容？</summary>
+        <p>先在網頁上反白想要的段落再按按鈕。Chrome 內建頁面、線上應用程式商店、PDF 這類頁面基於安全讀不到文字，請改用「📸 截圖」。</p>
+      </details>
+      <details>
+        <summary>登入的 Google 視窗沒有跳出來？</summary>
+        <p>按側邊欄右上角 ↗ 在新分頁開啟剛好學並登入，回到側邊欄按 ⟳，登入狀態就會同步。</p>
+      </details>
+      <details>
+        <summary>擴充套件會收集我的資料嗎？</summary>
+        <p>只在你按按鈕或右鍵選單時讀取當下這一頁，沒有廣告也沒有使用分析。詳見<a href="extension-privacy.html">隱私權政策</a>。請不要擷取含學生姓名、成績等個人資料的內容。</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <img src="icons/icon-192.png" alt="" width="48" height="48">
+      <div><strong>剛好學 課堂互動助手</strong><span>在 Chrome 側邊欄直接使用剛好學，一鍵把網頁變成閱讀測驗。</span></div>
+    </div>
+    <ul class="footer-points">
+      <li><span class="fp-icon">🔑</span><div><strong>用自己的金鑰</strong><small>個人 Gmail 申請，免費額度</small></div></li>
+      <li><span class="fp-icon">🖱️</span><div><strong>按了才讀</strong><small>只在操作當下讀取目前分頁</small></div></li>
+      <li><span class="fp-icon">🧒</span><div><strong>保護學生</strong><small>請勿擷取含學生個資的內容</small></div></li>
+    </ul>
+  </div>
+  <nav class="footer-links" aria-label="快速連結">
+    <a class="footer-link" href="./">🏫 開啟剛好學</a>
+    <a class="footer-link" href="akailao-chrome-extension.zip" download>⬇️ 下載擴充套件</a>
+    <a class="footer-link" href="extension-privacy.html">🔒 隱私權政策</a>
+    <a class="footer-link" href="mailto:cagooo@gmail.com">✉️ 聯絡開發者</a>
+  </nav>
+  <div class="footer-bottom">
+    <p class="site-credit">Made with <span class="site-credit__heart" aria-label="愛心">❤️</span> by
+      <a href="https://www.smes.tyc.edu.tw/modules/school/index.php?department_id=2&zone_id=0&page_id=2&content_id=11&type=news&from_op=all_news#a5" target="_blank" rel="noopener noreferrer" class="site-credit__author">阿凱老師</a>
+      <span class="footer-school"><span class="footer-dot" aria-hidden="true">・</span>桃園市龍潭區石門國民小學</span></p>
+    <p class="version-tag">擴充套件開發版 v1.0.0</p>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy);
+        btn.textContent = '✅ 已複製';
+      } catch (e) {
+        btn.textContent = '請手動複製';
+      }
+      setTimeout(() => { btn.textContent = '📋 複製'; }, 2000);
+    });
+  });
+</script>
+</body>
+</html>

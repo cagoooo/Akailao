@@ -366,6 +366,10 @@ const AI_SHARED_RATE_LIMIT = {
     storageKey: 'akailaoSharedAiRateLimitV1'
 };
 
+// 🆕 NEW [V4.3.4]: Chrome 擴充套件側邊欄（iframe 網址帶 ?from=chrome-extension）一律使用老師自己的 Gemini 金鑰，不走共用額度
+const IN_EXTENSION_PANEL = window.parent !== window
+    && new URLSearchParams(window.location.search).get('from') === 'chrome-extension';
+
 function getActiveGeminiApiKey() {
     return (aiSettings.aiSource === 'gemini-custom' && aiSettings.geminiApiKey)
         ? aiSettings.geminiApiKey.trim()
@@ -373,7 +377,14 @@ function getActiveGeminiApiKey() {
 }
 
 function isUsingSharedGeminiKey() {
+    if (IN_EXTENSION_PANEL) return false;
     return aiSettings.aiSource !== 'gemini-custom';
+}
+
+// 擴充套件模式下：老師是否已設定自己的金鑰
+function hasOwnGeminiKey() {
+    const key = getActiveGeminiApiKey();
+    return key.length >= 30 && key.startsWith('AIza');
 }
 
 // 🆕 [V4.3.1] gemini-2.5 系列已不開放給新申請的金鑰，預設改用 3.1 flash-lite
@@ -8846,6 +8857,7 @@ function showApiKeyGuide(retryCallback) {
         localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
         // 同步更新 AI 設定畫面中的輸入框
         if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+        window.__akailaoExtBridge?.onKeyChanged();
         hide();
         showMessage('✅ API Key 已儲存！', 'success');
         if (typeof retryCallback === 'function') {
@@ -8898,6 +8910,7 @@ function showApiKeyGuide(retryCallback) {
                 aiSettings.geminiApiKey = key;
                 localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
                 if (geminiApiKeyInput) geminiApiKeyInput.value = key;
+                window.__akailaoExtBridge?.onKeyChanged();
                 saveBtn.textContent = '✅ 已驗證，儲存並繼續';
                 saveBtn.classList.add('from-green-500', 'to-green-600');
                 saveBtn.classList.remove('from-blue-600', 'to-purple-600');
@@ -8936,6 +8949,7 @@ function showApiKeyGuide(retryCallback) {
     saveBtn.innerHTML = '<i class="fas fa-save mr-1"></i> 儲存並繼續';
     saveBtn.className = 'flex-1 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-md text-sm';
 
+    document.getElementById('api-key-guide-ext-note')?.classList.toggle('hidden', !IN_EXTENSION_PANEL);
     modal.classList.remove('hidden');
     setTimeout(() => input.focus(), 150);
 }
@@ -8946,6 +8960,12 @@ function showApiKeyGuide(retryCallback) {
  * @returns {boolean} 如果 API KEY 通過基本檢查返回 true，否則返回 false
  */
 function checkAPIKey() {
+    // 🆕 [V4.3.4] 擴充套件側邊欄：沒有自己的金鑰就請老師先設定
+    if (IN_EXTENSION_PANEL && !hasOwnGeminiKey()) {
+        showMessage('🔑 擴充套件使用你自己的免費 Gemini 金鑰，請先完成設定（用個人 Gmail 申請，不要用學校信箱）。', 'warning', 8000);
+        showApiKeyGuide();
+        return false;
+    }
     if (aiSettings.aiSource !== 'gemini-custom') return true;
 
     const apiKey = aiSettings.geminiApiKey?.trim();
@@ -20135,6 +20155,7 @@ const ExtensionBridge = (() => {
             classroomCode: teacherReady() ? classroomCode : '',
             hasPending: !!pending,
             busy: running,
+            hasOwnKey: hasOwnGeminiKey(),
             version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
         };
     }
@@ -20274,6 +20295,13 @@ const ExtensionBridge = (() => {
     }
 
     async function run(action) {
+        // 🆕 [V4.3.4] 出題需要老師自己的金鑰：沒有就先開設定，存好後自動接續這次出題
+        if (action.type !== 'dispatch-url' && !hasOwnGeminiKey()) {
+            post('ack', { id: action.id, status: 'need-key' });
+            showMessage('🔑 請先設定你自己的免費 Gemini 金鑰，存好後會自動接著出題。', 'info', 7000);
+            showApiKeyGuide(() => run(action));
+            return;
+        }
         if (running || document.getElementById('ai-generate-reading-btn')?.disabled) {
             post('ack', { id: action.id, status: 'error', message: 'AI 正在出題中，請等這一輪完成再送。' });
             showMessage('AI 正在出題中，請等這一輪完成再送。', 'warning');
@@ -20331,7 +20359,7 @@ const ExtensionBridge = (() => {
         window.addEventListener('message', onMessage);
         document.documentElement.classList.add('in-extension-frame');
     }
-    return { onViewChanged, getState };
+    return { onViewChanged, getState, onKeyChanged: () => post('state') };
 })();
 window.__akailaoExtBridge = ExtensionBridge;
 
