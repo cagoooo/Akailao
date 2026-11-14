@@ -15397,18 +15397,39 @@ async function initialize() {
     // 遙測：啟動首頁遙測
     UsageNotify.sessionStart(currentRole, classroomCode);
 
+    // 🆕 MODIFIED [V4.3.3]: 登入遇到網路型失敗先自動重試（離線就等連線恢復），仍失敗才顯示錯誤並回報。
+    //   起因：頁面重新整理時，進行中的匿名登入被瀏覽器取消 → auth/network-request-failed 誤報到 Chat；
+    //   學校 Wi-Fi 短暫斷線也會讓整頁變成「驗證失敗」。重新整理中斷的請求不會走到重試完成，因此不再誤報。
+    const signInOnce = () => (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
+        ? signInWithCustomToken(auth, __initial_auth_token)
+        : signInAnonymously(auth);
+    const AUTH_RETRY_DELAYS_MS = [1500, 4000];
+    let authAttempts = 0;
     try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-            console.log("Signed in with custom token.");
-        } else {
-            await signInAnonymously(auth);
-            console.log("Signed in anonymously.");
+        for (;;) {
+            authAttempts += 1;
+            try {
+                await signInOnce();
+                console.log(authAttempts > 1 ? `Signed in after ${authAttempts} attempts.` : 'Signed in.');
+                break;
+            } catch (err) {
+                const retryable = err?.code === 'auth/network-request-failed';
+                if (!retryable || authAttempts > AUTH_RETRY_DELAYS_MS.length) throw err;
+                console.warn(`[Auth] 第 ${authAttempts} 次登入遇到網路錯誤，稍後重試`, err.code);
+                await new Promise(resolve => {
+                    if (navigator.onLine) {
+                        setTimeout(resolve, AUTH_RETRY_DELAYS_MS[authAttempts - 1]);
+                        return;
+                    }
+                    const timer = setTimeout(resolve, 15000);
+                    window.addEventListener('online', () => { clearTimeout(timer); resolve(); }, { once: true });
+                });
+            }
         }
     } catch (error) {
         console.error("Firebase Authentication failed:", error);
-        document.body.innerHTML = `<div class="text-center p-8 text-red-600"><h1 class="text-2xl font-bold">驗證失敗</h1><p>無法連接至互動服務，請檢查 Firebase 設定或網路連線。</p><p class=\"text-sm mt-2\">${error.message}</p></div>`;
-        UsageNotify.error(error.message, 'firebase-auth-failed', classroomCode);
+        document.body.innerHTML = `<div class="text-center p-8 text-red-600"><h1 class="text-2xl font-bold">驗證失敗</h1><p>無法連接至互動服務，請檢查網路連線後重新整理。</p><p class="text-sm mt-2">${error.message}</p><button onclick="location.reload()" class="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white font-bold">重新整理</button></div>`;
+        UsageNotify.error(`${error.message}（已嘗試 ${authAttempts} 次，裝置${navigator.onLine ? '連線中' : '離線'}）`, 'firebase-auth-failed', classroomCode);
     }
 
     // 🆕 [V4.2.6] OBS-1b：全域錯誤遙測已整併進 ErrorReporter（含 chunk error 過濾 + Firestore 紀錄 + Chat 通知）
