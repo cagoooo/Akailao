@@ -48,3 +48,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Chrome 商店上傳用套件（可由 chrome-extension/ 重新打包）
+docs/chrome-store/*.zip
