@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "剛好學 課堂互動助手",
   "short_name": "剛好學",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "在 Chrome 側邊欄直接使用「剛好學」課堂互動系統：一鍵把目前網頁變成閱讀測驗、截圖出題、派送網址給學生。",
   "minimum_chrome_version": "116",
   "icons": {

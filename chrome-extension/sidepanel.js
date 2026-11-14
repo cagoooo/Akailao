@@ -318,7 +318,8 @@ document.querySelectorAll('input[name="mode"]').forEach((r) =>
 // ---------- 啟動 ----------
 (async function init() {
   const saved = await chrome.storage.local.get(['mode', 'grade', 'toolsCollapsed', 'appUrl']);
-  if (saved.mode === 'rewrite') document.querySelector('input[name="mode"][value="rewrite"]').checked = true;
+  // 預設「改寫成適齡短文」；老師曾切到「原文出題」就記住他的選擇
+  if (saved.mode === 'original') document.querySelector('input[name="mode"][value="original"]').checked = true;
   if (typeof saved.grade === 'string') gradeSel.value = saved.grade;
   if (saved.toolsCollapsed) {
     document.body.classList.add('tools-collapsed');
