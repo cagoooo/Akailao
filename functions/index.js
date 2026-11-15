@@ -59,16 +59,26 @@ function identityOf(auth, data) {
 
 const clip = (s, n) => String(s == null ? '' : s).slice(0, n);
 
+function requestIp(request) {
+  const fwd = String(request.rawRequest?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return request.rawRequest?.ip || fwd || 'unknown-ip';
+}
+
 function getClientKey(request) {
   const uid = request.auth && request.auth.uid;
-  const ip = request.rawRequest?.ip || request.rawRequest?.headers?.['x-forwarded-for'] || 'unknown-ip';
+  const ip = requestIp(request);
   const ua = request.rawRequest?.headers?.['user-agent'] || '';
   return crypto.createHash('sha256').update(`${uid || 'no-auth'}|${ip}|${ua}`).digest('hex').slice(0, 40);
 }
 
+// 🆕 [V4.5.0] AI 只給 Google 登入的老師用 → 限流改以 uid 計（換瀏覽器、換網路也算同一人，比原本更嚴）
+function getAiQuotaKey(request) {
+  return crypto.createHash('sha256').update(`uid|${request.auth.uid}`).digest('hex').slice(0, 40);
+}
+
 async function reserveAiQuota(request) {
   const now = Date.now();
-  const key = getClientKey(request);
+  const key = getAiQuotaKey(request);
   const ref = db.collection('aiRateLimits').doc(key);
 
   return db.runTransaction(async (tx) => {
@@ -127,6 +137,118 @@ function geminiModelChain(model) {
   return GEMINI_MODEL_CHAIN.includes(value)
     ? [value, ...GEMINI_MODEL_CHAIN.filter((m) => m !== value)]
     : GEMINI_MODEL_CHAIN;
+}
+
+// ===== 🆕 [V4.5.0] callGemini 每次呼叫都由後端直接發 Google Chat 通知 =====
+// 前端回報可被繞過（直接打 callGemini 就不會通知），所以改由後端當唯一來源。
+// 卡片只放身分、功能、模型、耗時、時間；不放學生回答、提示詞全文、圖片。
+const CHAT_TIMEOUT_MS = 2500;
+const BLOCKED_NOTIFY_INTERVAL_MS = 5 * 60 * 1000;
+const blockedNotifyAt = new Map(); // 同一 IP 或同一 clientKey 每 5 分鐘最多 1 則（每個執行個體各自計）
+
+function isGoogleTeacher(auth) {
+  return Boolean(auth && auth.uid && auth.token?.firebase?.sign_in_provider === 'google.com');
+}
+
+function maskIp(ip) {
+  const s = String(ip || '');
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(s)) return s.replace(/\.\d+$/, '.x');
+  if (s.includes(':')) return s.split(':').slice(0, 3).join(':') + ':…';
+  return s ? '未知格式' : '未知';
+}
+
+function shouldNotifyBlocked(ip, clientKey) {
+  const now = Date.now();
+  for (const [k, ts] of blockedNotifyAt) {
+    if (now - ts >= BLOCKED_NOTIFY_INTERVAL_MS) blockedNotifyAt.delete(k);
+  }
+  const keys = [`ip:${ip}`, `ck:${clientKey}`];
+  if (keys.some((k) => blockedNotifyAt.has(k))) return false;
+  if (blockedNotifyAt.size > 2000) blockedNotifyAt.clear();
+  keys.forEach((k) => blockedNotifyAt.set(k, now));
+  return true;
+}
+
+function taipeiNow() {
+  try {
+    return new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false });
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
+function aiFeatureLabel(data) {
+  const label = clip(data?.label || data?.feature, 60).trim();
+  return label || 'AI 功能';
+}
+
+function buildAiCard(kind, info) {
+  const META = {
+    success: { title: '✅ 有人使用了 剛好學 AI' },
+    failure: { title: '❌ 剛好學 AI 失敗' },
+    blocked: { title: '⚠️ 未登入的 AI 呼叫被擋下' },
+  };
+  const meta = META[kind];
+  const widgets = [];
+  const add = (topLabel, text) => {
+    if (text == null || text === '') return;
+    // 前端可控的文字一律去掉 < >，避免在 Chat 卡片裡變成連結或格式
+    widgets.push({ decoratedText: { topLabel, text: String(text).replace(/[<>]/g, ''), wrapText: true } });
+  };
+
+  if (kind === 'blocked') {
+    add('原因', info.reason);
+    add('來源 IP（已遮蔽）', info.ip);
+  } else {
+    add('老師', info.teacher);
+  }
+  add('AI 功能', info.feature);
+  if (info.topic) add('主題（前 30 字）', info.topic);
+  add('教室代碼', info.classroom);
+  if (kind !== 'blocked') {
+    add('模型', info.model || '（未呼叫到模型）');
+    add('耗時', `${(info.durationMs / 1000).toFixed(1)} 秒`);
+  }
+  if (kind === 'failure') add('錯誤訊息（前 120 字）', info.error);
+  add('台北時間', taipeiNow());
+
+  const summary = kind === 'blocked'
+    ? `${meta.title}：${info.feature}（${info.reason}）`
+    : `${meta.title}：${info.feature} | ${info.teacher}`;
+
+  return {
+    text: summary,
+    cardsV2: [{
+      cardId: `ai-${kind}-${Date.now()}`,
+      card: {
+        header: { title: meta.title, subtitle: '剛好學 (Akailao) 遙測系統' },
+        sections: [{ widgets }],
+      },
+    }],
+  };
+}
+
+async function postAiChat(kind, info) {
+  const webhook = String(GOOGLE_CHAT_WEBHOOK.value() || '').trim();
+  if (!webhook.startsWith('https://chat.googleapis.com/')) {
+    logger.warn('AI Chat 通知略過：GOOGLE_CHAT_WEBHOOK 未設定或格式不符');
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+  try {
+    const resp = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify(buildAiCard(kind, info)),
+      signal: controller.signal,
+    });
+    if (!resp.ok) logger.warn('AI Chat 通知失敗', { kind, status: resp.status });
+  } catch (err) {
+    logger.warn('AI Chat 通知失敗', { kind, message: clip(err && err.message, 120) });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function buildCard(type, data, who) {
@@ -266,81 +388,105 @@ exports.notifyUsage = onCall(
 exports.callGemini = onCall(
   {
     region: REGION,
-    secrets: [GEMINI_API_KEY],
+    secrets: [GEMINI_API_KEY, GOOGLE_CHAT_WEBHOOK],
     cors: true,
     maxInstances: 10,
     timeoutSeconds: 120,
     memory: '512MiB',
   },
   async (request) => {
-    const apiKey = (GEMINI_API_KEY.value() || '').trim();
-    if (!apiKey) {
-      logger.error('GEMINI_API_KEY secret 未設定');
-      throw new HttpsError('failed-precondition', 'AI 服務尚未完成設定，請稍後再試。');
+    const data = request.data || {};
+    const feature = aiFeatureLabel(data);
+    const classroom = clip(data.classroom, 30);
+
+    // 🆕 [V4.5.0] 只有用 Google 帳號登入的老師能用（沒登入、匿名登入一律拒絕）
+    if (!isGoogleTeacher(request.auth)) {
+      const ip = requestIp(request);
+      const reason = !request.auth ? '沒有登入' : `非 Google 登入（${clip(request.auth.token?.firebase?.sign_in_provider, 20) || '未知'}）`;
+      logger.warn('callGemini 擋下未登入呼叫', { reason, feature });
+      if (shouldNotifyBlocked(ip, getClientKey(request))) {
+        await postAiChat('blocked', { reason, ip: maskIp(ip), feature, classroom });
+      }
+      throw new HttpsError('unauthenticated', '請老師先用 Google 帳號登入才能使用 AI 功能');
     }
 
-    const quota = await reserveAiQuota(request);
-    if (!quota.ok) {
-      throw new HttpsError(
-        'resource-exhausted',
-        `為了保護共用 Gemini 額度，每小時最多 ${AI_RATE_LIMIT.maxCalls} 次。請稍後再試。`,
-        quota
-      );
-    }
+    const token = request.auth.token || {};
+    const teacher = [token.name, token.email].filter(Boolean).join(' · ') || '（未提供姓名）';
+    const topic = clip(data.topic, 30);
+    const startedAt = Date.now();
+    let usedModel = '';
+    const notifyInfo = () => ({ teacher, feature, topic, classroom, model: usedModel, durationMs: Date.now() - startedAt });
 
-    const payload = request.data?.payload;
-    assertGeminiPayload(payload);
-    let lastError = new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
+    try {
+      const apiKey = (GEMINI_API_KEY.value() || '').trim();
+      if (!apiKey) {
+        logger.error('GEMINI_API_KEY secret 未設定');
+        throw new HttpsError('failed-precondition', 'AI 服務尚未完成設定，請稍後再試。');
+      }
 
-    for (const model of geminiModelChain(request.data?.model)) {
-      let resp;
-      let body = null;
-      try {
-        resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-            // Some existing Gemini keys are protected by browser referrer rules.
-            'Referer': 'https://cagoooo.github.io/',
-          },
-          body: JSON.stringify(payload),
-        });
-        const bodyText = await resp.text();
+      const quota = await reserveAiQuota(request);
+      if (!quota.ok) {
+        throw new HttpsError(
+          'resource-exhausted',
+          `為了保護共用 Gemini 額度，每小時最多 ${AI_RATE_LIMIT.maxCalls} 次。請稍後再試。`,
+          quota
+        );
+      }
+
+      const payload = data.payload;
+      assertGeminiPayload(payload);
+      let lastError = new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
+
+      for (const model of geminiModelChain(data.model)) {
+        usedModel = model;
+        let resp;
+        let body = null;
         try {
-          body = bodyText ? JSON.parse(bodyText) : {};
+          resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+              // Some existing Gemini keys are protected by browser referrer rules.
+              'Referer': 'https://cagoooo.github.io/',
+            },
+            body: JSON.stringify(payload),
+          });
+          const bodyText = await resp.text();
+          try {
+            body = bodyText ? JSON.parse(bodyText) : {};
+          } catch (err) {
+            body = { raw: bodyText.slice(0, 1000) };
+          }
         } catch (err) {
-          body = { raw: bodyText.slice(0, 1000) };
+          logger.error('Gemini proxy failed', { model, message: err.message });
+          continue; // 網路錯誤：換下一個模型試
         }
-      } catch (err) {
-        logger.error('Gemini proxy failed', { model, message: err.message });
-        continue; // 網路錯誤：換下一個模型試
-      }
 
-      if (resp.ok) {
-        logger.info('Gemini proxy success', {
-          model,
-          remaining: quota.remaining,
-          feature: clip(request.data?.feature, 80),
-          classroom: clip(request.data?.classroom, 40),
+        if (resp.ok) {
+          logger.info('Gemini proxy success', {
+            model,
+            remaining: quota.remaining,
+            feature,
+            classroom,
+          });
+          await postAiChat('success', notifyInfo());
+          return { ok: true, data: body, quota, model };
+        }
+
+        logger.warn('Gemini API 回傳錯誤', { status: resp.status, model, feature, classroom });
+        lastError = new HttpsError('internal', body?.error?.message || `Gemini API 請求失敗：${resp.status}`, {
+          status: resp.status,
+          body,
         });
-        return { ok: true, data: body, quota, model };
+        // 只有模型滿載／不存在／暫時性錯誤才換下一個模型；金鑰或額度問題（400/402/403）直接回報
+        if (!RETRYABLE_GEMINI_STATUS.includes(resp.status)) break;
       }
 
-      logger.warn('Gemini API 回傳錯誤', {
-        status: resp.status,
-        model,
-        feature: clip(request.data?.feature, 80),
-        classroom: clip(request.data?.classroom, 40),
-      });
-      lastError = new HttpsError('internal', body?.error?.message || `Gemini API 請求失敗：${resp.status}`, {
-        status: resp.status,
-        body,
-      });
-      // 只有模型滿載／不存在／暫時性錯誤才換下一個模型；金鑰或額度問題（400/402/403）直接回報
-      if (!RETRYABLE_GEMINI_STATUS.includes(resp.status)) break;
+      throw lastError;
+    } catch (err) {
+      await postAiChat('failure', Object.assign(notifyInfo(), { error: clip(err && err.message, 120) || '未知錯誤' }));
+      throw err;
     }
-
-    throw lastError;
   }
 );

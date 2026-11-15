@@ -400,8 +400,85 @@ function looksLikeApiKey(key) {
     return typeof key === 'string' && key.length >= 20 && !/\s/.test(key) && key !== BUILTIN_KEY_MASK;
 }
 
+// ===== 🆕 NEW [V4.5.0]: 共用 AI（系統內建金鑰，走 callGemini）只給 Google 登入的老師使用 =====
+// 學生是匿名登入、不會用到 AI；老師用自己的 Gemini 金鑰（直連 Google）不受影響。
+const AI_LOGIN_REQUIRED_MSG = 'AI 功能需要老師用 Google 帳號登入';
+
+function isGoogleTeacherSignedIn() {
+    const u = auth.currentUser;
+    return !!u && !u.isAnonymous && Array.isArray(u.providerData)
+        && u.providerData.some(p => p && p.providerId === 'google.com');
+}
+
+function hideAiLoginRequired() {
+    document.getElementById('ai-login-required-banner')?.classList.add('hidden');
+}
+
+function showAiLoginRequired() {
+    let banner = document.getElementById('ai-login-required-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'ai-login-required-banner';
+        banner.className = 'ai-login-banner hidden';
+        banner.setAttribute('role', 'alertdialog');
+        banner.setAttribute('aria-live', 'assertive');
+        banner.innerHTML = `
+            <button type="button" class="ai-login-banner__close" aria-label="關閉">✕</button>
+            <div class="ai-login-banner__title">🔒 ${AI_LOGIN_REQUIRED_MSG}</div>
+            <p class="ai-login-banner__text">為了保護共用 AI 額度，AI 出題、AI 文字雲分析等功能只開放給用 Google 帳號登入的老師。學生不需要登入，課堂互動照常進行。</p>
+            <button type="button" class="ai-login-banner__btn"><i class="fab fa-google"></i> 用 Google 帳號登入</button>`;
+        banner.querySelector('.ai-login-banner__close').addEventListener('click', hideAiLoginRequired);
+        banner.querySelector('.ai-login-banner__btn').addEventListener('click', signInTeacherForAi);
+        document.body.appendChild(banner);
+    }
+    banner.classList.remove('hidden');
+}
+
+// 沿用老師入口的 Google 登入（同一個 googleProvider / signInWithPopup）
+async function signInTeacherForAi() {
+    const btn = document.querySelector('#ai-login-required-banner .ai-login-banner__btn');
+    if (btn) btn.disabled = true;
+    try {
+        _teacherAuthInProgress = true;
+        const result = await signInWithPopup(auth, googleProvider);
+        currentTeacherGoogleUser = result.user;
+        updateTeacherProfileUI();
+        await loadTeacherProfile(result.user.uid);
+        hideAiLoginRequired();
+        showMessage('✅ 已用 Google 帳號登入，可以使用 AI 功能了，請再按一次 AI 按鈕。', 'success', 6000);
+    } catch (error) {
+        if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+            console.error('[AI] Google 登入失敗:', error);
+            showMessage(`Google 登入失敗：${error.message}`, 'error', 8000);
+        }
+    } finally {
+        _teacherAuthInProgress = false;
+        if (btn) btn.disabled = false;
+    }
+}
+
+function aiLoginRequiredError() {
+    const err = new Error(`🔒 ${AI_LOGIN_REQUIRED_MSG}，請按畫面上的「用 Google 帳號登入」後再試一次。`);
+    err.code = 'functions/unauthenticated';
+    return err;
+}
+
+// 共用金鑰的每次 AI 使用改由後端 callGemini 直接發 Chat 通知（唯一來源，不會重複）；
+// 前端只回報「老師自己的金鑰」這條直連 Google、後端看不到的路徑。
+function reportCustomKeyAiUsage(feature, label, details, classroom) {
+    if (isUsingSharedGeminiKey()) return;
+    UsageNotify.aiApi(feature, label, Object.assign({}, details || {}, { keyType: 'gemini-custom' }), classroom);
+}
+
 function reserveSharedAiCall(featureLabel = 'AI 出題') {
     if (!isUsingSharedGeminiKey()) return true;
+
+    // 🆕 [V4.5.0] 不是 Google 登入的老師 → 不送出，直接提示登入（也不扣本機額度）
+    if (!isGoogleTeacherSignedIn()) {
+        showAiLoginRequired();
+        showMessage(`🔒 ${AI_LOGIN_REQUIRED_MSG}`, 'warning', 6000);
+        return false;
+    }
 
     const now = Date.now();
     let recentCalls = [];
@@ -432,13 +509,27 @@ async function callGeminiContent(payload, options = {}) {
     const model = options.model || GEMINI_DEFAULT_MODEL;
 
     if (isUsingSharedGeminiKey()) {
-        const result = await callGeminiFunction({
-            payload,
-            model,
-            feature: options.feature || 'AI 出題',
-            classroom: classroomCode || ''
-        });
-        return result.data?.data;
+        if (!isGoogleTeacherSignedIn()) {
+            showAiLoginRequired();
+            throw aiLoginRequiredError();
+        }
+        try {
+            const result = await callGeminiFunction({
+                payload,
+                model,
+                feature: options.feature || 'AI 出題',
+                topic: String(options.topic || '').slice(0, 30),
+                classroom: classroomCode || ''
+            });
+            return result.data?.data;
+        } catch (err) {
+            // 後端擋下（沒登入／登入過期）→ 一律顯示中文登入提示，不顯示英文 Unauthenticated
+            if (err?.code === 'functions/unauthenticated') {
+                showAiLoginRequired();
+                throw aiLoginRequiredError();
+            }
+            throw err;
+        }
     }
 
     const apiKey = getActiveGeminiApiKey();
@@ -480,6 +571,8 @@ async function fetchGeminiContent(payload, options = {}) {
             text: async () => JSON.stringify(data)
         };
     } catch (err) {
+        // 🆕 [V4.5.0] 需要登入：直接丟出中文錯誤，讓各功能的 catch 顯示（不要被當成「API Key 認證失敗」）
+        if (err?.code === 'functions/unauthenticated') throw err;
         const status = err.code === 'functions/resource-exhausted' ? 429 : 500;
         const message = err.message || 'AI 服務暫時無法使用，請稍後再試。';
         return {
@@ -12393,7 +12486,7 @@ function setupEventListeners() {
             aiLoadingSpinner.classList.add('hidden');
             const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
             const parsedResults = jsonText ? JSON.parse(jsonText) : [];
-            UsageNotify.aiApi('ai_wordcloud', 'AI 文字雲分析', { topic: `分析 ${textResponses.length} 則學生回答`, count: parsedResults.length, keyType: aiSettings.aiSource }, classroomCode);
+            reportCustomKeyAiUsage('ai_wordcloud', 'AI 文字雲分析', { topic: `分析 ${textResponses.length} 則學生回答`, count: parsedResults.length, keyType: aiSettings.aiSource }, classroomCode);
             if (parsedResults.length > 0) {
                 parsedResults.sort((a, b) => b.count - a.count).forEach(item => {
                     const li = document.createElement('li');
@@ -12818,7 +12911,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 } // Adjust temperature for creativity
             };
-            const response = await fetchGeminiContent(payload, { feature: 'AI 生成選擇題' });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成選擇題', topic });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -12888,7 +12981,7 @@ function setupEventListeners() {
                 const existingText = customMcQuestionsTextarea.value.trim();
                 customMcQuestionsTextarea.value = existingText ? `${existingText}\n${generatedText.trim()}` : generatedText.trim();
                 showMessage('AI 題目已成功生成並填入左方！', 'success');
-                UsageNotify.aiApi('ai_mc_gen', 'AI 生成選擇題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
+                reportCustomKeyAiUsage('ai_mc_gen', 'AI 生成選擇題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -12952,7 +13045,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const response = await fetchGeminiContent(payload, { feature: 'AI 生成排序題' });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成排序題', topic });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -13015,7 +13108,7 @@ function setupEventListeners() {
                 const sequencingItemsTextarea = document.getElementById('sequencing-items-textarea');
                 sequencingItemsTextarea.value = generatedText.trim();
                 showMessage('AI 排序題已成功生成並填入！', 'success');
-                UsageNotify.aiApi('ai_seq_gen', 'AI 生成排序題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
+                reportCustomKeyAiUsage('ai_seq_gen', 'AI 生成排序題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -13080,7 +13173,7 @@ function setupEventListeners() {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: { temperature: 0.7 }
             };
-            const response = await fetchGeminiContent(payload, { feature: 'AI 生成配對題' });
+            const response = await fetchGeminiContent(payload, { feature: 'AI 生成配對題', topic });
 
             if (!response.ok) {
                 const errorBody = await response.text();
@@ -13143,7 +13236,7 @@ function setupEventListeners() {
                 const matchingPairsTextarea = document.getElementById('matching-pairs-textarea');
                 matchingPairsTextarea.value = generatedText.trim();
                 showMessage('AI 配對題已成功生成並填入！', 'success');
-                UsageNotify.aiApi('ai_match_gen', 'AI 生成配對題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
+                reportCustomKeyAiUsage('ai_match_gen', 'AI 生成配對題', { topic: topic.slice(0, 80), count, keyType: aiSettings.aiSource }, classroomCode);
             } else {
                 throw new Error('AI 未返回有效內容。');
             }
@@ -19620,7 +19713,7 @@ async function recognizeQuizImages(composerId, targetTextareaId, mode) {
         const result = await response.json();
         let generated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (!generated) throw new Error('AI 未返回有效內容');
-        UsageNotify.aiApi('ai_quiz_ocr', `AI 辨識題目（${mode === 'tf' ? '是非題' : '選擇題'}）`, { topic: `${store.length} 張圖片`, keyType: aiSettings.aiSource }, classroomCode);
+        reportCustomKeyAiUsage('ai_quiz_ocr', `AI 辨識題目（${mode === 'tf' ? '是非題' : '選擇題'}）`, { topic: `${store.length} 張圖片`, keyType: aiSettings.aiSource }, classroomCode);
 
         // 🆕 v3.8.1 A-2: 強化清理 — 剝除 markdown code fence
         generated = generated.replace(/^```[a-zA-Z]*\n?/gm, '').replace(/\n?```\s*$/g, '').trim();
@@ -19972,7 +20065,7 @@ ${rewriteSource}`;
             }
         };
 
-        const response = await fetchGeminiContent(payload, { feature: 'AI 生成閱讀測驗' });
+        const response = await fetchGeminiContent(payload, { feature: 'AI 生成閱讀測驗', topic: topic || sourceTitle || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '') });
 
         if (!response.ok) {
             const errorBody = await response.text();
@@ -19992,7 +20085,7 @@ ${rewriteSource}`;
 
         const result = await response.json();
         let generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        UsageNotify.aiApi('ai_reading_gen', 'AI 生成閱讀測驗', { topic: (topic || (sourceText ? `擴充套件：${sourceTitle || '分頁文本'}` : '') || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '')).slice(0, 80), keyType: aiSettings.aiSource }, classroomCode);
+        reportCustomKeyAiUsage('ai_reading_gen', 'AI 生成閱讀測驗', { topic: (topic || (sourceText ? `擴充套件：${sourceTitle || '分頁文本'}` : '') || (hasImages ? `${readingAiUploadedImages.length} 張圖片` : '')).slice(0, 80), keyType: aiSettings.aiSource }, classroomCode);
 
         if (generatedText) {
             // 🆕 MODIFIED [v3.7.14]: 強化輸出清理 — 剝除 markdown code fence 與其他雜訊
