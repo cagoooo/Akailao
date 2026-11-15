@@ -20,10 +20,9 @@ const crypto = require('crypto');
 const GOOGLE_CHAT_WEBHOOK = defineSecret('GOOGLE_CHAT_WEBHOOK');
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const REGION = 'asia-east1';
-const AI_RATE_LIMIT = {
-  maxCalls: 5,
-  windowMs: 60 * 60 * 1000,
-};
+// 🆕 [V4.5.1] 每位 Google 登入老師（uid）每天最多 5 次，台北時間午夜重置（原本每小時 5 次）
+const AI_DAILY_LIMIT = 5;
+const AI_QUOTA_EXCEEDED_MSG = `今天的 ${AI_DAILY_LIMIT} 次已用完，明天（台北時間午夜後）再來`;
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -71,45 +70,44 @@ function getClientKey(request) {
   return crypto.createHash('sha256').update(`${uid || 'no-auth'}|${ip}|${ua}`).digest('hex').slice(0, 40);
 }
 
-// 🆕 [V4.5.0] AI 只給 Google 登入的老師用 → 限流改以 uid 計（換瀏覽器、換網路也算同一人，比原本更嚴）
-function getAiQuotaKey(request) {
-  return crypto.createHash('sha256').update(`uid|${request.auth.uid}`).digest('hex').slice(0, 40);
+// 台北日期 YYYY-MM-DD（台北時間午夜換日）
+function taipeiDateKey() {
+  return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-async function reserveAiQuota(request) {
-  const now = Date.now();
-  const key = getAiQuotaKey(request);
-  const ref = db.collection('aiRateLimits').doc(key);
+// 🆕 [V4.5.1] 每日次數：rateLimits/user_<uid>_<YYYY-MM-DD>，transaction 檢查＋加 1，帶 expireAt（可設 TTL 自動清除）
+function aiQuotaRef(uid, dateKey) {
+  return db.collection('rateLimits').doc(`user_${uid}_${dateKey}`);
+}
 
+async function reserveAiQuota(request, dateKey) {
+  const uid = request.auth.uid;
+  const ref = aiQuotaRef(uid, dateKey);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
-    const data = snap.exists ? snap.data() : {};
-    const recentCalls = Array.isArray(data.calls)
-      ? data.calls.map(Number).filter(ts => Number.isFinite(ts) && now - ts < AI_RATE_LIMIT.windowMs)
-      : [];
-
-    if (recentCalls.length >= AI_RATE_LIMIT.maxCalls) {
-      const waitMs = AI_RATE_LIMIT.windowMs - (now - recentCalls[0]);
-      return {
-        ok: false,
-        retryAfterSeconds: Math.max(60, Math.ceil(waitMs / 1000)),
-        remaining: 0,
-      };
+    const count = snap.exists ? Number(snap.get('count')) || 0 : 0;
+    if (count >= AI_DAILY_LIMIT) {
+      return { ok: false, remaining: 0, dailyLimit: AI_DAILY_LIMIT, reason: 'daily-limit' };
     }
-
-    recentCalls.push(now);
     tx.set(ref, {
-      calls: recentCalls,
+      uid,
+      date: dateKey,
+      count: count + 1,
+      limit: AI_DAILY_LIMIT,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      uid: request.auth?.uid || null,
+      expireAt: admin.firestore.Timestamp.fromMillis(Date.now() + 2 * 24 * 3600 * 1000),
     }, { merge: true });
-
-    return {
-      ok: true,
-      remaining: AI_RATE_LIMIT.maxCalls - recentCalls.length,
-      retryAfterSeconds: 0,
-    };
+    return { ok: true, remaining: AI_DAILY_LIMIT - (count + 1), dailyLimit: AI_DAILY_LIMIT };
   });
+}
+
+// Gemini 本身失敗（滿載、逾時）時退回這次，不讓老師白白少一次
+async function refundAiQuota(uid, dateKey) {
+  try {
+    await aiQuotaRef(uid, dateKey).update({ count: admin.firestore.FieldValue.increment(-1) });
+  } catch (err) {
+    logger.warn('refundAiQuota 失敗（不影響主流程）', { message: err && err.message });
+  }
 }
 
 function assertGeminiPayload(payload) {
@@ -177,9 +175,36 @@ function taipeiNow() {
   }
 }
 
+// 🆕 [V4.5.1] Chat 卡片的「AI 功能」只接受 src/app.js 實際送出的名稱（白名單），
+// 防止亂碼（錯誤編碼的測試請求）或有人直接呼叫函式把任意文字塞進 Chat
+const AI_FEATURE_WHITELIST = new Set([
+  'AI 文字雲分析',
+  'AI 生成選擇題',
+  'AI 生成排序題',
+  'AI 生成配對題',
+  'AI 辨識題目（是非題）',
+  'AI 辨識題目（選擇題）',
+  'AI 生成閱讀測驗',
+  'AI 補齊閱讀測驗',
+  'AI 出題', // 前端 callGeminiContent 沒帶 feature 時的預設值
+]);
+const UNKNOWN_FEATURE_LABEL = '未知功能（已過濾）';
+// U+FFFD（亂碼替代字元）與控制字元
+const BAD_CHARS_TEST = /[\uFFFD\u0000-\u001F\u007F-\u009F]/;
+const BAD_CHARS_ALL = /[\uFFFD\u0000-\u001F\u007F-\u009F]/g;
+
 function aiFeatureLabel(data) {
-  const label = clip(data?.label || data?.feature, 60).trim();
-  return label || 'AI 功能';
+  const raw = String(data?.label || data?.feature || '').trim();
+  if (!raw || BAD_CHARS_TEST.test(raw)) return UNKNOWN_FEATURE_LABEL;
+  return AI_FEATURE_WHITELIST.has(raw) ? raw : UNKNOWN_FEATURE_LABEL;
+}
+
+function cleanText(value, max) {
+  return String(value == null ? '' : value).replace(BAD_CHARS_ALL, '').trim().slice(0, max);
+}
+
+function cleanTopic(value) {
+  return cleanText(value, 30) || '（無）';
 }
 
 function buildAiCard(kind, info) {
@@ -187,6 +212,7 @@ function buildAiCard(kind, info) {
     success: { title: '✅ 有人使用了 剛好學 AI' },
     failure: { title: '❌ 剛好學 AI 失敗' },
     blocked: { title: '⚠️ 未登入的 AI 呼叫被擋下' },
+    quota: { title: '⛔ 剛好學 AI：今日次數已用完被擋' },
   };
   const meta = META[kind];
   const widgets = [];
@@ -205,10 +231,12 @@ function buildAiCard(kind, info) {
   add('AI 功能', info.feature);
   if (info.topic) add('主題（前 30 字）', info.topic);
   add('教室代碼', info.classroom);
-  if (kind !== 'blocked') {
+  if (kind === 'success' || kind === 'failure') {
     add('模型', info.model || '（未呼叫到模型）');
     add('耗時', `${(info.durationMs / 1000).toFixed(1)} 秒`);
   }
+  if (typeof info.remaining === 'number') add('今日剩餘', `${info.remaining} 次`);
+  if (kind === 'quota') add('限制', `每人每天 ${AI_DAILY_LIMIT} 次（台北時間午夜重置），已在呼叫 Gemini 前擋下`);
   if (kind === 'failure') add('錯誤訊息（前 120 字）', info.error);
   add('台北時間', taipeiNow());
 
@@ -397,7 +425,7 @@ exports.callGemini = onCall(
   async (request) => {
     const data = request.data || {};
     const feature = aiFeatureLabel(data);
-    const classroom = clip(data.classroom, 30);
+    const classroom = cleanText(data.classroom, 30);
 
     // 🆕 [V4.5.0] 只有用 Google 帳號登入的老師能用（沒登入、匿名登入一律拒絕）
     if (!isGoogleTeacher(request.auth)) {
@@ -412,10 +440,13 @@ exports.callGemini = onCall(
 
     const token = request.auth.token || {};
     const teacher = [token.name, token.email].filter(Boolean).join(' · ') || '（未提供姓名）';
-    const topic = clip(data.topic, 30);
+    const topic = cleanTopic(data.topic);
     const startedAt = Date.now();
     let usedModel = '';
-    const notifyInfo = () => ({ teacher, feature, topic, classroom, model: usedModel, durationMs: Date.now() - startedAt });
+    let remaining;
+    const notifyInfo = () => ({ teacher, feature, topic, classroom, model: usedModel, durationMs: Date.now() - startedAt, remaining });
+    const dateKey = taipeiDateKey();
+    let quotaReserved = false;
 
     try {
       const apiKey = (GEMINI_API_KEY.value() || '').trim();
@@ -424,17 +455,21 @@ exports.callGemini = onCall(
         throw new HttpsError('failed-precondition', 'AI 服務尚未完成設定，請稍後再試。');
       }
 
-      const quota = await reserveAiQuota(request);
-      if (!quota.ok) {
-        throw new HttpsError(
-          'resource-exhausted',
-          `為了保護共用 Gemini 額度，每小時最多 ${AI_RATE_LIMIT.maxCalls} 次。請稍後再試。`,
-          quota
-        );
-      }
-
       const payload = data.payload;
       assertGeminiPayload(payload);
+
+      // 🆕 [V4.5.1] 每人每天 5 次（台北時間午夜重置）
+      const quota = await reserveAiQuota(request, dateKey);
+      if (!quota.ok) {
+        await postAiChat('quota', { teacher, feature, topic, classroom, remaining: 0 });
+        throw Object.assign(
+          new HttpsError('resource-exhausted', AI_QUOTA_EXCEEDED_MSG, quota),
+          { alreadyNotified: true }
+        );
+      }
+      quotaReserved = true;
+      remaining = quota.remaining;
+
       let lastError = new HttpsError('internal', 'AI 服務暫時無法使用，請稍後再試。');
 
       for (const model of geminiModelChain(data.model)) {
@@ -485,6 +520,11 @@ exports.callGemini = onCall(
 
       throw lastError;
     } catch (err) {
+      if (err && err.alreadyNotified) throw err;
+      if (quotaReserved) {
+        await refundAiQuota(request.auth.uid, dateKey);
+        remaining += 1;
+      }
       await postAiChat('failure', Object.assign(notifyInfo(), { error: clip(err && err.message, 120) || '未知錯誤' }));
       throw err;
     }

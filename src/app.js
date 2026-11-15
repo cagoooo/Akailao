@@ -360,11 +360,37 @@ function hasValidBuiltinKey() {
     return k.length >= 30 && k.startsWith('AIzaSy');
 }
 
+// 🆕 NEW [V4.5.1]: 共用 AI 改成每人每天 5 次（台北時間午夜重置），與後端 callGemini 一致
 const AI_SHARED_RATE_LIMIT = {
     maxCalls: 5,
-    windowMs: 60 * 60 * 1000,
-    storageKey: 'akailaoSharedAiRateLimitV1'
+    storageKey: 'akailaoSharedAiDailyV2'
 };
+const AI_DAILY_QUOTA_MSG = `今天的 ${AI_SHARED_RATE_LIMIT.maxCalls} 次已用完，明天（台北時間午夜後）再來`;
+
+function sharedAiTodayKey() {
+    return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+function readSharedAiUsedToday() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(AI_SHARED_RATE_LIMIT.storageKey) || 'null');
+        return saved && saved.date === sharedAiTodayKey() ? Math.max(0, Number(saved.count) || 0) : 0;
+    } catch (err) {
+        return 0;
+    }
+}
+
+function writeSharedAiUsedToday(count) {
+    try {
+        localStorage.setItem(AI_SHARED_RATE_LIMIT.storageKey, JSON.stringify({ date: sharedAiTodayKey(), count }));
+    } catch (err) { /* 無痕模式等情況寫不進去也沒關係，後端才是真正的限制 */ }
+}
+
+// 後端回報的今日剩餘次數為準（換瀏覽器也一致）
+function syncSharedAiRemaining(remaining) {
+    if (typeof remaining !== 'number' || !Number.isFinite(remaining)) return;
+    writeSharedAiUsedToday(Math.max(0, AI_SHARED_RATE_LIMIT.maxCalls - remaining));
+}
 
 // 🆕 NEW [V4.3.4]: Chrome 擴充套件側邊欄（iframe 網址帶 ?from=chrome-extension）一律使用老師自己的 Gemini 金鑰，不走共用額度
 const IN_EXTENSION_PANEL = window.parent !== window
@@ -480,28 +506,17 @@ function reserveSharedAiCall(featureLabel = 'AI 出題') {
         return false;
     }
 
-    const now = Date.now();
-    let recentCalls = [];
-    try {
-        const saved = JSON.parse(localStorage.getItem(AI_SHARED_RATE_LIMIT.storageKey) || '[]');
-        recentCalls = Array.isArray(saved) ? saved.filter(ts => now - Number(ts) < AI_SHARED_RATE_LIMIT.windowMs) : [];
-    } catch (err) {
-        recentCalls = [];
-    }
-
-    if (recentCalls.length >= AI_SHARED_RATE_LIMIT.maxCalls) {
-        const waitMs = AI_SHARED_RATE_LIMIT.windowMs - (now - recentCalls[0]);
-        const waitMinutes = Math.max(1, Math.ceil(waitMs / 60000));
-        showMessage(`為了保護共用 Gemini 額度，${featureLabel} 每小時最多 ${AI_SHARED_RATE_LIMIT.maxCalls} 次。請約 ${waitMinutes} 分鐘後再試；正式備課可在「AI 設定」改用自己的 Gemini API Key。`, 'warning', 9000);
+    const usedToday = readSharedAiUsedToday();
+    if (usedToday >= AI_SHARED_RATE_LIMIT.maxCalls) {
+        showMessage(`${AI_DAILY_QUOTA_MSG}。（共用 AI 每人每天 ${AI_SHARED_RATE_LIMIT.maxCalls} 次；正式備課可在「AI 設定」改用自己的 Gemini API Key）`, 'warning', 9000);
         return false;
     }
 
-    recentCalls.push(now);
-    localStorage.setItem(AI_SHARED_RATE_LIMIT.storageKey, JSON.stringify(recentCalls));
+    writeSharedAiUsedToday(usedToday + 1);
 
-    const remaining = AI_SHARED_RATE_LIMIT.maxCalls - recentCalls.length;
+    const remaining = AI_SHARED_RATE_LIMIT.maxCalls - (usedToday + 1);
     const noticeType = remaining <= 1 ? 'warning' : 'info';
-    showMessage(`共用 AI 額度保護：本小時還可使用 ${remaining} 次。請將 AI 出題保留給實際備課或課堂使用。`, noticeType, 6000);
+    showMessage(`共用 AI 每人每天 ${AI_SHARED_RATE_LIMIT.maxCalls} 次（台北時間午夜重置）：${featureLabel}送出後今天還可使用 ${remaining} 次。`, noticeType, 6000);
     return true;
 }
 
@@ -521,12 +536,20 @@ async function callGeminiContent(payload, options = {}) {
                 topic: String(options.topic || '').slice(0, 30),
                 classroom: classroomCode || ''
             });
+            syncSharedAiRemaining(result.data?.quota?.remaining);
             return result.data?.data;
         } catch (err) {
             // 後端擋下（沒登入／登入過期）→ 一律顯示中文登入提示，不顯示英文 Unauthenticated
             if (err?.code === 'functions/unauthenticated') {
                 showAiLoginRequired();
                 throw aiLoginRequiredError();
+            }
+            // 🆕 [V4.5.1] 今天的 5 次已用完（後端在呼叫 Gemini 前就擋下）
+            if (err?.code === 'functions/resource-exhausted' && err?.details?.reason === 'daily-limit') {
+                syncSharedAiRemaining(0);
+                const quotaErr = new Error(AI_DAILY_QUOTA_MSG);
+                quotaErr.code = 'akailao/daily-limit';
+                throw quotaErr;
             }
             throw err;
         }
@@ -573,6 +596,7 @@ async function fetchGeminiContent(payload, options = {}) {
     } catch (err) {
         // 🆕 [V4.5.0] 需要登入：直接丟出中文錯誤，讓各功能的 catch 顯示（不要被當成「API Key 認證失敗」）
         if (err?.code === 'functions/unauthenticated') throw err;
+        if (err?.code === 'akailao/daily-limit') throw err;
         const status = err.code === 'functions/resource-exhausted' ? 429 : 500;
         const message = err.message || 'AI 服務暫時無法使用，請稍後再試。';
         return {
