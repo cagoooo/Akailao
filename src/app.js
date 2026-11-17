@@ -15517,15 +15517,17 @@ async function initialize() {
         _globalTag.textContent = `v${ver}`;
         _globalTag.title = `目前載入版本：v${ver}\n點擊：清除 Service Worker 快取並強制重新整理`;
         // 點擊：unregister SW + 清 caches + reload，確保拿到最新版
+        // 🆕 FIX [v4.5.3]: 只清本站（/Akailao/ 註冊、akailao- 開頭快取），同網域其他工具的快取與註冊不動
         _globalTag.addEventListener('click', async () => {
             try {
+                const ownScope = new URL('./', window.location.href).href; // sw.js 以 './sw.js' 註冊，scope 即此路徑
                 if ('serviceWorker' in navigator) {
                     const regs = await navigator.serviceWorker.getRegistrations();
-                    for (const r of regs) await r.unregister();
+                    for (const r of regs) if (r.scope.startsWith(ownScope)) await r.unregister();
                 }
                 if (window.caches) {
                     const keys = await caches.keys();
-                    for (const k of keys) await caches.delete(k);
+                    for (const k of keys) if (k.startsWith('akailao-')) await caches.delete(k);
                 }
             } catch (e) {
                 console.warn('[VersionTag] 清快取失敗，仍會強制 reload：', e);
