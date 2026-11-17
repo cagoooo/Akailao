@@ -7,12 +7,14 @@
  * ② install 不自動 skipWaiting（prompt-to-refresh）
  *    → 新 SW 進 waiting → 前端 toast「有新版本」→ 使用者點「重整」→
  *    → SKIP_WAITING postMessage → activate → SW_ACTIVATED postMessage → reload
- * ③ activate 時清舊 CACHE_NAME → 避免多版本 cache 共存
+ * ③ activate 時只清本站（akailao- 開頭）的舊 cache → 避免多版本 cache 共存，
+ *    同網域其他工具的快取不動（cagoooo.github.io 所有工具共用快取空間）
  * ④ fetch: HTML navigate 走 network-first，確保總是拿最新 index.html
  */
 
 const BUILD_VERSION = "__BUILD_VERSION__";
-const CACHE_NAME = `akailao-${BUILD_VERSION}`;
+const CACHE_PREFIX = 'akailao-';
+const CACHE_NAME = `${CACHE_PREFIX}${BUILD_VERSION}`;
 
 self.addEventListener('install', () => {
   // 不呼叫 skipWaiting() — 讓使用者決定何時重整，避免打斷正在進行的課堂
@@ -22,7 +24,7 @@ self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+        keys.filter(k => k.startsWith(CACHE_PREFIX) && k !== CACHE_NAME).map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
       .then(() => {
