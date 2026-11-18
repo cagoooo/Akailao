@@ -211,7 +211,7 @@ function buildAiCard(kind, info) {
   const META = {
     success: { title: '✅ 有人使用了 剛好學 AI' },
     failure: { title: '❌ 剛好學 AI 失敗' },
-    blocked: { title: '⚠️ 未登入的 AI 呼叫被擋下' },
+    blocked: { title: '⚠️ 剛好學 AI：未登入的呼叫被擋下' },
     quota: { title: '⛔ 剛好學 AI：今日次數已用完被擋' },
   };
   const meta = META[kind];
