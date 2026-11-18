@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.5.5** ｜ 更新時間：2026-11-18
+> **版本：V4.5.6** ｜ 更新時間：2026-11-18
 
 ---
 
@@ -9,6 +9,9 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.5.6：學生端排行榜基礎分修正（2026-11-18）
+- [x] **`src/app.js` updateReadingLeaderboardDisplay**：學生端題目的正解會在 1 秒後被刪除（SEC-1 防偷看），排行榜卻還拿它比對，老師沒按「重新評分」時每位學生基礎分都變 0、只剩筆記加分（老師端分數正確）。新增 `getReadingScoringAnswerKey()`：老師端用題目正解，學生端改用 `_secureAnswerKey`，都拿不到時用提交時寫入 Firestore 的 baseScore／totalScore。
 
 ### ✅ V4.5.5：錯誤通知附上堆疊第一行（2026-11-18）
 - [x] **`src/app.js` ErrorReporter**：未處理的 Promise 錯誤沒有發生位置，Chat 卡片的「發生位置」改附堆疊第一行（函式 @ 檔名:行:欄），瀏覽器擴充功能注入的腳本標「擴充功能」。未登入訪客的錯誤寫不進 Firestore，Chat 是唯一線索（2026-11-18 Windows Chrome 等待畫面 `Cannot read properties of null (reading 'indexOf')` 沒有堆疊可查而補上）。

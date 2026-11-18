@@ -5281,6 +5281,22 @@ function listenToReadingLeaderboardTeacher() {
 }
 
 /**
+ * 🆕 NEW [v4.5.6]: 排行榜計分用的正解陣列。
+ * 題目物件裡有正解就用它（老師端）；學生端正解在 1 秒後會被刪除，改用私有的 _secureAnswerKey。
+ * 兩者都拿不到時回傳 null，由呼叫端改用 Firestore 裡提交時算好的分數。
+ */
+function getReadingScoringAnswerKey(questions) {
+    if (!Array.isArray(questions) || questions.length === 0) return null;
+    if (questions.every(q => q && q.correctAnswer !== undefined)) {
+        return questions.map(q => q.correctAnswer);
+    }
+    if (Array.isArray(_secureAnswerKey) && _secureAnswerKey.length === questions.length) {
+        return _secureAnswerKey;
+    }
+    return null;
+}
+
+/**
  * (Student) Updates the reading leaderboard display based on current student responses.
  * 🚀 HELPER: 排行榜渲染邏輯，可被監聽器和手動調用共用
  * @param {Array} studentsData - Array of student response data
@@ -5313,6 +5329,9 @@ function updateReadingLeaderboardDisplay(studentsData, shouldScrollToTop = false
     console.log('[updateReadingLeaderboardDisplay] ✓ Found', questions.length, 'questions, processing', studentsData.length, 'students');
     const rankedStudents = [];
 
+    // 🆕 FIX [v4.5.6]: 取得可用的正解。老師端題目內含正解；學生端正解已移到 _secureAnswerKey（SEC-1）
+    const answerKey = getReadingScoringAnswerKey(questions);
+
     // 計算每個學生的正確率和總分（基礎分+筆記加分）
     studentsData.forEach(student => {
         if (student.answer) {
@@ -5334,11 +5353,20 @@ function updateReadingLeaderboardDisplay(studentsData, shouldScrollToTop = false
                     totalScore = student.totalScore || (baseScore + highlightBonus);
                     correctCount = Math.round((baseScore / 100) * questions.length); // 反推正確題數
                     console.log(`[Leaderboard] ✅ Using Firestore scores for ${student.name}:`, { baseScore, highlightBonus, totalScore, correctCount, scoreUpdateToken: student.scoreUpdateToken });
+                } else if (!answerKey && typeof student.baseScore === 'number') {
+                    // 🆕 FIX [v4.5.6]: 這台裝置拿不到正解（學生端正解已被 SEC-1 移除）→ 改用提交時寫入的分數
+                    baseScore = student.baseScore;
+                    highlightBonus = (student.highlightAnalysis && student.highlightAnalysis.score) || 0;
+                    totalScore = typeof student.totalScore === 'number' ? student.totalScore : baseScore + highlightBonus;
+                    correctCount = Math.round((baseScore / 100) * questions.length);
                 } else {
                     // 本地計算（學生剛提交時，Firestore 尚未被教師更新）
+                    // 🆕 FIX [v4.5.6]: 學生端的 questions[].correctAnswer 會在 1 秒後被刪除（SEC-1），
+                    // 以前直接拿它比對 → 全部算錯、基礎分變 0，排行榜只剩筆記加分。改用 answerKey。
                     correctCount = 0;
+                    const key = answerKey || [];
                     studentAnswers.forEach((ans, index) => {
-                        if (questions[index] && ((questions[index].correctAnswer === 0) || (ans === questions[index].correctAnswer))) {
+                        if (index < questions.length && ((key[index] === 0) || (key[index] !== undefined && ans === key[index]))) {
                             correctCount++;
                         }
                     });
