@@ -14931,6 +14931,26 @@ const ErrorReporter = (() => {
     const _isIgnorable = (msg) =>
         /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|ResizeObserver loop|Script error\.?$/i.test(msg || '');
 
+    // 🆕 [V4.5.5] 取堆疊第一個有網址的位置，縮成「函式 @ 檔名:行:欄」，最多 70 字。
+    //     擴充功能注入的腳本網址是 chrome-extension:// 等，標「擴充功能」方便判斷不是站方程式。
+    function _stackTop(stack) {
+        try {
+            const lines = String(stack || '').split(/\r?\n/).map((l) => l.trim());
+            for (const line of lines) {
+                const url = line.match(/((?:https?|chrome-extension|moz-extension|safari-web-extension|webkit-masked-url):\/\/[^\s)]+)/);
+                if (!url) continue;
+                const isExt = /^(?:chrome|moz|safari-web)-extension:/.test(url[1]);
+                const parts = url[1].replace(/^[a-z-]+:\/\/[^/]+/i, '').split('/').filter(Boolean);
+                let file = parts.pop() || '/';
+                // 頁面本身（/Akailao/:2:123）最後一段只剩行號，補回上一層名稱
+                if (file.startsWith(':') && parts.length) file = parts.pop() + '/' + file;
+                const fn = (line.match(/^at\s+([^\s(]+)\s+\(/) || line.match(/^([^@\s]+)@/) || [])[1];
+                return ((isExt ? '擴充功能 ' : '') + (fn ? fn + ' @ ' : '') + file).slice(0, 70);
+            }
+        } catch (_) { /* 解析失敗就不附 */ }
+        return '';
+    }
+
     async function report(kind, message, extra = {}) {
         try {
             if (!message) return;
@@ -14954,7 +14974,10 @@ const ErrorReporter = (() => {
                 const _roleTxt = currentRole === 'teacher' ? '教師'
                     : currentRole === 'student' ? ('學生' + (studentName ? ':' + studentName : ''))
                     : '未知';
-                const _ctx = [kind, _loc ? '@ ' + _loc : '', currentInteractionMode ? '模式:' + currentInteractionMode : '', _roleTxt]
+                // 🆕 [V4.5.5] 沒有發生位置時（未處理的 Promise 錯誤）改附堆疊第一行，
+                //     一眼看出是站方程式還是瀏覽器擴充功能（未登入時 Firestore 寫不進去，Chat 是唯一線索）
+                const _top = _loc ? '' : _stackTop(extra.stack);
+                const _ctx = [kind, _loc ? '@ ' + _loc : '', _top ? '堆疊:' + _top : '', currentInteractionMode ? '模式:' + currentInteractionMode : '', _roleTxt]
                     .filter(Boolean).join(' · ');
                 UsageNotify.error(message, _ctx, classroomCode || '');
             } catch (_) { /* 推播失敗不影響後續 Firestore 寫入 */ }
