@@ -4770,3 +4770,147 @@ body {
     .ai-login-banner { bottom: 12px; padding: 16px 16px 14px; }
     .ai-login-banner__title { font-size: 1rem; }
 }
+
+/* 🆕 [V4.5.7] 筆記加分分析卡／成績更新卡（showMessage 'card' 類型）
+   舊版用 Tailwind v4 不支援的 bg-opacity-*，底色變成實心白，白字黃字看不見。全部改成自訂樣式。 */
+#message-box.hb-msgbox {
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(440px, calc(100vw - 24px));
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 0;
+    background: var(--cb-paper-bright);
+    color: #2d2416;
+    border: 2px solid var(--cb-board);
+    border-radius: 16px;
+    box-shadow: 0 18px 40px rgba(45, 36, 22, 0.35);
+    text-align: left;
+}
+#message-box.hb-msgbox #close-message-btn { display: none; }
+#message-box.hb-msgbox #message-content { margin: 0; }
+.msg-close-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.24);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.msg-close-btn:hover { background: rgba(255, 255, 255, 0.38); }
+.msg-close-btn:focus-visible { outline: 3px solid var(--cb-tape-yellow); outline-offset: 2px; }
+.hb-card { font-weight: 400; }
+.hb-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 54px 14px 16px;
+    background: var(--cb-board);
+    color: var(--cb-chalk);
+}
+.hb-medal { font-size: 1.8rem; line-height: 1; }
+.hb-head-text { min-width: 0; flex: 1; }
+.hb-title { font-size: 1.1rem; font-weight: 800; line-height: 1.35; word-break: break-word; }
+.hb-sub { font-size: 0.82rem; color: #d9d2c0; margin-top: 2px; }
+.hb-total {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    border-radius: 12px;
+    background: var(--cb-tape-yellow);
+    color: var(--cb-board);
+    text-align: center;
+    line-height: 1.1;
+}
+.hb-total span { display: block; font-size: 0.72rem; font-weight: 700; }
+.hb-total strong { font-size: 1.6rem; font-weight: 900; }
+.hb-badge {
+    margin: 12px 14px 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: #e3f2df;
+    color: #1f5b25;
+    font-weight: 800;
+    text-align: center;
+}
+.hb-warn {
+    margin: 12px 14px 0;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid #efbdb5;
+    background: #fdecea;
+    color: #8a2a20;
+    font-size: 0.86rem;
+    font-weight: 600;
+}
+.hb-list { list-style: none; margin: 0; padding: 12px 14px 0; display: grid; gap: 8px; }
+.hb-item {
+    display: flex;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e4d9bf;
+    border-radius: 10px;
+    background: #fff;
+}
+.hb-icon { font-size: 1.35rem; line-height: 1.3; }
+.hb-body { flex: 1; min-width: 0; }
+.hb-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hb-label { font-size: 0.98rem; font-weight: 800; color: #2d2416; }
+.hb-pts { font-size: 1.1rem; font-weight: 900; color: #a8382f; white-space: nowrap; }
+.hb-pts small { font-size: 0.78rem; font-weight: 700; color: #6b6355; }
+.hb-bar { height: 8px; margin: 6px 0 5px; border-radius: 999px; background: #efe6d1; overflow: hidden; }
+.hb-bar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #7aa874, #3f7d3a); }
+.hb-hint { font-size: 0.82rem; line-height: 1.45; color: #564e40; }
+.hb-item--zero { background: #faf7ef; }
+.hb-item--zero .hb-pts { color: #7a7262; }
+.hb-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin: 12px 14px 0;
+}
+.hb-stats div { padding: 8px 4px; border-radius: 10px; background: #f3ead4; text-align: center; }
+.hb-stats b { display: block; font-size: 1.15rem; font-weight: 900; color: var(--cb-board); }
+.hb-stats span { font-size: 0.76rem; font-weight: 600; color: #564e40; }
+.hb-tip {
+    margin: 12px 14px 14px;
+    padding: 10px 12px;
+    border-left: 4px solid var(--cb-tape-yellow);
+    border-radius: 8px;
+    background: #fff6d2;
+    color: #4a3f1f;
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+.hb-list--score { padding-bottom: 14px; }
+.hb-score-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid #e4d9bf;
+    border-radius: 10px;
+    background: #fff;
+    font-weight: 700;
+}
+.hb-score-row b { font-size: 1.1rem; font-weight: 900; color: #a8382f; }
+.hb-score-row--total { background: var(--cb-board); border-color: var(--cb-board); color: var(--cb-chalk); }
+.hb-score-row--total b { color: var(--cb-tape-yellow); font-size: 1.25rem; }
+@media (max-width: 400px) {
+    .hb-head { padding: 12px 50px 12px 12px; gap: 8px; }
+    .hb-medal { font-size: 1.4rem; }
+    .hb-total strong { font-size: 1.3rem; }
+    .hb-list, .hb-stats { margin-left: 10px; margin-right: 10px; }
+    .hb-list { padding-left: 0; padding-right: 0; }
+    .hb-stats { grid-template-columns: repeat(2, 1fr); }
+}

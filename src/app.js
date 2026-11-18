@@ -3115,8 +3115,14 @@ function showMessage(message, type = 'info', duration = 3000, allowHtml = false,
     msgBox.className = 'fixed top-4 left-1/2 -translate-x-1/2 px-4 sm:px-6 py-3 sm:py-4 rounded-lg shadow-2xl transition-all duration-300 transform text-white font-semibold max-w-[95vw] sm:max-w-2xl';
     msgBox.style.zIndex = '10001';
 
+    // 🆕 NEW [v4.5.7]: 'card' 類型＝白底深字的資訊卡（筆記加分分析、成績更新），樣式在 styles.css 的 .hb-msgbox
+    if (type === 'card') {
+        msgBox.className = 'fixed hb-msgbox';
+    }
+
     // 顏色樣式
     switch (type) {
+        case 'card': break;
         case 'success': msgBox.classList.add('bg-green-500'); break;
         case 'error': msgBox.classList.add('bg-red-500'); break;
         case 'warning': msgBox.classList.add('bg-yellow-500'); break;
@@ -3124,16 +3130,20 @@ function showMessage(message, type = 'info', duration = 3000, allowHtml = false,
         default: msgBox.classList.add('bg-blue-500'); break;
     }
 
+    // 🆕 FIX [v4.5.7]: 先移除上一次留下的關閉按鈕（以前用 querySelector('button') 會誤刪原本的 × 按鈕，自建按鈕越疊越多）
+    msgBox.querySelectorAll('.msg-close-btn').forEach(btn => btn.remove());
+
     // 如果需要手動關閉，添加關閉按鈕
     if (requireManualClose) {
         const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
         closeBtn.innerHTML = '✕';
-        closeBtn.className = 'absolute top-2 right-2 sm:top-3 sm:right-3 w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center rounded-full bg-white bg-opacity-20 hover:bg-opacity-30 transition-all text-white font-bold text-sm sm:text-lg';
+        closeBtn.setAttribute('aria-label', '關閉');
+        // 🆕 FIX [v4.5.7]: Tailwind v4 不支援 bg-opacity-*，原本按鈕變成實心白圓、白色 ✕ 看不見；改用 styles.css 的 .msg-close-btn
+        closeBtn.className = 'msg-close-btn';
         closeBtn.onclick = () => {
             msgBox.classList.add('hidden');
-            // 清除關閉按鈕
-            const existingCloseBtn = msgBox.querySelector('button');
-            if (existingCloseBtn) existingCloseBtn.remove();
+            closeBtn.remove();
         };
         msgBox.appendChild(closeBtn);
     }
@@ -5518,6 +5528,102 @@ function updateReadingLeaderboardDisplay(studentsData, shouldScrollToTop = false
 }
 
 /**
+ * 🆕 NEW [v4.5.7]: 筆記加分各項的說明與滿分（與 HighlightScorer 的計分規則一致）
+ */
+const HIGHLIGHT_BONUS_ITEMS = [
+    { key: 'colorDiversity', icon: '🎨', label: '顏色多樣性', hint: '用不同顏色分類重點，2～3 色 +2、4 色以上 +5', max: () => 5 },
+    { key: 'precision', icon: '🎯', label: '精確度', hint: '只畫關鍵句，畫得越少越精準（少於全文 15% 拿滿分）', max: () => 5 },
+    { key: 'segmentation', icon: '📍', label: '分段性', hint: '重點分散在 3 個以上不同段落 +3', max: () => 3 },
+    { key: 'relevance', icon: '🔗', label: '答題關聯', hint: '畫到的重點和你選的答案有關，每題 +2', max: (q) => Math.max(2, q * 2) },
+    { key: 'timeDistribution', icon: '⏱️', label: '時間分配', hint: '邊讀邊畫，前後超過 30 秒 +2', max: () => 2 },
+];
+
+function escapeHtmlText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
+/**
+ * 🆕 NEW [v4.5.7]: 筆記加分分析卡（白底深字、每項有進度條與說明）
+ * 舊版用 Tailwind v4 不支援的 bg-opacity-*，底色變成實心白，白字黃字幾乎看不見。
+ * @param {Object} analysis - highlightAnalysis（score / breakdown / stats）
+ * @param {Object} opts - { title, subtitle, tip, badge }
+ */
+function buildHighlightBonusCardHtml(analysis, opts = {}) {
+    const breakdown = (analysis && analysis.breakdown) || {};
+    const stats = (analysis && analysis.stats) || {};
+    const questionCount = (readingComprehensionData && Array.isArray(readingComprehensionData.questions))
+        ? readingComprehensionData.questions.length : 0;
+    const score = Number(analysis && analysis.score) || 0;
+    const coverage = Math.round(Number(stats.coverageRate) || 0);
+
+    const rows = HIGHLIGHT_BONUS_ITEMS.map(item => {
+        const pts = Number(breakdown[item.key]) || 0;
+        const max = Math.max(item.max(questionCount), pts);
+        const pct = max > 0 ? Math.round((pts / max) * 100) : 0;
+        return `
+            <li class="hb-item${pts > 0 ? '' : ' hb-item--zero'}">
+                <span class="hb-icon" aria-hidden="true">${item.icon}</span>
+                <div class="hb-body">
+                    <div class="hb-row">
+                        <span class="hb-label">${item.label}</span>
+                        <span class="hb-pts">+${pts}<small> / ${max}</small></span>
+                    </div>
+                    <div class="hb-bar" role="presentation"><i style="width:${pct}%"></i></div>
+                    <div class="hb-hint">${item.hint}</div>
+                </div>
+            </li>`;
+    }).join('');
+
+    const overDrawn = coverage > 60
+        ? `<div class="hb-warn">⚠️ 畫重點超過全文 60%（目前 ${coverage}%），這次各項都不加分。下次只畫關鍵句喔！</div>`
+        : '';
+
+    return `
+        <div class="hb-card">
+            <div class="hb-head">
+                <span class="hb-medal" aria-hidden="true">🏅</span>
+                <div class="hb-head-text">
+                    <div class="hb-title">${escapeHtmlText(opts.title || '筆記加分分析')}</div>
+                    <div class="hb-sub">${escapeHtmlText(opts.subtitle || '螢光筆畫重點的表現')}</div>
+                </div>
+                <div class="hb-total"><span>加分</span><strong>+${score}</strong></div>
+            </div>
+            ${opts.badge ? `<div class="hb-badge">${escapeHtmlText(opts.badge)}</div>` : ''}
+            ${overDrawn}
+            <ul class="hb-list">${rows}</ul>
+            <div class="hb-stats">
+                <div><b>${Number(stats.highlightCount) || 0}</b><span>個標註</span></div>
+                <div><b>${Number(stats.colorCount) || 0}</b><span>種顏色</span></div>
+                <div><b>${coverage}%</b><span>畫了全文</span></div>
+                <div><b>${Number(stats.segmentCount) || 0}</b><span>個段落</span></div>
+            </div>
+            ${opts.tip ? `<div class="hb-tip">💡 ${escapeHtmlText(opts.tip)}</div>` : ''}
+        </div>`;
+}
+
+/**
+ * 🆕 NEW [v4.5.7]: 成績更新卡（老師修正答案後通知學生）
+ */
+function buildScoreUpdateCardHtml({ baseScore, highlightBonus, totalScore, changeIcon, changeText }) {
+    return `
+        <div class="hb-card">
+            <div class="hb-head">
+                <span class="hb-medal" aria-hidden="true">${changeIcon}</span>
+                <div class="hb-head-text">
+                    <div class="hb-title">成績已更新！</div>
+                    <div class="hb-sub">老師修正了答案，分數已自動重新計算</div>
+                </div>
+                <div class="hb-total"><span>變化</span><strong>${escapeHtmlText(changeText)}</strong></div>
+            </div>
+            <ul class="hb-list hb-list--score">
+                <li class="hb-score-row"><span>📝 基礎分</span><b>${baseScore} 分</b></li>
+                <li class="hb-score-row"><span>✨ 筆記加分</span><b>+${highlightBonus} 分</b></li>
+                <li class="hb-score-row hb-score-row--total"><span>🏆 總分</span><b>${totalScore} 分</b></li>
+            </ul>
+        </div>`;
+}
+
+/**
  * 🚀 NEW: 顯示筆記加分細項
  */
 window.showHighlightBonusDetails = function (studentName, analysisJsonStr) {
@@ -5527,51 +5633,11 @@ window.showHighlightBonusDetails = function (studentName, analysisJsonStr) {
             return;
         }
         const analysis = JSON.parse(analysisJsonStr);
-        const feedbackMessage = `
-            <div class="text-left space-y-2 sm:space-y-3 pr-4 sm:pr-8">
-                <div class="text-base sm:text-lg font-bold text-white mb-2">🏅 ${studentName} 的筆記加分分析</div>
-                <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
-                    <div class="text-sm sm:text-base font-bold text-yellow-300 mb-2 sm:mb-3">總加分：+${analysis.score} 分</div>
-                    
-                    <div class="space-y-1 text-xs sm:text-sm text-white">
-                        <div class="font-bold mb-1 text-yellow-200">評分明細：</div>
-                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
-                            <span>🎨 顏色多樣性:</span>
-                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.colorDiversity || 0}</span>
-                        </div>
-                        <div class="flex justify-between items-center px-2 py-1">
-                            <span>🎯 精確度 (重點抓取):</span>
-                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.precision || 0}</span>
-                        </div>
-                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
-                            <span>📍 分段性 (有組織):</span>
-                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.segmentation || 0}</span>
-                        </div>
-                        <div class="flex justify-between items-center px-2 py-1">
-                            <span>🔗 答題關聯 (與答案相符):</span>
-                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.relevance || 0}</span>
-                        </div>
-                        <div class="flex justify-between items-center bg-white bg-opacity-10 px-2 py-1 rounded">
-                            <span>⏱️ 時間分配 (邊讀邊畫):</span>
-                            <span class="font-bold text-yellow-300">+${analysis.breakdown?.timeDistribution || 0}</span>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-3 pt-2 border-t border-white border-opacity-30 text-xs text-white text-opacity-90">
-                        <div class="grid grid-cols-2 gap-x-2 gap-y-1">
-                            <div>標註: ${analysis.stats?.highlightCount || 0} 個</div>
-                            <div>顏色: ${analysis.stats?.colorCount || 0} 種</div>
-                            <div>覆蓋: ${Math.round(analysis.stats?.coverageRate || 0)}%</div>
-                            <div>段落: ${analysis.stats?.segmentCount || 0} 段</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
-                    💡 同學們可以互相學習彼此的筆記技巧喔！請點擊右上角 ✕ 關閉
-                </div>
-            </div>
-        `;
-        showMessage(feedbackMessage, 'info', 0, true, true);
+        const feedbackMessage = buildHighlightBonusCardHtml(analysis, {
+            title: `${studentName} 的筆記加分`,
+            tip: '看看同學怎麼畫重點，下次試試看！',
+        });
+        showMessage(feedbackMessage, 'card', 0, true, true);
     } catch (e) {
         console.error('Failed to parse analysis data:', e);
         showMessage('解析資料失敗', 'error');
@@ -19020,54 +19086,14 @@ async function submitReadingAnswer() {
         if (extraFields.highlightAnalysis && extraFields.highlightAnalysis.score > 0) {
             const analysis = extraFields.highlightAnalysis;
 
-            // 🎨 RWD響應式筆記品質分析卡片
-            const feedbackMessage = `
-                <div class="text-left space-y-2 sm:space-y-3 pr-6 sm:pr-8">
-                    <div class="text-base sm:text-lg font-bold text-white mb-2">✅ 答案已成功提交！</div>
-                    <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
-                        <div class="text-sm sm:text-base font-bold text-white mb-2">📝 筆記加分：</div>
-                        <div class="text-xl sm:text-2xl font-bold text-yellow-300 mb-2 sm:mb-3">+${analysis.score} 分</div>
-                        
-                        <div class="space-y-1 text-xs sm:text-sm text-white">
-                            <div class="font-bold mb-1 text-yellow-200">評分明細：</div>
-                            <div class="flex justify-between items-center">
-                                <span>🎨 顏色多樣性:</span>
-                                <span class="font-bold text-yellow-300">+${analysis.breakdown.colorDiversity}</span>
-                            </div>
-                            <div class="flex justify-between items-center">
-                                <span>🎯 精確度:</span>
-                                <span class="font-bold text-yellow-300">+${analysis.breakdown.precision}</span>
-                            </div>
-                            <div class="flex justify-between items-center">
-                                <span>📍 分段性:</span>
-                                <span class="font-bold text-yellow-300">+${analysis.breakdown.segmentation}</span>
-                            </div>
-                            <div class="flex justify-between items-center">
-                                <span>🔗 答題關聯:</span>
-                                <span class="font-bold text-yellow-300">+${analysis.breakdown.relevance}</span>
-                            </div>
-                            <div class="flex justify-between items-center">
-                                <span>⏱️ 時間分配:</span>
-                                <span class="font-bold text-yellow-300">+${analysis.breakdown.timeDistribution}</span>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-2 pt-2 border-t border-white border-opacity-30 text-xs text-white text-opacity-90">
-                            <div class="grid grid-cols-2 gap-x-2 gap-y-1">
-                                <div>標註: ${analysis.stats.highlightCount} 個</div>
-                                <div>顏色: ${analysis.stats.colorCount} 種</div>
-                                <div>覆蓋: ${Math.round(analysis.stats.coverageRate)}%</div>
-                                <div>段落: ${analysis.stats.segmentCount} 段</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
-                        💡 筆記品質越好，加分越多！請點擊右上角 ✕ 關閉
-                    </div>
-                </div>
-            `;
+            // 🆕 MODIFIED [v4.5.7]: 改用白底深字的筆記加分分析卡（舊版白字在實心白底上看不見）
+            const feedbackMessage = buildHighlightBonusCardHtml(analysis, {
+                badge: '✅ 答案已成功提交！',
+                title: '你的筆記加分',
+                tip: '筆記品質越好，加分越多！',
+            });
 
-            showMessage(feedbackMessage, 'success', 0, true, true); // HTML模式 + 需要手動關閉
+            showMessage(feedbackMessage, 'card', 0, true, true); // HTML模式 + 需要手動關閉
         } else {
             showMessage('答案已提交！', 'success');
         }
@@ -19244,35 +19270,10 @@ function setupStudentScoreListener() {
                 const changeIcon = scoreChange > 0 ? '📈' : scoreChange < 0 ? '📉' : '🔄';
                 const changeText = scoreChange > 0 ? `+${scoreChange}` : scoreChange < 0 ? `${scoreChange}` : '±0';
 
-                const updateMessage = `
-                    <div class="text-left space-y-2 sm:space-y-3 pr-6 sm:pr-8">
-                        <div class="text-base sm:text-lg font-bold text-white mb-2">
-                            ${changeIcon} 成績已更新！
-                        </div>
-                        <div class="bg-white bg-opacity-20 p-2 sm:p-3 rounded-lg border border-white border-opacity-30">
-                            <div class="space-y-2 text-sm sm:text-base text-white">
-                                <div class="flex justify-between items-center">
-                                    <span>📝 基礎分：</span>
-                                    <span class="font-bold text-yellow-300">${baseScore} 分</span>
-                                </div>
-                                <div class="flex justify-between items-center">
-                                    <span>✨ 筆記加分：</span>
-                                    <span class="font-bold text-yellow-300">+${highlightBonus} 分</span>
-                                </div>
-                                <div class="pt-2 border-t border-white border-opacity-30"></div>
-                                <div class="flex justify-between items-center text-base sm:text-lg font-bold">
-                                    <span>🏆 總分：</span>
-                                    <span class="text-yellow-300">${totalScore} 分 (${changeText})</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-xs sm:text-sm text-white text-opacity-90 text-center mt-2">
-                            💡 教師已修正答案，您的成績已自動更新！
-                        </div>
-                    </div>
-                `;
+                // 🆕 MODIFIED [v4.5.7]: 改用白底深字的成績更新卡
+                const updateMessage = buildScoreUpdateCardHtml({ baseScore, highlightBonus, totalScore, changeIcon, changeText });
 
-                showMessage(updateMessage, scoreChange >= 0 ? 'success' : 'warning', 8000, true, true);
+                showMessage(updateMessage, 'card', 8000, true, true);
 
                 // 更新排行榜顯示（不滾動到頂部，避免打斷學生）
                 try {
