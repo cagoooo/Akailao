@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.5.9** ｜ 更新時間：2026-11-19
+> **版本：V4.5.10** ｜ 更新時間：2026-11-19
 
 ---
 
@@ -9,6 +9,10 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.5.10：共用 AI 每人每天 5 次下修為 3 次（2026-11-19）
+- [x] **`functions/index.js` callGemini**：`AI_DAILY_LIMIT` 由 5 改為 3（台北時間午夜重置），超過回「今天的 3 次已用完，明天（台北時間午夜後）再來」
+- [x] **`src/app.js`**：本機提示 `AI_SHARED_RATE_LIMIT.maxCalls` 同步改為 3
 
 ### ✅ V4.5.9：離線快取改成多分頁共用（2026-11-19）
 - [x] **`src/app.js` Firestore 初始化**：舊的 `enableIndexedDbPersistence` 只允許一個分頁持有離線快取，學生在 iPad（Safari 回報為 Mac）開第二個分頁或切 App 回來時，出現「Failed to obtain exclusive access to the persistence layer」（2026-11-19 繪圖題學生端回報）。改用 `initializeFirestore` + `persistentLocalCache({ tabManager: persistentMultipleTabManager() })`，各分頁共用快取；初始化失敗時退回 `getFirestore` 一般模式。

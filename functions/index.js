@@ -21,7 +21,8 @@ const GOOGLE_CHAT_WEBHOOK = defineSecret('GOOGLE_CHAT_WEBHOOK');
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const REGION = 'asia-east1';
 // 🆕 [V4.5.1] 每位 Google 登入老師（uid）每天最多 5 次，台北時間午夜重置（原本每小時 5 次）
-const AI_DAILY_LIMIT = 5;
+// 🆕 [V4.5.10] 2026-11-19 每天 5 次下修為 3 次
+const AI_DAILY_LIMIT = 3;
 const AI_QUOTA_EXCEEDED_MSG = `今天的 ${AI_DAILY_LIMIT} 次已用完，明天（台北時間午夜後）再來`;
 
 if (!admin.apps.length) {
@@ -458,7 +459,7 @@ exports.callGemini = onCall(
       const payload = data.payload;
       assertGeminiPayload(payload);
 
-      // 🆕 [V4.5.1] 每人每天 5 次（台北時間午夜重置）
+      // 🆕 [V4.5.1] 每人每天 3 次（台北時間午夜重置；V4.5.10 由 5 次下修）
       const quota = await reserveAiQuota(request, dateKey);
       if (!quota.ok) {
         await postAiChat('quota', { teacher, feature, topic, classroom, remaining: 0 });

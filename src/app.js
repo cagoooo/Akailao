@@ -357,9 +357,9 @@ function hasValidBuiltinKey() {
     return k.length >= 30 && k.startsWith('AIzaSy');
 }
 
-// 🆕 NEW [V4.5.1]: 共用 AI 改成每人每天 5 次（台北時間午夜重置），與後端 callGemini 一致
+// 🆕 NEW [V4.5.1]: 共用 AI 改成每人每天 3 次（台北時間午夜重置；V4.5.10 由 5 次下修），與後端 callGemini 一致
 const AI_SHARED_RATE_LIMIT = {
-    maxCalls: 5,
+    maxCalls: 3,
     storageKey: 'akailaoSharedAiDailyV2'
 };
 const AI_DAILY_QUOTA_MSG = `今天的 ${AI_SHARED_RATE_LIMIT.maxCalls} 次已用完，明天（台北時間午夜後）再來`;
@@ -547,7 +547,7 @@ async function callGeminiContent(payload, options = {}) {
                 showAiLoginRequired();
                 throw aiLoginRequiredError();
             }
-            // 🆕 [V4.5.1] 今天的 5 次已用完（後端在呼叫 Gemini 前就擋下）
+            // 🆕 [V4.5.1] 今天的 3 次已用完（後端在呼叫 Gemini 前就擋下）
             if (err?.code === 'functions/resource-exhausted' && err?.details?.reason === 'daily-limit') {
                 syncSharedAiRemaining(0);
                 const quotaErr = new Error(AI_DAILY_QUOTA_MSG);
