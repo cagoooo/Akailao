@@ -14956,6 +14956,38 @@ function _renderMyClasses() {
 // 參考 pwa-cache-bust skill：陷阱#12（sw.js byte 不變 → updatefound 從不 fire）
 // 修法：BUILD_VERSION 由 CI sed 注入，每次 byte 都不同；register 加 updateViaCache:"none"
 
+// 🆕 [V4.5.8] 學生作答中不跳更新通知：學生誤按「立即重整」會讓作答與畫的重點全部消失。
+//     學生在任何作答模式（非 waiting）時先把通知收起來，回到等待畫面再顯示；老師端不受影響。
+let _pendingSwUpdate; // undefined = 沒有待顯示；null = 新版已接管（直接重整）；worker = 等待中的新版
+function _isStudentAnswering() {
+    return currentRole === 'student' && !!currentInteractionMode && currentInteractionMode !== 'waiting';
+}
+function _requestSwUpdateToast(waitingWorker) {
+    if (_isStudentAnswering()) {
+        // 已有等待中的新版就保留它（null 不能蓋掉 worker，否則按重整時不會通知新版接管）
+        if (_pendingSwUpdate === undefined || waitingWorker) _pendingSwUpdate = waitingWorker;
+        console.log('[SW] 學生作答中，更新通知延到回到等待畫面再顯示');
+        return;
+    }
+    _showSwUpdateToast(waitingWorker);
+}
+setInterval(() => {
+    try {
+        const toast = document.getElementById('sw-update-toast');
+        if (_isStudentAnswering()) {
+            // 通知已經跳出後老師才發題：立刻收起來，避免學生作答中誤按
+            if (toast) {
+                if (_pendingSwUpdate === undefined) _pendingSwUpdate = toast._swWorker ?? null;
+                toast.remove();
+            }
+        } else if (_pendingSwUpdate !== undefined && !toast) {
+            const w = _pendingSwUpdate;
+            _pendingSwUpdate = undefined;
+            _showSwUpdateToast(w);
+        }
+    } catch (_) { /* 不影響作答 */ }
+}, 2000);
+
 function _showSwUpdateToast(waitingWorker) {
     if (document.getElementById('sw-update-toast')) return;
     const toast = document.createElement('div');
@@ -14964,10 +14996,13 @@ function _showSwUpdateToast(waitingWorker) {
         '<span>📝 教材已更新！</span>' +
         '<button class="sw-reload-btn" id="sw-reload-btn">立即重整</button>' +
         '<button class="sw-dismiss-btn" aria-label="關閉">✕</button>';
+    toast._swWorker = waitingWorker || null;
     document.body.appendChild(toast);
 
     document.getElementById('sw-reload-btn').addEventListener('click', () => {
         toast.remove();
+        // 🆕 [V4.5.8] 保險：按下的瞬間剛好開始作答，就不重整，等回到等待畫面再問
+        if (_isStudentAnswering()) { _pendingSwUpdate = waitingWorker || null; return; }
         if (waitingWorker) {
             // prompt-to-refresh：通知等待中的 SW 執行 skipWaiting
             // 用 sessionStorage flag 防 controllerchange 無限 reload（陷阱#3）
@@ -14991,7 +15026,7 @@ if ('serviceWorker' in navigator) {
                 worker.addEventListener('statechange', () => {
                     // 確認「是更新非首裝」：必須有舊 controller（陷阱#12 / #3）
                     if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-                        _showSwUpdateToast(worker);
+                        _requestSwUpdateToast(worker);
                     }
                 });
             };
@@ -15003,7 +15038,7 @@ if ('serviceWorker' in navigator) {
             // 線 B：SW activate 後廣播 SW_ACTIVATED（備胎，GitHub CDN polling 延遲 10 分鐘問題）
             navigator.serviceWorker.addEventListener('message', e => {
                 if (e.data?.type === 'SW_ACTIVATED' && navigator.serviceWorker.controller) {
-                    _showSwUpdateToast(null); // SW 已接管，直接 reload 即可
+                    _requestSwUpdateToast(null); // SW 已接管，直接 reload 即可（學生作答中先延後）
                 }
             });
         })
