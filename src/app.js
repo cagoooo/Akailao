@@ -50,6 +50,7 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 let currentTeacherGoogleUser = null; // 當前登入的老師 Google 用戶物件
 let _teacherAuthInProgress = false;  // popup 期間避免 onAuthStateChanged 搶先跳頁
+let _studentSwitchInProgress = false; // 🆕 [V4.6.1] 按「我是學生」時從老師帳號切回匿名，避免登入監聽把畫面跳回首頁
 
 // Use __app_id for the base Firestore path.
 const baseAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-classroom-app';
@@ -9959,7 +9960,11 @@ async function endClassSession() {
 
         classroomCode = null; // Clear the classroom code after ending session
         localStorage.removeItem('teacherClassroomCode'); // Clear from local storage
-        currentTeacherGoogleUser = null; // 🆕 [V4.0.0] 清空老師 Google 身分
+        // 🆕 [V4.6.1] Google 登入的老師下課後保持登入，直接回到選教室畫面（科任老師換班不用重新登入）
+        const _stayTeacher = !!(auth.currentUser && !auth.currentUser.isAnonymous && auth.currentUser.providerData?.length);
+        currentClaimRole = 'none';
+        updateCoTeacherButton();
+        if (!_stayTeacher) currentTeacherGoogleUser = null; // 🆕 [V4.0.0] 清空老師 Google 身分
 
         // 🚀 CRITICAL: 清空所有全局狀態變量
         studentName = null;
@@ -10006,6 +10011,15 @@ async function endClassSession() {
         document.getElementById('teacher-image-preview-container').classList.add('hidden');
         isResponsePaused = false; // NEW: Reset pause state
         updateTeacherPauseButtonUI(); // NEW: Update pause button UI
+
+        if (_stayTeacher) {
+            // 🆕 [V4.6.1] 保持 Google 登入，回到選教室畫面
+            currentTeacherGoogleUser = auth.currentUser;
+            updateTeacherProfileUI();
+            showView('teacherClassroomCode');
+            showMessage('課程已結束，資料已清空。可以直接選下一個教室。', 'success', 5000);
+            return;
+        }
 
         // 🆕 [V4.0.0] 清除老師帳號 UI
         const menuProfile = document.getElementById('teacher-menu-profile');
@@ -11456,7 +11470,23 @@ function setupEventListeners() {
             }
         }
     });
-    document.getElementById('student-entry-btn').addEventListener('click', () => {
+    document.getElementById('student-entry-btn').addEventListener('click', async () => {
+        // 🆕 [V4.6.1] 同一台裝置剛才是老師 Google 登入（下課後會保持登入）→ 學生使用前換回匿名身分，
+        //     否則學生會以老師帳號作答，被資料庫規則擋下
+        if (auth.currentUser && !auth.currentUser.isAnonymous) {
+            _studentSwitchInProgress = true;
+            try {
+                currentTeacherGoogleUser = null;
+                document.getElementById('teacher-google-profile')?.classList.add('hidden');
+                await signOut(auth);
+                await signInAnonymously(auth);
+                await new Promise(r => setTimeout(r, 300)); // 讓登入監聽先跑完
+            } catch (e) {
+                console.warn('[Student] 切換為學生身分失敗:', e?.message);
+            } finally {
+                _studentSwitchInProgress = false;
+            }
+        }
         currentRole = 'student';
         showView('studentName');
         // 🆕 [v3.8.26] 學生選擇角色時偵測 WebView
@@ -11612,6 +11642,7 @@ function setupEventListeners() {
                 classStartTime = Date.now();
                 showView('teacherMenu');
                 updateCoTeacherButton();
+                _restoreBtn(); // 🆕 [V4.6.1] 成功也要還原按鈕：否則下課回到選教室畫面時，按鈕仍卡在「建立教室中…」而且按不動
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
                 if (_claim.created || _claim.takeover) {
                     showMessage(`🔒 教室代碼「${classroomCode}」已登記給你，其他老師不能使用（30 天沒用會自動釋出）`, 'success', 6000);
@@ -15819,7 +15850,14 @@ async function initialize() {
             }
 
             // ── 匿名用戶：原有流程 ──
-            const savedTeacherClassroomCode = localStorage.getItem('teacherClassroomCode');
+            let savedTeacherClassroomCode = localStorage.getItem('teacherClassroomCode');
+            // 🆕 [V4.6.1] 老師端一律要 Google 登入（資料庫只讓教室主人／協同老師改設定），
+            //     匿名身分留下的老師代碼已無法操作教室，改回首頁請老師重新登入
+            if (savedTeacherClassroomCode) {
+                localStorage.removeItem('teacherClassroomCode');
+                savedTeacherClassroomCode = null;
+                setTimeout(() => showMessage('老師端需要用 Google 帳號登入，請點「我是教師」重新登入', 'info', 6000), 800);
+            }
             if (savedTeacherClassroomCode) {
                 classroomCode = savedTeacherClassroomCode;
                 currentRole = 'teacher';
@@ -15874,7 +15912,7 @@ async function initialize() {
                     // 🆕 [v3.8.26] QR 掃碼直達學生模式時，立即偵測 WebView
                     WebViewDetector.init();
                 } else {
-                    showView('entry');
+                    if (!_studentSwitchInProgress) showView('entry');
                 }
             }
             // 🆕 [V4.2.8] PUB-2：偵測 ?sharedBank= 分享連結 → 提示匯入題庫（auth 已就緒）
@@ -15882,7 +15920,7 @@ async function initialize() {
         } else {
             // 🚀 OPTIMIZED: User is null 是 Firebase 認證流程的正常過渡狀態，不是錯誤
             console.log("[Auth] Waiting for authentication...");
-            showView('entry');
+            if (!_studentSwitchInProgress) showView('entry');
         }
     });
 
@@ -15929,9 +15967,16 @@ async function initialize() {
     // 🆕 MODIFIED [V4.3.3]: 登入遇到網路型失敗先自動重試（離線就等連線恢復），仍失敗才顯示錯誤並回報。
     //   起因：頁面重新整理時，進行中的匿名登入被瀏覽器取消 → auth/network-request-failed 誤報到 Chat；
     //   學校 Wi-Fi 短暫斷線也會讓整頁變成「驗證失敗」。重新整理中斷的請求不會走到重試完成，因此不再誤報。
-    const signInOnce = () => (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
-        ? signInWithCustomToken(auth, __initial_auth_token)
-        : signInAnonymously(auth);
+    // 🆕 [V4.6.1] 先等登入狀態從瀏覽器還原；已登入（尤其是老師的 Google 帳號）就不要再匿名登入。
+    //   以前重新整理時 signInAnonymously 會把老師換成新的匿名身分，靠舊的寬鬆規則才能繼續操作；
+    //   V4.6.0 起教室只給主人／協同老師操作，匿名身分會被擋。
+    const signInOnce = async () => {
+        await auth.authStateReady();
+        if (auth.currentUser) return auth.currentUser;
+        return (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
+            ? signInWithCustomToken(auth, __initial_auth_token)
+            : signInAnonymously(auth);
+    };
     const AUTH_RETRY_DELAYS_MS = [1500, 4000];
     let authAttempts = 0;
     try {
