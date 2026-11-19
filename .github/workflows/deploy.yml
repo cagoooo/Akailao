@@ -35,6 +35,13 @@ jobs:
         with:
           enablement: true
 
+      # 鎖定 Node 24（npm 11），與本機產生 package-lock.json 的版本一致；
+      # 主機預設的舊版 npm 會把鎖檔判成不同步（Missing: @emnapi/... from lock file）
+      - name: ⚙️ 設定 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: 📦 安裝依賴
         run: npm ci
 
