@@ -11606,6 +11606,7 @@ function setupEventListeners() {
                 classStartTime = Date.now();
                 showView('teacherMenu');
                 updateCoTeacherButton();
+                ReadingDraft.hintIfAny(); // 🆕 [V4.6.3] 有上次準備好的閱讀測驗就提醒
                 _restoreBtn(); // 🆕 [V4.6.1] 成功也要還原按鈕：否則下課回到選教室畫面時，按鈕仍卡在「建立教室中…」而且按不動
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
                 if (_claim.created || _claim.takeover) {
@@ -15806,6 +15807,7 @@ async function initialize() {
                     await loadQuestionBanksFromCloud(user.uid); // Phase 3: 還原題庫
                     showView('teacherMenu');
                     updateCoTeacherButton();
+                    ReadingDraft.hintIfAny(); // 🆕 [V4.6.3] 有上次準備好的閱讀測驗就提醒
                 } else {
                     // Google 登入但無教室代碼 → 教室代碼輸入頁（auto-fill 已在 loadTeacherProfile 處理）
                     showView('teacherClassroomCode');
@@ -18465,8 +18467,106 @@ function renderReadingQuestionsPreview() {
     }).join('');
 }
 
-function showReadingComprehensionModal() {
+// 🆕 [V4.6.3] 閱讀測驗出題草稿自動暫存：側邊欄（Chrome 擴充套件）關掉再打開、或不小心重新整理，
+//     準備好的文本與題目都會還原，不用重出。只存在這台電腦的瀏覽器（localStorage），14 天後失效。
+const ReadingDraft = (() => {
+    const KEY = 'akailao_reading_draft_v1';
+    const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+    const FIELDS = ['reading-text-textarea', 'reading-questions-textarea', 'ai-reading-topic-textarea',
+        'ai-reading-grade-select', 'ai-reading-subject-select', 'reading-question-bank-name-input'];
+    let lastJson = '';
+    let hinted = false;
+
+    const collect = () => {
+        const o = {};
+        FIELDS.forEach(id => { const el = document.getElementById(id); if (el) o[id] = el.value; });
+        return o;
+    };
+    const hasContent = (o) => !!((o['reading-text-textarea'] || '').trim() || (o['reading-questions-textarea'] || '').trim());
+
+    function save() {
+        try {
+            const o = collect();
+            const j = JSON.stringify(o);
+            if (j === lastJson || !hasContent(o)) return;
+            lastJson = j;
+            localStorage.setItem(KEY, JSON.stringify({ savedAt: Date.now(), fields: o }));
+        } catch (e) { /* 瀏覽器不給存就算了，不影響出題 */ }
+    }
+    function load() {
+        try {
+            const d = JSON.parse(localStorage.getItem(KEY) || 'null');
+            if (!d || !d.fields || !hasContent(d.fields) || Date.now() - (d.savedAt || 0) > MAX_AGE_MS) return null;
+            return d;
+        } catch (e) { return null; }
+    }
+    function timeText(ms) {
+        const d = new Date(ms), now = new Date();
+        const hm = d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+        return d.toDateString() === now.toDateString() ? `今天 ${hm}` : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+    }
+    function removeBanner() { document.getElementById('reading-draft-banner')?.remove(); }
+    function showBanner(savedAt) {
+        removeBanner();
+        const anchor = document.getElementById('reading-text-textarea');
+        if (!anchor) return;
+        const box = document.createElement('div');
+        box.id = 'reading-draft-banner';
+        box.setAttribute('role', 'status');
+        box.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;font-size:.95rem;';
+        box.innerHTML = `<span>♻️ 已還原上次準備的閱讀測驗（${timeText(savedAt)}）</span>
+            <button type="button" style="min-height:36px;padding:0 12px;border:1px solid #f87171;border-radius:8px;background:#fff;color:#b91c1c;font-weight:700;cursor:pointer;">清除，重新出題</button>`;
+        box.querySelector('button').addEventListener('click', () => {
+            if (!confirm('確定要清除這份準備好的文本與題目嗎？')) return;
+            clear();
+            ['reading-text-textarea', 'reading-questions-textarea', 'ai-reading-topic-textarea', 'reading-question-bank-name-input']
+                .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+            document.getElementById('reading-questions-preview')?.classList.add('hidden');
+            lastJson = JSON.stringify(collect());
+        });
+        // 放在「閱讀文本」欄所在區塊的最上面
+        const section = anchor.closest('div') || anchor.parentElement;
+        section.parentElement.insertBefore(box, section);
+    }
+    /** 欄位是空的時候，把草稿填回去；回傳是否有還原 */
+    function restoreInto() {
+        const d = load();
+        if (!d) return false;
+        Object.entries(d.fields).forEach(([id, v]) => {
+            const el = document.getElementById(id);
+            if (!el || typeof v !== 'string') return;
+            if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === v)) return;
+            el.value = v;
+        });
+        lastJson = JSON.stringify(collect());
+        try { renderReadingQuestionsPreview(); } catch (e) { }
+        showBanner(d.savedAt);
+        return true;
+    }
+    function clear() {
+        try { localStorage.removeItem(KEY); } catch (e) { }
+        removeBanner();
+    }
+    /** 進入教師選單時，若有草稿就提醒一次 */
+    function hintIfAny() {
+        if (hinted || !load()) return;
+        hinted = true;
+        setTimeout(() => showMessage('♻️ 有上次準備好的閱讀測驗，打開「閱讀測驗」就會自動還原', 'info', 6000), 600);
+    }
+
+    // 文字欄位打字時、AI 填入結果後（每 1.5 秒檢查一次）、分頁關閉或切走時都存一次
+    document.addEventListener('input', (e) => { if (FIELDS.includes(e.target?.id)) save(); }, true);
+    document.addEventListener('change', (e) => { if (FIELDS.includes(e.target?.id)) save(); }, true);
+    setInterval(save, 1500);
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') save(); });
+
+    return { save, restoreInto, clear, hintIfAny, hasDraft: () => !!load() };
+})();
+
+function showReadingComprehensionModal({ restoreDraft = true } = {}) {
     document.getElementById('reading-comprehension-settings-modal').classList.remove('hidden');
+    document.getElementById('reading-draft-banner')?.remove();
     // Populate with existing data if any
     document.getElementById('reading-text-textarea').value = readingComprehensionData.text || '';
     if (readingComprehensionData.questions && readingComprehensionData.questions.length > 0) {
@@ -18478,6 +18578,11 @@ function showReadingComprehensionModal() {
     }
     // 🆕 NEW: 每次開啟模態框時重置 AI 出題圖片上傳狀態
     clearReadingAiImages();
+    // 🆕 [V4.6.3] 這次頁面還沒出過題（例如側邊欄剛重新打開）→ 還原上次的草稿
+    if (restoreDraft && !document.getElementById('reading-text-textarea').value.trim()
+        && !document.getElementById('reading-questions-textarea').value.trim()) {
+        ReadingDraft.restoreInto();
+    }
 }
 
 /**
@@ -20639,7 +20744,7 @@ const ExtensionBridge = (() => {
     }
 
     function openReadingModal(payload) {
-        showReadingComprehensionModal();
+        showReadingComprehensionModal({ restoreDraft: false }); // 擴充套件送來新內容，不還原舊草稿
         const gradeSel = document.getElementById('ai-reading-grade-select');
         if (gradeSel && payload.grade && [...gradeSel.options].some(o => o.value === payload.grade)) {
             gradeSel.value = payload.grade;
