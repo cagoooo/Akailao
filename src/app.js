@@ -9784,6 +9784,19 @@ async function downloadAllPhotoWallAsZip() {
     }
 }
 
+// 🆕 [V4.6.2] 刪除集合內所有（或符合條件的）文件：用批次刪除，一次最多 400 筆打包成一個請求。
+//     （一次同時送出幾百個刪除會塞爆連線，實測會失敗並留下殘餘資料，所以用批次。）
+async function _deleteAllDocs(colRef, filter) {
+    const snap = await getDocs(colRef);
+    const docs = filter ? snap.docs.filter(filter) : snap.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+    }
+    return docs.length;
+}
+
 async function endClassSession() {
     // 🆕 [v3.8.27] 先檢查是否有相片牆作品，若有則提醒下載
     if (classroomCode) {
@@ -9880,80 +9893,31 @@ async function endClassSession() {
         if (classroomCode) {
             console.log(`[Teacher] Starting cleanup for classroom: ${classroomCode}`);
 
-            // 🚀 FIX: 分別捕獲每個刪除操作的錯誤，避免單一失敗導致整個流程中斷
+            // 🆕 [V4.6.2] 下課清除改成「同時刪」：以前一筆一筆等伺服器回覆才刪下一筆，
+            //     作答、在線紀錄、錯誤紀錄一多就要等 30 秒左右。改成各集合同時、以批次刪除；
+            //     教室設定（學生端靠它知道下課）最後才刪。單一集合失敗不影響其他集合。
+            const _roomCol = (name) => collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, name);
+            const _errCutoff = Date.now() - 7 * 24 * 3600 * 1000; // [V4.2.7] OBS-3：只清 7 天前的錯誤紀錄
+            const _cleanupJobs = [
+                ['student responses', () => _deleteAllDocs(_roomCol('studentResponses'))],
+                ['presence records', () => _deleteAllDocs(_roomCol('presence'))],
+                ['photo wall archives', () => _deleteAllDocs(_roomCol('photoWall'))], // [v3.8.27] 節省雲端空間
+                ['team scores', () => _deleteAllDocs(_roomCol('teamScores'))],
+                ['old error logs (>7d)', () => _deleteAllDocs(_roomCol('errors'), d => (d.data().tsLocal || 0) < _errCutoff)],
+            ];
+            const _t0 = performance.now();
+            const _results = await Promise.allSettled(_cleanupJobs.map(([, run]) => run()));
+            _results.forEach((r, i) => {
+                if (r.status === 'fulfilled') console.log(`[Teacher] ✓ Deleted ${r.value} ${_cleanupJobs[i][0]}`);
+                else console.error(`[Teacher] ✗ Failed to delete ${_cleanupJobs[i][0]}:`, r.reason);
+            });
             try {
-                const classroomRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'studentResponses');
-                const responsesSnapshot = await getDocs(classroomRef);
-                console.log(`[Teacher] Deleting ${responsesSnapshot.docs.length} student responses...`);
-                for (const docSnap of responsesSnapshot.docs) {
-                    await deleteDoc(docSnap.ref);
-                }
-                console.log('[Teacher] ✓ Student responses deleted');
-            } catch (error) {
-                console.error('[Teacher] ✗ Failed to delete student responses:', error);
-                // 繼續執行，不中斷
-            }
-
-            try {
-                const presenceRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'presence');
-                const presenceSnapshot = await getDocs(presenceRef);
-                console.log(`[Teacher] Deleting ${presenceSnapshot.docs.length} presence records...`);
-                for (const docSnap of presenceSnapshot.docs) {
-                    await deleteDoc(docSnap.ref);
-                }
-                console.log('[Teacher] ✓ Presence records deleted');
-            } catch (error) {
-                console.error('[Teacher] ✗ Failed to delete presence records:', error);
-                // 繼續執行，不中斷
-            }
-
-            try {
-                const settingsDocRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
-                console.log('[Teacher] Deleting control document...');
-                await deleteDoc(settingsDocRef);
+                await deleteDoc(doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control'));
                 console.log('[Teacher] ✓ Control document deleted');
             } catch (error) {
                 console.error('[Teacher] ✗ Failed to delete control document:', error);
             }
-
-            // 🆕 [v3.8.27] 清除相片牆歸檔（節省雲端空間）
-            try {
-                const photoWallRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'photoWall');
-                const photoSnap = await getDocs(photoWallRef);
-                console.log(`[Teacher] Deleting ${photoSnap.size} photo wall archives...`);
-                for (const docSnap of photoSnap.docs) {
-                    await deleteDoc(docSnap.ref);
-                }
-                console.log('[Teacher] ✓ Photo wall archives deleted');
-            } catch (error) {
-                console.error('[Teacher] ✗ Failed to delete photo wall archives:', error);
-            }
-
-            // 🆕 [v3.8.27] 清除隊伍分數
-            try {
-                const teamScoresRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'teamScores');
-                const teamSnap = await getDocs(teamScoresRef);
-                for (const docSnap of teamSnap.docs) {
-                    await deleteDoc(docSnap.ref);
-                }
-                console.log(`[Teacher] ✓ Deleted ${teamSnap.size} team scores`);
-            } catch (error) {
-                console.error('[Teacher] ✗ Failed to delete team scores:', error);
-            }
-
-            // 🆕 [V4.2.7] OBS-3：清除 7 天前的舊錯誤紀錄（避免 Firestore 累積吃免費額度）
-            try {
-                const errCutoff = Date.now() - 7 * 24 * 3600 * 1000;
-                const errColRef = collection(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'errors');
-                const errSnap = await getDocs(errColRef);
-                let pruned = 0;
-                for (const docSnap of errSnap.docs) {
-                    if ((docSnap.data().tsLocal || 0) < errCutoff) { await deleteDoc(docSnap.ref); pruned++; }
-                }
-                if (pruned > 0) console.log(`[Teacher] ✓ Pruned ${pruned} old error logs (>7d)`);
-            } catch (error) {
-                console.error('[Teacher] ✗ Failed to prune old error logs:', error);
-            }
+            console.log(`[Teacher] 清除耗時 ${Math.round(performance.now() - _t0)} ms`);
 
             console.log(`[Teacher] ✓ Cleanup completed for classroom: ${classroomCode}`);
         }
