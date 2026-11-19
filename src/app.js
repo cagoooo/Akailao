@@ -3833,6 +3833,7 @@ async function setInteractionMode(mode, options = {}) {
             active_mode: mode,
             backgroundImage: teacherUploadedBackgroundImageDataURL || null,
             teacherId: userId, // Store teacher ID
+            teacherActiveAt: Date.now(), // 🆕 [V4.5.12] 撞號提醒用：這位老師最後一次操作教室的時間
             isPaused: isResponsePaused, // Use current local pause state
             lastDrawnStudent: null, // <-- 在此新增 (清除上次抽籤紀錄)
             showMatchingAnswer: false, // Reset matching answer display
@@ -4169,6 +4170,65 @@ function showModeConfirmationDialog(newMode, onConfirm) {
             confirmDialog.remove();
             showMessage('已取消切換模式', 'info');
         }
+    });
+}
+
+// 🆕 [V4.5.12] 教室代碼撞號提醒：同一個代碼不分帳號都是同一間教室（classrooms/{代碼}），
+//     別的老師也用 601 時，畫面會互相切換、作答混在一起，任何一方按「下課」會把整間教室的作答刪光。
+//     進教室前若這間教室最近是「別的帳號」在用，先跳提醒，讓老師換代碼或確認是協同教學。
+const SHARED_CLASSROOM_RECENT_MS = 7 * 24 * 60 * 60 * 1000; // 超過 7 天沒動靜的舊教室不提醒
+
+function shouldWarnSharedClassroom(control, myUid, now = Date.now()) {
+    if (!control || !control.teacherId || control.teacherId === myUid) return false;
+    const at = Number(control.teacherActiveAt) || 0;
+    return !at || (now - at) < SHARED_CLASSROOM_RECENT_MS; // 舊資料沒有時間 → 無法判斷，保守提醒
+}
+
+function confirmSharedClassroomCode(code, activeAt) {
+    return new Promise((resolve) => {
+        const safeCode = escapeHtmlSafe(code);
+        let whenText = '使用時間不明（可能是之前沒有按「下課」留下的）';
+        const at = Number(activeAt) || 0;
+        if (at) {
+            const mins = Math.max(0, Math.round((Date.now() - at) / 60000));
+            whenText = mins < 1 ? '剛剛還在使用'
+                : mins < 60 ? `${mins} 分鐘前還在使用`
+                : mins < 24 * 60 ? `${Math.round(mins / 60)} 小時前還在使用`
+                : `${Math.round(mins / 1440)} 天前使用過`;
+        }
+        const overlay = document.createElement('div');
+        overlay.id = 'shared-classroom-warning';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px;';
+        overlay.innerHTML = `
+            <div style="background:#fff;border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);max-width:480px;width:100%;padding:24px;color:#1f2937;line-height:1.7;">
+                <h3 style="font-size:1.35rem;font-weight:800;margin:0 0 12px;color:#b45309;">⚠️ 教室代碼「${safeCode}」有其他老師在用</h3>
+                <p style="margin:0 0 8px;font-size:1.05rem;">另一個帳號開過這間教室：<strong>${whenText}</strong>。</p>
+                <p style="margin:0 0 8px;font-size:1.05rem;">同一個代碼就是同一間教室，兩邊會：</p>
+                <ul style="margin:0 0 12px;padding-left:1.4em;font-size:1rem;">
+                    <li>出題時互相切換對方學生的畫面</li>
+                    <li>學生作答混在一起</li>
+                    <li><strong style="color:#b91c1c;">任何一方按「下課」，整間教室的作答都會被刪除</strong></li>
+                </ul>
+                <p style="margin:0 0 18px;font-size:1rem;background:#fef3c7;border-radius:10px;padding:10px 12px;">建議換一個不容易撞到的代碼，例如加上學校或姓名：<strong>王老師${safeCode}</strong>、<strong>abc${safeCode}</strong>。</p>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <button type="button" data-act="change" style="flex:1 1 180px;min-height:48px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;">換一個代碼</button>
+                    <button type="button" data-act="enter" style="flex:1 1 180px;min-height:48px;border:2px solid #9ca3af;border-radius:12px;background:#fff;color:#374151;font-weight:700;font-size:1rem;cursor:pointer;">仍要進入（協同教學）</button>
+                </div>
+            </div>`;
+        const close = (ok) => {
+            document.removeEventListener('keydown', onKey, true);
+            overlay.remove();
+            resolve(ok);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(false); } };
+        overlay.querySelector('[data-act="change"]').addEventListener('click', () => close(false));
+        overlay.querySelector('[data-act="enter"]').addEventListener('click', () => close(true));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-act="change"]').focus();
     });
 }
 
@@ -11376,6 +11436,26 @@ function setupEventListeners() {
                 _submitBtn.innerHTML = '進入教師面板 <span class="cb-arrow">→</span>';
             };
             _submitBtn.disabled = true;
+
+            // 🆕 [V4.5.12] 先確認這個代碼最近是不是別的老師帳號在用
+            _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>檢查教室代碼…</span>';
+            try {
+                const _snap = await getDoc(doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', code, 'settings', 'control'));
+                const _control = _snap.exists() ? _snap.data() : null;
+                if (shouldWarnSharedClassroom(_control, userId)) {
+                    const _goOn = await confirmSharedClassroomCode(code, _control.teacherActiveAt);
+                    if (!_goOn) {
+                        _restoreBtn();
+                        const _input = document.getElementById('teacher-classroom-code-input');
+                        _input.focus();
+                        _input.select();
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('[Teacher] 檢查教室代碼是否被使用失敗，照常進入：', e?.message);
+            }
+
             _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>同步題庫中…</span>';
 
             try {
@@ -11396,7 +11476,7 @@ function setupEventListeners() {
 
                 // Set initial classroom state in Firestore, including isPaused: false
                 const controlRef = doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', classroomCode, 'settings', 'control');
-                await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true });
+                await setDoc(controlRef, { active_mode: 'waiting', teacherId: userId, teacherActiveAt: Date.now(), backgroundImage: null, isPaused: false, multiple_choice_questions: null }, { merge: true });
                 isResponsePaused = false; // Initialize local state
                 updateTeacherPauseButtonUI(); // Update button UI
                 currentMultipleChoiceQuestions = null; // Ensure this is cleared on new class
