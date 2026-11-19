@@ -1,6 +1,6 @@
 # 🎓 剛好學（Akailao）— 開發進度與未來規劃
 
-> **版本：V4.5.8** ｜ 更新時間：2026-11-19
+> **版本：V4.5.9** ｜ 更新時間：2026-11-19
 
 ---
 
@@ -9,6 +9,9 @@
 > V4.2.x 把 V3.9 起的黑板筆記版視覺語言**往內延伸到 12/13 個學生互動模式 + 教師備課桌**，
 > 並補上無障礙動畫降級、「前端錯誤自動上報 + Chat 推播 + 健康面板/用量估算」可觀測性、
 > 互動自動計時鎖定、題庫分享連結、以及多班級管理。
+
+### ✅ V4.5.9：離線快取改成多分頁共用（2026-11-19）
+- [x] **`src/app.js` Firestore 初始化**：舊的 `enableIndexedDbPersistence` 只允許一個分頁持有離線快取，學生在 iPad（Safari 回報為 Mac）開第二個分頁或切 App 回來時，出現「Failed to obtain exclusive access to the persistence layer」（2026-11-19 繪圖題學生端回報）。改用 `initializeFirestore` + `persistentLocalCache({ tabManager: persistentMultipleTabManager() })`，各分頁共用快取；初始化失敗時退回 `getFirestore` 一般模式。
 
 ### ✅ V4.5.8：學生作答中不跳出更新通知（2026-11-19）
 - [x] **`src/app.js` Service Worker 更新通知**：學生在閱讀測驗等作答模式中，誤按「📝 教材已更新！立即重整」會讓作答紀錄與畫的重點全部消失。新增 `_requestSwUpdateToast()`：學生在非 waiting 模式時先不顯示，回到等待畫面才跳出；通知已顯示後老師才發題，2 秒內自動收起；按下重整的瞬間若已開始作答也不重整。老師端照常顯示。

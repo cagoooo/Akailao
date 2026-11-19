@@ -1,7 +1,7 @@
 // Import Firebase SDK functions.
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, enableIndexedDbPersistence } from "firebase/firestore";
+import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
 
@@ -29,7 +29,17 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
+// 🆕 [V4.5.9] PERF-4 離線快取改成「多分頁共用」：舊的 enableIndexedDbPersistence 只允許一個分頁持有快取，
+//     學生在 iPad 開了第二個分頁、或切到別的 App 再回來時，會出現
+//     「Failed to obtain exclusive access to the persistence layer」，搶不到快取的分頁可能寫不進作答。
+//     多分頁模式讓每個分頁共用同一份快取；瀏覽器不支援時退回一般（只存記憶體）模式。
+let db;
+try {
+    db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+} catch (e) {
+    console.warn('[Firestore] 離線快取啟用失敗，改用一般模式:', e?.message);
+    db = getFirestore(app);
+}
 const functions = getFunctions(app, 'asia-east1');
 const callGeminiFunction = httpsCallable(functions, 'callGemini');
 initUsageNotify(app);
@@ -39,19 +49,6 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 let currentTeacherGoogleUser = null; // 當前登入的老師 Google 用戶物件
 let _teacherAuthInProgress = false;  // popup 期間避免 onAuthStateChanged 搶先跳頁
-
-// 🆕 NEW [v3.8.23] PERF-4: 啟用 Firestore 離線快取
-// 學生短暫斷網時仍能繼續操作；大幅減少 Firestore 讀取次數（免費方案 50,000 次/日）
-// 多分頁同時開啟時可能會 warn "already enabled"，用 catch 忽略即可
-enableIndexedDbPersistence(db).catch(err => {
-    if (err.code === 'failed-precondition') {
-        console.warn('[Firestore] 離線快取啟用失敗（多分頁同時開啟），僅第一個分頁有效');
-    } else if (err.code === 'unimplemented') {
-        console.warn('[Firestore] 此瀏覽器不支援離線快取');
-    } else {
-        console.error('[Firestore] 離線快取錯誤:', err);
-    }
-});
 
 // Use __app_id for the base Firestore path.
 const baseAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-classroom-app';
