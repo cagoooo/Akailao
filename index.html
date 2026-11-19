@@ -1199,17 +1199,22 @@
                     <!-- 前十名排行榜：固定浮動於畫面右下角，不推擠閱讀版面 -->
                     <div id="reading-leaderboard" class="hidden">
                         <div id="reading-leaderboard-inner">
-                            <div id="reading-leaderboard-header"
-                                onclick="document.getElementById('reading-leaderboard-body').classList.toggle('collapsed'); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-up'); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-down');"
-                                title="點擊收折/展開排行榜">
-                                <span style="font-size:13px; font-weight:700; color:#92400e;">
-                                    <i class="fas fa-trophy mr-1 text-yellow-600"></i>前十名排行榜 🏆
-                                </span>
-                                <i class="fas fa-chevron-up lb-chevron text-yellow-700" style="font-size:12px;"></i>
-                            </div>
+                            <!-- 🆕 [V4.6.4] 收合列移到最下面：排行榜固定在右下角，字放大時上緣會被擠出畫面，下緣永遠按得到 -->
                             <div id="reading-leaderboard-body">
                                 <div id="reading-leaderboard-list"></div>
                             </div>
+                            <button type="button" id="reading-leaderboard-header" aria-expanded="true"
+                                aria-controls="reading-leaderboard-body"
+                                onclick="var b=document.getElementById('reading-leaderboard-body'); var c=b.classList.toggle('collapsed'); this.setAttribute('aria-expanded', String(!c)); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-down', !c); this.querySelector('.lb-chevron').classList.toggle('fa-chevron-up', c); this.querySelector('.lb-toggle-text').textContent = c ? '展開' : '收合';"
+                                title="點擊收合／展開排行榜">
+                                <span style="font-size:13px; font-weight:700; color:#92400e;">
+                                    <i class="fas fa-trophy mr-1 text-yellow-600"></i>前十名排行榜 🏆
+                                </span>
+                                <span class="lb-toggle" style="font-size:12px; font-weight:700; color:#92400e;">
+                                    <span class="lb-toggle-text">收合</span>
+                                    <i class="fas fa-chevron-down lb-chevron text-yellow-700" style="font-size:12px;"></i>
+                                </span>
+                            </button>
                         </div>
                     </div>
 

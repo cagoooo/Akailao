@@ -15009,6 +15009,14 @@ function initReadingZoom() {
         // 這樣滑桿才不會隨全域放大而變得異常巨大，確保操作性
         controlsContainer.style.zoom = 1 / zoomVal;
 
+        // 3.5 🆕 [V4.6.4] 排行榜最多跟著放大到 125%：它固定在右下角，放太大會把上緣（舊的收合鈕）擠出畫面
+        const leaderboard = document.getElementById('reading-leaderboard');
+        if (leaderboard) {
+            const lbZoom = Math.min(zoomVal, 1.25);
+            leaderboard.style.zoom = lbZoom / zoomVal;
+            leaderboard.style.setProperty('--lb-zoom', lbZoom); // CSS 用來把高度上限換算回實際螢幕高度
+        }
+
         // 4. 持久化
         localStorage.setItem('reading-zoom-level', zoomVal);
         console.log(`[ReadingZoom] Global Zoom applied: ${zoomVal}, Compensation: ${1 / zoomVal}`);
