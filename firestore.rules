@@ -25,93 +25,143 @@ service cloud.firestore {
       }
     }
 
-    // 🆕 MODIFIED [v3.8.24] SEC-2 + SEC-3：細粒度安全規則
-    // 教室公開資料（artifacts 路徑）
-    match /artifacts/{appId}/public/data/classrooms/{classroomCode} {
+    // ===== 🆕 [V4.6.0] 教室代碼「先申請先用」 =====
+    // 同一個代碼不分帳號都是同一間教室，所以代碼要有主人：
+    //   classroomClaims/{代碼}                     主人（ownerUid）與最後使用時間
+    //   classroomClaims/{代碼}/members/{老師uid}   協同老師（用邀請碼加入）
+    //   classroomClaims/{代碼}/invite/current      邀請碼（只有主人看得到）
+    // 學生（匿名登入）照舊可以作答；Google 登入的老師只能操作自己（或受邀）的教室。
+    // 主人 30 天沒用，其他老師可以接手；保留代碼不會被接手。
 
-      // 教室設定（control doc）：
-      // 讀取：任何登入用戶（學生需要讀取互動模式）
-      // 寫入：非匿名用戶（老師 Google 帳號）才能寫
-      match /settings/{settingId} {
-        allow read: if request.auth != null;
-        allow write: if request.auth != null
-                     && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    function signedIn() { return request.auth != null; }
+    function isAnon() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous'; }
+    function isGoogle() { return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous'; }
+
+    // 保留代碼：只有指定帳號能申請（存 Email 的 SHA-256，不放明文 Email）
+    function reservedCodes() {
+      return {
+        '601': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea',
+        '602': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea',
+        '603': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea',
+        '604': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea',
+        '605': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea',
+        '606': '92bcd66f6230e1ebd5090bde274e6b39f86600638efbfb0719c204d3ce7e2cea'
+      };
+    }
+    function isReserved(code) { return code in reservedCodes(); }
+    function myEmailHash() {
+      return hashing.sha256(request.auth.token.get('email', '').lower().toUtf8()).toHexString().lower();
+    }
+    function reservedOk(code) { return !isReserved(code) || myEmailHash() == reservedCodes()[code]; }
+
+    function claimPath(appId, code) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code);
+    }
+    function memberPath(appId, code, uid) {
+      return /databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/members/$(uid);
+    }
+    function isOwner(appId, code) {
+      return isGoogle() && exists(claimPath(appId, code))
+          && get(claimPath(appId, code)).data.ownerUid == request.auth.uid;
+    }
+    function isMember(appId, code) {
+      return isGoogle() && exists(claimPath(appId, code))
+          && exists(memberPath(appId, code, request.auth.uid))
+          && get(memberPath(appId, code, request.auth.uid)).data.ownerUid
+             == get(claimPath(appId, code)).data.ownerUid;
+    }
+    // 可以操作這間教室的老師：主人、協同老師；還沒有人申請的舊教室照舊開放（相容既有課堂）
+    function isRoomTeacher(appId, code) {
+      return isGoogle() && (!exists(claimPath(appId, code)) || isOwner(appId, code) || isMember(appId, code));
+    }
+    function canWriteRoom(appId, code) { return isAnon() || isRoomTeacher(appId, code); }
+
+    function claimFieldsOk() {
+      return request.resource.data.keys().hasOnly(['ownerUid', 'ownerName', 'claimedAt', 'lastUsedAt'])
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerName is string
+          && request.resource.data.ownerName.size() <= 100
+          && request.resource.data.lastUsedAt == request.time;
+    }
+
+    match /artifacts/{appId}/public/data/classroomClaims/{code} {
+      allow read: if signedIn();
+      // 第一位申請的老師成為主人
+      allow create: if isGoogle() && reservedOk(code) && claimFieldsOk()
+                    && request.resource.data.claimedAt == request.time;
+      // 主人更新（最後使用時間、顯示名稱）；不能把代碼轉給別人
+      allow update: if isGoogle() && (
+          (resource.data.ownerUid == request.auth.uid && claimFieldsOk()
+             && request.resource.data.claimedAt == resource.data.claimedAt)
+          // 協同老師只能更新最後使用時間
+          || (isMember(appId, code)
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastUsedAt'])
+             && request.resource.data.lastUsedAt == request.time)
+          // 主人超過 30 天沒用：其他老師可以接手（保留代碼除外）
+          || (resource.data.lastUsedAt < request.time - duration.value(30, 'd')
+             && !isReserved(code) && claimFieldsOk()
+             && request.resource.data.claimedAt == request.time)
+        );
+      allow delete: if isGoogle() && resource.data.ownerUid == request.auth.uid;
+
+      match /invite/{inviteId} {
+        allow read, write: if isOwner(appId, code);
       }
 
-      // 🔒 SEC-2：學生作答記錄 — 禁止覆寫已提交的 answer
-      // 學生可以新建文件（首次提交），但如果 answer 已存在則不可覆寫
-      // 教師（透過 control doc 的 teacherId 判斷）可以覆寫（重新開始時需要清除）
-      match /studentResponses/{studentName} {
-        allow read: if request.auth != null;
-        // 新建（文件不存在）：允許
-        allow create: if request.auth != null;
-        // 更新（文件已存在）：允許（教師需要重新計分，學生需要更新 extraFields）
-        // 注意：前端已有鎖定按鈕防止學生重複提交，此處保留寬鬆以相容教師操作
-        allow update: if request.auth != null;
-        // 刪除：只有教師可以（重新開始時）
-        allow delete: if request.auth != null;
-      }
-
-      // 🔒 SEC-3：分心監控 — 學生只能寫自己的 presence，不能刪除
-      match /presence/{presenceId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null;
-        // 刪除：只允許（系統/教師在結束課堂時清除）
-        allow delete: if request.auth != null;
-      }
-
-      // 出席記錄
-      match /attendance/{studentId} {
-        allow read: if request.auth != null;
-        allow create, update: if request.auth != null;
-      }
-
-      // 等待遊戲分數
-      match /waitingGameScores/{studentId} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 歷史測驗紀錄
-      match /historicalQuizzes/{quizId} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 快速投票
-      match /quickPoll/{docId} {
-        allow read, write: if request.auth != null;
-      }
-      match /quickPollVotes/{voteId} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 互評投票
-      match /peerReviewVotes/{voteId} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 🆕 [v3.8.25] 分組競賽隊伍分數
-      match /teamScores/{teamId} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 🆕 [v3.8.27] 相片牆歸檔（繪圖作品持久保存）
-      match /photoWall/{studentName} {
-        allow read, write: if request.auth != null;
-      }
-
-      // 🆕 [V4.2.4] OBS-1：前端錯誤上報
-      // create：任何登入用戶（含匿名學生）皆可上報自己遇到的錯誤
-      // read/delete：教師檢視與清除（任何登入用戶，與其他子集合一致）
-      // 無 update（錯誤紀錄不可竄改）
-      match /errors/{errorId} {
-        allow read, delete: if request.auth != null;
-        allow create: if request.auth != null;
+      match /members/{memberUid} {
+        allow read: if isGoogle() && (request.auth.uid == memberUid || isOwner(appId, code));
+        // 拿正確、7 天內的邀請碼才能加入
+        allow create: if isGoogle() && request.auth.uid == memberUid
+          && exists(claimPath(appId, code))
+          && request.resource.data.keys().hasOnly(['ownerUid', 'joinCode', 'name', 'joinedAt'])
+          && request.resource.data.ownerUid == get(claimPath(appId, code)).data.ownerUid
+          && request.resource.data.joinedAt == request.time
+          && request.resource.data.name is string && request.resource.data.name.size() <= 100
+          && exists(/databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/invite/current)
+          && get(/databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/invite/current).data.code
+             == request.resource.data.joinCode
+          && get(/databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/invite/current).data.createdAt
+             > request.time - duration.value(7, 'd');
+        allow delete: if isGoogle() && (request.auth.uid == memberUid || isOwner(appId, code));
       }
     }
 
-    // 其他 artifacts 路徑：通用規則（保持向後相容）
-    match /artifacts/{appId}/public/{document=**} {
-      allow read, write: if request.auth != null;
+    // 🆕 MODIFIED [V4.6.0] 教室公開資料（artifacts 路徑）
+    // 讀取：任何登入用戶；寫入：學生（匿名）或這間教室的老師
+    match /artifacts/{appId}/public/data/classrooms/{classroomCode} {
+      allow read: if signedIn();
+      allow write: if isRoomTeacher(appId, classroomCode);
+
+      // 教室設定（control / peerReview）：只有這間教室的老師能寫
+      match /settings/{settingId} {
+        allow read: if signedIn();
+        allow write: if isRoomTeacher(appId, classroomCode);
+      }
+
+      // 前端錯誤上報：任何登入用戶都能上報；清除由這間教室的老師或系統處理
+      match /errors/{errorId} {
+        allow read, create: if signedIn();
+        allow delete: if canWriteRoom(appId, classroomCode);
+      }
+
+      // 其他子集合（studentResponses、presence、attendance、waitingGameScores、historicalQuizzes、
+      // quickPoll、quickPollVotes、peerReviewVotes、teamScores、photoWall 等）
+      match /{sub}/{rest=**} {
+        allow read: if signedIn();
+        allow write: if sub != 'settings' && sub != 'errors' && canWriteRoom(appId, classroomCode);
+      }
+    }
+
+    // 其他 artifacts 路徑（例如 sharedBanks）：通用規則（保持向後相容）
+    // 教室與教室代碼由上方規則把關，這裡排除，否則會被這條寬鬆規則放行
+    match /artifacts/{appId}/public/{seg}/{document=**} {
+      allow read, write: if signedIn() && seg != 'data';
+    }
+    match /artifacts/{appId}/public/data {
+      allow read, write: if signedIn();
+    }
+    match /artifacts/{appId}/public/data/{coll}/{document=**} {
+      allow read, write: if signedIn() && coll != 'classrooms' && coll != 'classroomClaims';
     }
 
     // 禁止所有其他路徑

@@ -4,6 +4,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, Goo
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
+import { createClassroomClaims, maskName, formatInviteCode, normalizeInviteCode } from "./classroom-claims.js";
 
 // --- Global Variables ---
 // Max dimension (px) for user uploaded images to prevent excessively large files.
@@ -52,6 +53,7 @@ let _teacherAuthInProgress = false;  // popup 期間避免 onAuthStateChanged �
 
 // Use __app_id for the base Firestore path.
 const baseAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-classroom-app';
+const ClassroomClaims = createClassroomClaims(db, baseAppId); // 🆕 [V4.6.0] 教室代碼先申請先用
 let userId = null;
 let studentName = null;
 let currentRole = null; // 'teacher' or 'student'
@@ -4173,62 +4175,186 @@ function showModeConfirmationDialog(newMode, onConfirm) {
     });
 }
 
-// 🆕 [V4.5.12] 教室代碼撞號提醒：同一個代碼不分帳號都是同一間教室（classrooms/{代碼}），
-//     別的老師也用 601 時，畫面會互相切換、作答混在一起，任何一方按「下課」會把整間教室的作答刪光。
-//     進教室前若這間教室最近是「別的帳號」在用，先跳提醒，讓老師換代碼或確認是協同教學。
-const SHARED_CLASSROOM_RECENT_MS = 7 * 24 * 60 * 60 * 1000; // 超過 7 天沒動靜的舊教室不提醒
+// 🆕 [V4.6.0] 教室代碼「先申請先用」介面
+//     同一個代碼不分帳號都是同一間教室，所以每個代碼只給一位老師（＋受邀的協同老師）使用。
+//     資料邏輯在 src/classroom-claims.js，真正的把關在 firestore.rules。
+let currentClaimRole = 'none'; // 'owner' 主人 | 'co' 協同老師 | 'none' | 'unknown'
 
-function shouldWarnSharedClassroom(control, myUid, now = Date.now()) {
-    if (!control || !control.teacherId || control.teacherId === myUid) return false;
-    const at = Number(control.teacherActiveAt) || 0;
-    return !at || (now - at) < SHARED_CLASSROOM_RECENT_MS; // 舊資料沒有時間 → 無法判斷，保守提醒
+const CLAIM_BTN_PRIMARY = 'flex:1 1 180px;min-height:48px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;';
+const CLAIM_BTN_GHOST = 'flex:1 1 140px;min-height:48px;border:2px solid #9ca3af;border-radius:12px;background:#fff;color:#374151;font-weight:700;font-size:1rem;cursor:pointer;';
+
+function _openClaimModal(innerHtml, id) {
+    document.getElementById(id)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = id;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px;';
+    overlay.innerHTML = `<div style="background:#fff;border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);max-width:500px;width:100%;max-height:calc(100vh - 32px);overflow-y:auto;padding:24px;color:#1f2937;line-height:1.7;">${innerHtml}</div>`;
+    document.body.appendChild(overlay);
+    return overlay;
 }
 
-function confirmSharedClassroomCode(code, activeAt) {
+function _claimTimeAgo(ms) {
+    const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (mins < 1) return '剛剛使用過';
+    if (mins < 60) return `${mins} 分鐘前使用過`;
+    if (mins < 24 * 60) return `${Math.round(mins / 60)} 小時前使用過`;
+    return `${Math.round(mins / 1440)} 天前使用過`;
+}
+
+/**
+ * 代碼已被其他老師使用（或被保留）時的視窗。
+ * 回傳 Promise：{ action: 'change' } 或 { action: 'joined', result }（用邀請碼加入成為協同老師）
+ */
+function showClassroomCodeBlocked(code, info) {
     return new Promise((resolve) => {
-        const safeCode = escapeHtmlSafe(code);
-        let whenText = '使用時間不明（可能是之前沒有按「下課」留下的）';
-        const at = Number(activeAt) || 0;
-        if (at) {
-            const mins = Math.max(0, Math.round((Date.now() - at) / 60000));
-            whenText = mins < 1 ? '剛剛還在使用'
-                : mins < 60 ? `${mins} 分鐘前還在使用`
-                : mins < 24 * 60 ? `${Math.round(mins / 60)} 小時前還在使用`
-                : `${Math.round(mins / 1440)} 天前使用過`;
-        }
-        const overlay = document.createElement('div');
-        overlay.id = 'shared-classroom-warning';
-        overlay.setAttribute('role', 'dialog');
-        overlay.setAttribute('aria-modal', 'true');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px;';
-        overlay.innerHTML = `
-            <div style="background:#fff;border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.3);max-width:480px;width:100%;padding:24px;color:#1f2937;line-height:1.7;">
-                <h3 style="font-size:1.35rem;font-weight:800;margin:0 0 12px;color:#b45309;">⚠️ 教室代碼「${safeCode}」有其他老師在用</h3>
-                <p style="margin:0 0 8px;font-size:1.05rem;">另一個帳號開過這間教室：<strong>${whenText}</strong>。</p>
-                <p style="margin:0 0 8px;font-size:1.05rem;">同一個代碼就是同一間教室，兩邊會：</p>
-                <ul style="margin:0 0 12px;padding-left:1.4em;font-size:1rem;">
-                    <li>出題時互相切換對方學生的畫面</li>
-                    <li>學生作答混在一起</li>
-                    <li><strong style="color:#b91c1c;">任何一方按「下課」，整間教室的作答都會被刪除</strong></li>
-                </ul>
-                <p style="margin:0 0 18px;font-size:1rem;background:#fef3c7;border-radius:10px;padding:10px 12px;">建議換一個不容易撞到的代碼，例如加上學校或姓名：<strong>王老師${safeCode}</strong>、<strong>abc${safeCode}</strong>。</p>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <button type="button" data-act="change" style="flex:1 1 180px;min-height:48px;border:0;border-radius:12px;background:#2563eb;color:#fff;font-weight:700;font-size:1.05rem;cursor:pointer;">換一個代碼</button>
-                    <button type="button" data-act="enter" style="flex:1 1 180px;min-height:48px;border:2px solid #9ca3af;border-radius:12px;background:#fff;color:#374151;font-weight:700;font-size:1rem;cursor:pointer;">仍要進入（協同教學）</button>
+        const safe = escapeHtmlSafe(code);
+        const reserved = info.reason === 'reserved';
+        const who = reserved ? '' : `<p style="margin:0 0 10px;font-size:1.05rem;">目前由 <strong>${escapeHtmlSafe(maskName(info.ownerName))} 老師</strong> 使用${info.lastUsedAt ? `（${_claimTimeAgo(info.lastUsedAt)}）` : ''}。</p>`;
+        const joinPart = reserved ? '' : `
+            <details style="margin:0 0 14px;border:1px solid #e5e7eb;border-radius:12px;padding:10px 12px;">
+                <summary style="cursor:pointer;font-weight:700;color:#1d4ed8;">我是協同老師，有邀請碼</summary>
+                <p style="margin:8px 0;font-size:.95rem;color:#4b5563;">請向這間教室的老師要 8 碼邀請碼（7 天內有效）。</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <input data-role="invite" type="text" inputmode="text" autocomplete="off" maxlength="12" placeholder="例如 ABCD-2345"
+                        style="flex:1 1 160px;min-height:46px;border:2px solid #cbd5e1;border-radius:10px;padding:0 12px;font-size:1.15rem;letter-spacing:.08em;text-transform:uppercase;">
+                    <button type="button" data-act="join" style="${CLAIM_BTN_PRIMARY}flex:0 0 auto;padding:0 18px;">加入</button>
                 </div>
-            </div>`;
-        const close = (ok) => {
+                <p data-role="msg" role="alert" style="margin:8px 0 0;font-size:.95rem;color:#b91c1c;"></p>
+            </details>`;
+        const overlay = _openClaimModal(`
+            <h3 style="font-size:1.35rem;font-weight:800;margin:0 0 12px;color:#b45309;">🔒 教室代碼「${safe}」${reserved ? '已被保留' : '已經有老師在用'}</h3>
+            ${who}
+            <p style="margin:0 0 12px;font-size:1.05rem;">為了不讓兩班的作答混在一起、也不會被別人按「下課」清掉，<strong>每個代碼只給一位老師使用</strong>。</p>
+            <p style="margin:0 0 14px;font-size:1rem;background:#fef3c7;border-radius:10px;padding:10px 12px;">請換一個不容易撞到的代碼，例如加上姓名：<strong>王老師${safe}</strong>、<strong>abc${safe}</strong>。</p>
+            ${joinPart}
+            ${reserved ? '' : '<p style="margin:0 0 14px;font-size:.9rem;color:#6b7280;">代碼連續 30 天沒人使用，會自動開放給其他老師。</p>'}
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button type="button" data-act="change" style="${CLAIM_BTN_PRIMARY}">換一個代碼</button>
+            </div>`, 'classroom-code-blocked');
+        const close = (result) => {
             document.removeEventListener('keydown', onKey, true);
             overlay.remove();
-            resolve(ok);
+            resolve(result);
         };
-        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(false); } };
-        overlay.querySelector('[data-act="change"]').addEventListener('click', () => close(false));
-        overlay.querySelector('[data-act="enter"]').addEventListener('click', () => close(true));
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+        const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close({ action: 'change' }); } };
+        overlay.querySelector('[data-act="change"]').addEventListener('click', () => close({ action: 'change' }));
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close({ action: 'change' }); });
+        const joinBtn = overlay.querySelector('[data-act="join"]');
+        if (joinBtn) {
+            const input = overlay.querySelector('[data-role="invite"]');
+            const msg = overlay.querySelector('[data-role="msg"]');
+            const doJoin = async () => {
+                if (normalizeInviteCode(input.value).length !== 8) { msg.textContent = '邀請碼是 8 個英文字母或數字。'; return; }
+                joinBtn.disabled = true;
+                joinBtn.textContent = '加入中…';
+                msg.textContent = '';
+                const r = await ClassroomClaims.joinWithInvite(code, auth.currentUser, input.value);
+                if (r.ok) { close({ action: 'joined', result: r }); return; }
+                joinBtn.disabled = false;
+                joinBtn.textContent = '加入';
+                msg.textContent = r.reason === 'bad-code'
+                    ? '邀請碼不正確或已超過 7 天，請向這間教室的老師要新的邀請碼。'
+                    : '網路好像不穩，請稍後再試一次。';
+            };
+            joinBtn.addEventListener('click', doJoin);
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doJoin(); } });
+        }
         document.addEventListener('keydown', onKey, true);
-        document.body.appendChild(overlay);
         overlay.querySelector('[data-act="change"]').focus();
+    });
+}
+
+/** 教師選單：只有代碼主人看得到「協同老師」按鈕 */
+function updateCoTeacherButton() {
+    try {
+        let btn = document.getElementById('co-teacher-btn');
+        if (!btn) {
+            const anchor = document.getElementById('teacher-menu-classroom-code-display');
+            if (!anchor) return;
+            btn = document.createElement('button');
+            btn.id = 'co-teacher-btn';
+            btn.type = 'button';
+            btn.title = '邀請其他老師一起使用這個教室代碼';
+            btn.innerHTML = '👥 協同老師';
+            btn.style.cssText = 'min-height:44px;padding:0 14px;border:2px solid #93c5fd;border-radius:10px;background:#eff6ff;color:#1d4ed8;font-weight:700;font-size:1rem;cursor:pointer;white-space:nowrap;';
+            btn.addEventListener('click', showCoTeacherPanel);
+            anchor.insertAdjacentElement('afterend', btn);
+        }
+        btn.style.display = currentClaimRole === 'owner' ? 'inline-flex' : 'none';
+        btn.style.alignItems = 'center';
+    } catch (e) { /* 按鈕只是捷徑，失敗不影響上課 */ }
+}
+
+/** 主人：產生邀請碼、查看與移除協同老師 */
+async function showCoTeacherPanel() {
+    const code = classroomCode;
+    if (!code) return;
+    const safe = escapeHtmlSafe(code);
+    const overlay = _openClaimModal(`
+        <h3 style="font-size:1.35rem;font-weight:800;margin:0 0 12px;color:#1d4ed8;">👥 協同老師｜教室代碼「${safe}」</h3>
+        <p style="margin:0 0 12px;font-size:1rem;">想和其他老師一起帶這班？產生邀請碼給對方。對方用自己的 Google 帳號輸入代碼「${safe}」後，在跳出的視窗點「我是協同老師，有邀請碼」輸入即可。</p>
+        <p style="margin:0 0 14px;font-size:.92rem;color:#6b7280;">邀請碼 7 天內有效；重新產生後，舊的邀請碼立刻失效（已加入的老師不受影響）。</p>
+        <div data-role="invite-box" style="margin:0 0 14px;"></div>
+        <button type="button" data-act="new-invite" style="${CLAIM_BTN_PRIMARY}width:100%;">產生邀請碼</button>
+        <h4 style="font-size:1.1rem;font-weight:800;margin:18px 0 8px;">目前的協同老師</h4>
+        <ul data-role="members" style="list-style:none;margin:0 0 16px;padding:0;"><li style="color:#6b7280;">讀取中…</li></ul>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button type="button" data-act="close" style="${CLAIM_BTN_GHOST}">關閉</button>
+        </div>`, 'co-teacher-panel');
+    const close = () => { document.removeEventListener('keydown', onKey, true); overlay.remove(); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    document.addEventListener('keydown', onKey, true);
+    overlay.querySelector('[data-act="close"]').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    const listEl = overlay.querySelector('[data-role="members"]');
+    const renderMembers = async () => {
+        try {
+            const members = await ClassroomClaims.listMembers(code);
+            if (!members.length) { listEl.innerHTML = '<li style="color:#6b7280;">還沒有協同老師。</li>'; return; }
+            listEl.innerHTML = members.map(m => `
+                <li style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;">
+                    <span style="font-size:1.05rem;">${escapeHtmlSafe(m.name || '（未提供姓名）')}</span>
+                    <button type="button" data-remove="${escapeHtmlSafe(m.uid)}" style="min-height:40px;padding:0 12px;border:2px solid #fca5a5;border-radius:10px;background:#fff;color:#b91c1c;font-weight:700;cursor:pointer;">移除</button>
+                </li>`).join('');
+            listEl.querySelectorAll('[data-remove]').forEach(b => b.addEventListener('click', async () => {
+                if (!confirm('確定要移除這位協同老師嗎？移除後對方就不能再操作這間教室。')) return;
+                b.disabled = true;
+                try { await ClassroomClaims.removeMember(code, b.dataset.remove); showMessage('已移除協同老師', 'success'); }
+                catch (e) { showMessage('移除失敗，請稍後再試', 'error'); }
+                renderMembers();
+            }));
+        } catch (e) {
+            listEl.innerHTML = '<li style="color:#b91c1c;">讀取失敗，請稍後再試。</li>';
+        }
+    };
+    renderMembers();
+
+    const newBtn = overlay.querySelector('[data-act="new-invite"]');
+    const box = overlay.querySelector('[data-role="invite-box"]');
+    newBtn.addEventListener('click', async () => {
+        newBtn.disabled = true;
+        newBtn.textContent = '產生中…';
+        try {
+            const inviteCode = formatInviteCode(await ClassroomClaims.createInvite(code));
+            box.innerHTML = `
+                <div style="text-align:center;background:#eff6ff;border:2px dashed #60a5fa;border-radius:14px;padding:14px;">
+                    <div style="font-size:.95rem;color:#1e40af;">邀請碼（7 天內有效）</div>
+                    <div style="font-size:2rem;font-weight:800;letter-spacing:.12em;font-family:ui-monospace,Consolas,monospace;color:#1e3a8a;">${escapeHtmlSafe(inviteCode)}</div>
+                    <button type="button" data-act="copy" style="margin-top:6px;min-height:40px;padding:0 16px;border:0;border-radius:10px;background:#1d4ed8;color:#fff;font-weight:700;cursor:pointer;">複製邀請碼</button>
+                </div>`;
+            box.querySelector('[data-act="copy"]').addEventListener('click', async () => {
+                try { await navigator.clipboard.writeText(`教室代碼：${code}\n協同邀請碼：${inviteCode}`); showMessage('已複製', 'success'); }
+                catch (e) { showMessage('無法自動複製，請手動抄下邀請碼', 'info'); }
+            });
+            newBtn.textContent = '重新產生邀請碼';
+        } catch (e) {
+            showMessage('產生邀請碼失敗，請確認你是這間教室的老師', 'error', 5000);
+            newBtn.textContent = '產生邀請碼';
+        }
+        newBtn.disabled = false;
     });
 }
 
@@ -11437,24 +11563,22 @@ function setupEventListeners() {
             };
             _submitBtn.disabled = true;
 
-            // 🆕 [V4.5.12] 先確認這個代碼最近是不是別的老師帳號在用
+            // 🆕 [V4.6.0] 教室代碼先申請先用：沒人用就登記給自己；別人在用就擋下（可用邀請碼加入）
             _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>檢查教室代碼…</span>';
-            try {
-                const _snap = await getDoc(doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', code, 'settings', 'control'));
-                const _control = _snap.exists() ? _snap.data() : null;
-                if (shouldWarnSharedClassroom(_control, userId)) {
-                    const _goOn = await confirmSharedClassroomCode(code, _control.teacherActiveAt);
-                    if (!_goOn) {
-                        _restoreBtn();
-                        const _input = document.getElementById('teacher-classroom-code-input');
-                        _input.focus();
-                        _input.select();
-                        return;
-                    }
+            let _claim = await ClassroomClaims.ensure(code, auth.currentUser);
+            if (!_claim.ok) {
+                const _r = await showClassroomCodeBlocked(code, _claim);
+                if (_r.action !== 'joined') {
+                    _restoreBtn();
+                    const _input = document.getElementById('teacher-classroom-code-input');
+                    _input.focus();
+                    _input.select();
+                    return;
                 }
-            } catch (e) {
-                console.warn('[Teacher] 檢查教室代碼是否被使用失敗，照常進入：', e?.message);
+                _claim = _r.result;
             }
+            if (_claim.error) console.warn('[Teacher] 查詢教室代碼歸屬失敗，先照常進入（資料庫規則仍會把關）：', _claim.error?.message);
+            currentClaimRole = _claim.role;
 
             _submitBtn.innerHTML = '<span class="cb-loading-spinner"></span><span>同步題庫中…</span>';
 
@@ -11487,7 +11611,13 @@ function setupEventListeners() {
                 _upsertMyClass(classroomCode); // 🆕 [V4.2.9] ARCH-1：加入/更新「我的班級」清單（保留既有標籤）
                 classStartTime = Date.now();
                 showView('teacherMenu');
+                updateCoTeacherButton();
                 document.getElementById('teacher-classroom-code-input').value = ''; // Clear input
+                if (_claim.created || _claim.takeover) {
+                    showMessage(`🔒 教室代碼「${classroomCode}」已登記給你，其他老師不能使用（30 天沒用會自動釋出）`, 'success', 6000);
+                } else if (_claim.role === 'co') {
+                    showMessage(`👥 以協同老師身分進入（${maskName(_claim.ownerName)} 老師的教室）`, 'success', 5000);
+                }
 
                 // 遙測：教師登入與建立教室成功
                 UsageNotify.create(classroomCode);
@@ -15639,6 +15769,18 @@ async function initialize() {
                     restoredCode = profile?.classroomCode || null;
                 }
 
+                // 🆕 [V4.6.0] 重新整理時也確認代碼歸屬；已被其他老師登記就回到輸入代碼畫面
+                if (restoredCode) {
+                    const _claim = await ClassroomClaims.ensure(restoredCode, user);
+                    if (!_claim.ok) {
+                        localStorage.removeItem('teacherClassroomCode');
+                        showView('teacherClassroomCode');
+                        showMessage(`教室代碼「${restoredCode}」已由其他老師登記使用，請換一個代碼`, 'error', 7000);
+                        return;
+                    }
+                    currentClaimRole = _claim.role;
+                }
+
                 if (restoredCode) {
                     classroomCode = restoredCode;
                     currentRole = 'teacher';
@@ -15668,6 +15810,7 @@ async function initialize() {
                     listenToClassroomPresence();
                     await loadQuestionBanksFromCloud(user.uid); // Phase 3: 還原題庫
                     showView('teacherMenu');
+                    updateCoTeacherButton();
                 } else {
                     // Google 登入但無教室代碼 → 教室代碼輸入頁（auto-fill 已在 loadTeacherProfile 處理）
                     showView('teacherClassroomCode');
