@@ -18976,16 +18976,8 @@ async function displayReadingComprehensionForStudent(readingData) {
             radio.disabled = true;
         });
 
-        // 為已選擇的答案添加視覺標記
-        const allLabels = questionsContainer.querySelectorAll('label');
-        allLabels.forEach(label => {
-            const radio = label.querySelector('input[type="radio"]');
-            if (radio && radio.checked) {
-                label.classList.add('bg-green-100', 'border-green-400', 'border-2');
-            } else if (radio) {
-                label.classList.add('opacity-50');
-            }
-        });
+        // 🆕 [V4.6.5] 重新整理後也標出哪幾題答錯（不顯示正確答案）
+        markReadingResults(questionsContainer, answersToRestore, _secureAnswerKey || []);
 
         // 🚀 NEW: 設置實時監聽器監聽成績變化（當學生重新載入頁面時）
         setupStudentScoreListener();
@@ -18998,8 +18990,9 @@ async function displayReadingComprehensionForStudent(readingData) {
         });
         const allLabels = questionsContainer.querySelectorAll('label');
         allLabels.forEach(label => {
-            label.classList.remove('opacity-50', 'bg-green-100', 'border-green-400', 'border-2');
+            label.classList.remove('opacity-50', 'bg-green-100', 'border-green-400', 'border-2', 'reading-choice-right', 'reading-choice-wrong');
         });
+        questionsContainer.querySelector('.reading-result-summary')?.remove(); // 🆕 [V4.6.5]
     }
 
     // 🚀 FIX: 以學生看到試卷的「本地時間」作為倒數起點，確保每位學生都有完整閱讀時間（READING_MIN_DURATION_MS）
@@ -19265,6 +19258,58 @@ function parseMarkdownBold(text) {
 /**
  * Submit reading comprehension answer
  */
+// 🆕 [V4.6.5] 交卷後讓學生知道哪幾題答錯（不顯示正確答案）
+//     每題卡片標「✓ 答對了／✗ 這題答錯了／這題沒有作答」，自己選錯的選項用紅框；上方列出答錯的題號，點了會跳過去。
+//     正確選項不會被標出來，答案仍只存在 _secureAnswerKey。
+function markReadingResults(questionsContainer, answers, answerKey) {
+    if (!questionsContainer || !Array.isArray(answers) || !Array.isArray(answerKey)) return;
+    questionsContainer.querySelector('.reading-result-summary')?.remove();
+    const wrong = [];
+    let rightCount = 0;
+    questionsContainer.querySelectorAll('.reading-question-item').forEach((card) => {
+        const idx = parseInt(card.dataset.questionIndex, 10);
+        if (Number.isNaN(idx) || idx >= answerKey.length) return;
+        const key = answerKey[idx];
+        const ans = Number(answers[idx]) || 0;
+        const isRight = key === 0 || ans === key; // 0＝送分題
+        card.querySelector('.reading-result-badge')?.remove();
+        card.classList.remove('reading-result-right', 'reading-result-wrong');
+        card.classList.add(isRight ? 'reading-result-right' : 'reading-result-wrong');
+        const badge = document.createElement('div');
+        badge.className = 'reading-result-badge ' + (isRight ? 'is-right' : 'is-wrong');
+        badge.setAttribute('role', 'status');
+        badge.textContent = isRight ? '✓ 答對了' : (ans ? '✗ 這題答錯了' : '✗ 這題沒有作答');
+        card.insertBefore(badge, card.firstChild);
+        card.querySelectorAll('label').forEach((label) => {
+            const radio = label.querySelector('input[type="radio"]');
+            if (!radio) return;
+            label.classList.remove('bg-green-100', 'border-green-400', 'border-2', 'reading-choice-right', 'reading-choice-wrong');
+            if (radio.checked) {
+                label.classList.remove('opacity-50');
+                label.classList.add(isRight ? 'reading-choice-right' : 'reading-choice-wrong');
+            } else {
+                label.classList.add('opacity-50');
+            }
+        });
+        if (isRight) rightCount++; else wrong.push(idx);
+    });
+
+    const summary = document.createElement('div');
+    summary.className = 'reading-result-summary ' + (wrong.length ? 'has-wrong' : 'all-right');
+    summary.setAttribute('role', 'status');
+    if (!wrong.length) {
+        summary.innerHTML = `<strong>🎉 全部答對！</strong><span>${rightCount} 題都答對了，太厲害了！</span>`;
+    } else {
+        summary.innerHTML = `<strong>📋 作答結果：答對 ${rightCount} 題、答錯 ${wrong.length} 題</strong>
+            <span>答錯的是第 ${wrong.map(i => `<button type="button" class="reading-result-jump" data-jump="${i}">${i + 1}</button>`).join('、')} 題（點題號可以跳過去，回文章再找找線索）</span>`;
+        summary.querySelectorAll('.reading-result-jump').forEach((b) => b.addEventListener('click', () => {
+            questionsContainer.querySelector(`.reading-question-item[data-question-index="${b.dataset.jump}"]`)
+                ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }));
+    }
+    questionsContainer.insertBefore(summary, questionsContainer.firstChild);
+}
+
 async function submitReadingAnswer() {
     const questionsContainer = document.getElementById('reading-questions-container');
     const submitBtn = document.getElementById('submit-reading-btn');
@@ -19486,16 +19531,8 @@ async function submitReadingAnswer() {
             radio.disabled = true;
         });
 
-        // 為已選擇的答案添加視覺標記
-        const allLabels = questionsContainer.querySelectorAll('label');
-        allLabels.forEach(label => {
-            const radio = label.querySelector('input[type="radio"]');
-            if (radio && radio.checked) {
-                label.classList.add('bg-green-100', 'border-green-400', 'border-2');
-            } else if (radio) {
-                label.classList.add('opacity-50');
-            }
-        });
+        // 🆕 [V4.6.5] 標出哪幾題答錯（不顯示正確答案）；取代以前「選的答案一律綠色」
+        markReadingResults(questionsContainer, answers, answerKey);
 
         // 🚀 NEW: 提交成功後手動觸發排行榜更新並滾動到最上方
         // 這樣可以讓學生立即看到自己的排名，同時不會影響其他正在作答的學生
