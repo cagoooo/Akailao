@@ -16,6 +16,13 @@ let errCount = 0;
  * @param {import("firebase/app").FirebaseApp} app Firebase App 實例
  */
 export function initUsageNotify(app) {
+    // 🆕 [V4.5.11] 沒有正式金鑰的網頁副本（直接開原始碼、沒放 .env 就啟動、別人複製的專案）
+    //     登入一定失敗（auth/api-key-not-valid），不要把這些錯誤推到老師的 Google Chat。
+    //     正式站金鑰若真的失效，金鑰格式仍正確，照常回報。
+    if (!/^AIza[0-9A-Za-z_-]{35}$/.test(app?.options?.apiKey || '')) {
+        console.info('[UsageNotify] 這份網頁沒有正式金鑰，不送出使用通知');
+        return;
+    }
     try {
         const functions = getFunctions(app, REGION);
         callableFn = httpsCallable(functions, FN_NAME);
