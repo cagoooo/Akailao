@@ -379,40 +379,10 @@ function buildCard(type, data, who) {
   };
 }
 
-exports.notifyUsage = onCall(
-  { region: REGION, secrets: [GOOGLE_CHAT_WEBHOOK], cors: true, maxInstances: 5 },
-  async (request) => {
-    const webhook = (GOOGLE_CHAT_WEBHOOK.value() || '').trim();
-    if (!webhook) {
-      logger.warn('GOOGLE_CHAT_WEBHOOK 未設定');
-      return { ok: false, reason: 'no-webhook' };
-    }
-    
-    const data = request.data || {};
-    const type = String(data.type || '').trim();
-    if (!EVENT_META[type]) {
-      return { ok: false, reason: 'unknown-type' };
-    }
-    
-    const who = identityOf(request.auth, data);
-    
-    try {
-      const resp = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-        body: JSON.stringify(buildCard(type, data, who)),
-      });
-      if (!resp.ok) {
-        logger.error('Google Chat API 回傳錯誤', { status: resp.status });
-        return { ok: false, status: resp.status };
-      }
-      return { ok: true };
-    } catch (err) {
-      logger.error('Google Chat 推送失敗', err);
-      return { ok: false, reason: 'fetch-failed' };
-    }
-  }
-);
+// ⚠️ [V4.6.4] notifyUsage 已移除：剛好學與班級小管家共用 Firebase 專案 class-4719f，
+//   正式版 notifyUsage 在 H:\Classunctions（成功事件只留底給每日戰報，錯誤才即時推 Chat）。
+//   這裡的舊版會每個學生登入都推一張卡片；2026-11-19 曾因部署本資料夾而蓋掉正式版，害 Chat 被洗版。
+//   部署本資料夾一律只指定 callGemini：firebase deploy --only functions:callGemini --project class-4719f --account cagooo@gmail.com
 
 exports.callGemini = onCall(
   {

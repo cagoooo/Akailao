@@ -97,6 +97,12 @@ python -m http.server 8080 --bind 127.0.0.1
 - **驗證**：https://console.firebase.google.com/project/class-4719f/firestore/rules
 - **注意**：GitHub Actions 不會自動部署 Firestore Rules，需手動執行
 
+### 2.5 Cloud Functions 部署（⚠️ 與班級小管家共用專案）
+- `class-4719f` 同時放剛好學與班級小管家（`H:\Class`）的 Cloud Functions，兩邊 `functions/` 都用 codebase `default`。
+- **剛好學這邊只部署 callGemini**：`firebase deploy --only functions:callGemini --project class-4719f --account cagooo@gmail.com`
+- `notifyUsage`、`dailyUsageDigest` 等的正本在 `H:\Class\functions`（成功事件只留底給每日戰報，錯誤才即時推 Chat）。不要在這裡跑 `--only functions`，會蓋掉或刪掉班級小管家的函式（2026-11-19 曾因此每個學生登入都推一張 Chat 卡片）。
+- 部署規則與函式都要加 `--account cagooo@gmail.com`；函式探索逾時加 `FUNCTIONS_DISCOVERY_TIMEOUT=60`。
+
 ### 3. Tailwind CSS 重建
 - **何時需要**：修改 `index.html` 或 `src/styles.css` 中的 Tailwind class 後
 - **指令**：
