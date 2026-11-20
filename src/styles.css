@@ -5048,3 +5048,11 @@ body {
 .shared-ai-quota-note a { color: #6d28d9; font-weight: 700; text-decoration: underline; }
 .shared-ai-quota-note.is-empty { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
 .shared-ai-quota-note.is-empty strong, .shared-ai-quota-note.is-empty a { color: #b91c1c; }
+
+/* 🆕 [V4.7.3] 閱讀引導：老師預覽（含洩答提醒）與學生交卷後答錯題目的提示 */
+.reading-guide-preview { margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: #eff6ff; border: 1px dashed #93c5fd; color: #1e3a8a; font-size: .75rem; line-height: 1.5; display: flex; flex-direction: column; gap: 2px; }
+.reading-guide-preview.is-leak { background: #fff7ed; border-color: #fb923c; color: #7c2d12; }
+.reading-guide-preview.is-leak em { font-style: normal; font-weight: 700; color: #c2410c; }
+.reading-guide-preview.is-missing { background: #f9fafb; border-color: #d1d5db; color: #6b7280; }
+.reading-result-guide { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: #fffbeb; border: 2px solid #fcd34d; color: #78350f; font-size: 1em; line-height: 1.7; display: flex; flex-direction: column; gap: 4px; }
+.reading-result-guide strong { color: #92400e; }

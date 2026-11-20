@@ -18635,6 +18635,11 @@ function renderReadingQuestionsPreview() {
                         </div>`;
                     }).join('')}
                 </div>
+                ${q.guide ? `<div class="reading-guide-preview${readingGuideMayLeak(q) ? ' is-leak' : ''}">
+                    <strong>🧭 閱讀引導（學生答錯時看得到）</strong>
+                    <span>${escapeHtmlText(q.guide)}</span>
+                    ${readingGuideMayLeak(q) ? '<em>⚠️ 這段可能直接說出了答案，請修改成只指出段落與線索</em>' : ''}
+                </div>` : '<div class="reading-guide-preview is-missing">🧭 這題沒有閱讀引導（可在題目行最後加「||引導文字」）</div>'}
             </div>
         `;
     }).join('');
@@ -18743,9 +18748,7 @@ function showReadingComprehensionModal({ restoreDraft = true } = {}) {
     // Populate with existing data if any
     document.getElementById('reading-text-textarea').value = readingComprehensionData.text || '';
     if (readingComprehensionData.questions && readingComprehensionData.questions.length > 0) {
-        document.getElementById('reading-questions-textarea').value = readingComprehensionData.questions.map(q => {
-            return `${q.question},${q.correctAnswer},${q.options.join(',')},${q.level}`;
-        }).join('\n');
+        document.getElementById('reading-questions-textarea').value = readingComprehensionData.questions.map(serializeReadingQuestion).join('\n');
     } else {
         document.getElementById('reading-questions-textarea').value = '';
     }
@@ -18769,6 +18772,46 @@ function hideReadingComprehensionModal() {
  * Parse reading comprehension questions
  * Supports both comma and tab delimiters
  */
+// 🆕 [V4.7.3] 閱讀引導（詳解）：不說出答案，指出回到文章哪一段、找什麼，學生交卷後答錯的題目看得到
+function cleanReadingGuide(s) {
+    return String(s || '')
+        .replace(/^\s*(閱讀引導|引導|詳解|解析|提示)\s*[:：]\s*/, '')
+        .replace(/\|\|/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 300);
+}
+
+function serializeReadingQuestion(q) {
+    const line = `${q.question},${q.correctAnswer},${q.options.join(',')},${q.level || 1}`;
+    return q.guide ? `${line}||${q.guide}` : line;
+}
+
+// 閱讀引導有沒有可能洩漏答案（給老師的預覽提醒用）：寫出「答案是」，或直接包含正確選項文字
+function readingGuideMayLeak(q) {
+    const g = String(q?.guide || '');
+    if (!g) return false;
+    if (/答案是|正確答案|正解|所以選|應該選|答案為/.test(g)) return true;
+    const right = String(q?.options?.[(q.correctAnswer || 0) - 1] || '').replace(/[\s。．.！!？?「」『』]/g, '');
+    return right.length >= 2 && g.replace(/[\s「」『』]/g, '').includes(right);
+}
+
+// AI 出題指令裡「閱讀引導」的寫法（四種出題模式＋補題共用同一段）
+const READING_GUIDE_PROMPT = `
+【閱讀引導（每題最後一欄，學生交卷後答錯時會看到）】
+- 目的是帶學生「回到文章自己找答案」，不是告訴他答案。用 1～2 句話寫出三件事：
+  ① 回到哪裡：第幾段（例如「回到第 2 段」「把第 1 段和最後一段放在一起讀」）
+  ② 找什麼、怎麼想：用題目裡的關鍵詞提示要找的線索，例如「找找看小明聽到消息後做了什麼」「注意題目問的是原因，不是結果」
+  ③ 最後用很短的一句點出這題在練習什麼（例如「這題練習找出文中直接寫出的訊息」）
+- 🚫 絕對不可以：寫出正確選項的文字或換句話說；寫「答案是」「正確答案」「所以選」；說哪個選項對或錯；用 1～4 或 A～D 指稱選項；直接引用寫著答案的那一句原文
+- 🚫 不要只寫「請回到文章仔細閱讀」這種沒有線索的話
+- 用字要符合學生的年級，低年級用短句
+- 閱讀引導裡可以使用中文全形逗號（，），但不可以出現「||」
+好的例子：回到第 3 段，找找看颱風來之前村民做了哪些準備。這題練習找出文中直接寫出的訊息。
+好的例子：把第 1 段和最後一段放在一起讀，想想主角的想法前後有什麼改變。這題練習統整全文。
+不好的例子：所以答案是「把窗戶釘牢」。
+`;
+
 function parseReadingQuestions(text) {
     if (!text) return null;
     // 🆕 MODIFIED [v3.7.14]: 強化前置清理 — 移除 markdown code fence、標題、空白雜訊
@@ -18778,8 +18821,6 @@ function parseReadingQuestions(text) {
         .replace(/```\s*$/g, '')
         // 移除常見的 markdown 標題 (##, ###)
         .replace(/^#{1,6}\s.*$/gm, '')
-        // 中文全形逗號／頓號 → 半形逗號（處理 AI 偶爾用錯分隔）
-        .replace(/，/g, ',')
         // 移除題號前綴 (例如 "1. 題目..." → "題目...")
         .replace(/^\s*\d+[\.\、]\s*/gm, '');
 
@@ -18788,7 +18829,11 @@ function parseReadingQuestions(text) {
     const errors = [];
 
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-        const line = lines[lineIdx];
+        // 🆕 [V4.7.3] 每行最後可接「||閱讀引導」（學生答錯時看到的提示，不說出答案）；舊格式沒有這段照常解析
+        const guideAt = lines[lineIdx].indexOf('||');
+        const guide = guideAt >= 0 ? cleanReadingGuide(lines[lineIdx].slice(guideAt + 2)) : '';
+        // 中文全形逗號 → 半形逗號（處理 AI 偶爾用錯分隔）；閱讀引導裡的逗號保留原樣
+        const line = (guideAt >= 0 ? lines[lineIdx].slice(0, guideAt) : lines[lineIdx]).replace(/，/g, ',').trim();
         // Try to detect delimiter: if line contains tab, use tab; otherwise use comma
         const delimiter = line.includes('\t') ? '\t' : ',';
         const parts = line.split(delimiter).map(p => p.trim().replace(/^["']|["']$/g, '')); // 移除外層引號
@@ -18843,7 +18888,9 @@ function parseReadingQuestions(text) {
             continue;
         }
 
-        questions.push({ question, correctAnswer, options, level });
+        const q = { question, correctAnswer, options, level };
+        if (guide) q.guide = guide;
+        questions.push(q);
     }
 
     // 🆕 偵錯友善：把錯誤暫存到 window，讓 startReadingComprehension 可以顯示詳細原因
@@ -19445,6 +19492,24 @@ function markReadingResults(questionsContainer, answers, answerKey) {
         badge.setAttribute('role', 'status');
         badge.textContent = isRight ? '✓ 答對了' : (ans ? '✗ 這題答錯了' : '✗ 這題沒有作答');
         card.insertBefore(badge, card.firstChild);
+        // 🆕 [V4.7.3] 答錯的題目顯示閱讀引導：指出回到文章哪一段、找什麼，不說出答案
+        card.querySelector('.reading-result-guide')?.remove();
+        const qData = readingComprehensionData?.questions?.[idx];
+        let guide = !isRight ? cleanReadingGuide(qData?.guide) : '';
+        // 保險：老師沒改掉「可能洩漏答案」的引導時，學生只看到通用提示，不會直接看到答案
+        if (guide && readingGuideMayLeak({ guide, options: qData?.options, correctAnswer: key })) {
+            guide = '回到文章，用題目裡的關鍵詞找出相關的段落，再仔細讀一次。';
+        }
+        if (guide) {
+            const box = document.createElement('div');
+            box.className = 'reading-result-guide';
+            const title = document.createElement('strong');
+            title.textContent = '🧭 回文章找找看';
+            const text = document.createElement('span');
+            text.textContent = guide;
+            box.append(title, text);
+            card.appendChild(box);
+        }
         card.querySelectorAll('label').forEach((label) => {
             const radio = label.querySelector('input[type="radio"]');
             if (!radio) return;
@@ -19466,7 +19531,7 @@ function markReadingResults(questionsContainer, answers, answerKey) {
         summary.innerHTML = `<strong>🎉 全部答對！</strong><span>${rightCount} 題都答對了，太厲害了！</span>`;
     } else {
         summary.innerHTML = `<strong>📋 作答結果：答對 ${rightCount} 題、答錯 ${wrong.length} 題</strong>
-            <span>答錯的是第 ${wrong.map(i => `<button type="button" class="reading-result-jump" data-jump="${i}">${i + 1}</button>`).join('、')} 題（點題號可以跳過去，回文章再找找線索）</span>`;
+            <span>答錯的是第 ${wrong.map(i => `<button type="button" class="reading-result-jump" data-jump="${i}">${i + 1}</button>`).join('、')} 題（點題號可以跳過去，${wrong.some(i => readingComprehensionData?.questions?.[i]?.guide) ? '看「🧭 回文章找找看」的提示，' : ''}回文章再找找線索）</span>`;
         summary.querySelectorAll('.reading-result-jump').forEach((b) => b.addEventListener('click', () => {
             questionsContainer.querySelector(`.reading-question-item[data-question-index="${b.dataset.jump}"]`)
                 ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -20623,17 +20688,18 @@ async function generatePIRLSQuestions(opts) {
 - 層次4（比較評估內容）：2題
 - 出題前先在心中數一遍：3+3+2+2=10，請務必輸出完整 10 題
 ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+${READING_GUIDE_PROMPT}
 【輸出格式 — 非常重要，請嚴格遵守】
 1. 不要使用 markdown code fence（\`\`\`）包裝輸出
 2. 不要加「文本：」「題目：」等標題，直接開始輸出文本
 3. 先輸出完整的閱讀文本（純文字段落）
 4. 空一行後，輸出「---題目---」作為分隔
-5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
-   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
+5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位，最後再用「||」接閱讀引導：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)||閱讀引導
 
 範例（請完全按此格式）：
-主角的名字是什麼?,2,小明,小華,小美,小強,1
-文章主旨是什麼?,1,友誼可貴,競爭激烈,獨立自主,勤勞致富,4
+主角的名字是什麼?,2,小明,小華,小美,小強,1||回到第 1 段，找找看故事一開始介紹了誰。這題練習找出文中直接寫出的訊息。
+文章主旨是什麼?,1,友誼可貴,競爭激烈,獨立自主,勤勞致富,4||把第 1 段和最後一段放在一起讀，想想作者最想告訴我們什麼。這題練習統整全文的重點。
 
 【絕對禁止】
 - 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
@@ -20653,14 +20719,15 @@ ${sourceTitle ? `\n文本來源標題：${sourceTitle}\n` : ''}
 文本：
 ${existingText}
 ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+${READING_GUIDE_PROMPT}
 【輸出格式 — 非常重要，請嚴格遵守】
 1. 不要重複輸出文本，不要任何說明文字，只輸出題目
 2. 不要使用 markdown code fence（\`\`\`）或標題
-3. 每行一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
-   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
+3. 每行一題，欄位以半形逗號(,)分隔，固定 7 個欄位，最後再用「||」接閱讀引導：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)||閱讀引導
 
 範例：
-主角的名字是什麼?,2,小明,小華,小美,小強,1
+主角的名字是什麼?,2,小明,小華,小美,小強,1||回到第 1 段，找找看故事一開始介紹了誰。這題練習找出文中直接寫出的訊息。
 
 【絕對禁止】
 - 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
@@ -20682,13 +20749,14 @@ ${sourceTitle ? `- 參考資料標題：${sourceTitle}\n` : ''}
 - 層次4（比較評估內容）：2題
 - 題目必須根據你改寫後的文章出題，3+3+2+2=10，請務必輸出完整 10 題
 ${topic ? `\n【教師補充要求】\n${topic}\n` : ''}${curriculumHint}
+${READING_GUIDE_PROMPT}
 【輸出格式 — 非常重要，請嚴格遵守】
 1. 不要使用 markdown code fence（\`\`\`）包裝輸出
 2. 不要加「文本：」「題目：」等標題，直接開始輸出文章
 3. 先輸出完整的閱讀文本（純文字段落）
 4. 空一行後，輸出「---題目---」作為分隔
-5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位：
-   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)
+5. 然後每行輸出一題，欄位以半形逗號(,)分隔，固定 7 個欄位，最後再用「||」接閱讀引導：
+   題目,正確答案(1-4的數字),選項1,選項2,選項3,選項4,層次(1-4的數字)||閱讀引導
 
 【絕對禁止】
 - 禁止在選項內使用半形逗號（,）；若選項本身包含逗號請改用頓號（、）
@@ -20708,7 +20776,8 @@ ${rewriteSource}`;
 主題：${topic}${curriculumHint}
 
 請先輸出文本，然後輸出「---題目---」，再按照以下格式輸出題目，每行一題：
-題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)`;
+題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)||閱讀引導
+${READING_GUIDE_PROMPT}`;
         }
 
         setAiStep(1); // 步驟1：生成文本 / 辨識圖片
@@ -20828,9 +20897,10 @@ ${textForRetry.substring(0, 3000)}
 ⚠️ 嚴格輸出規則（不可違反）：
 1. 不要輸出文本，不要任何說明文字，只輸出題目
 2. 不要使用 markdown 或標題
-3. 每行一題，固定 7 欄位以半形逗號分隔：題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)
+3. 每行一題，固定 7 欄位以半形逗號分隔，最後用「||」接閱讀引導：題目,正確答案(1-4),選項1,選項2,選項3,選項4,層次(1-4)||閱讀引導
 4. 選項內若有逗號改用頓號（、）
 5. 不可重複既有題目，新題目要與原題不同
+${READING_GUIDE_PROMPT}
 
 既有題目（請避免重複）：
 ${parsedQs.map(q => q.question).join('\n')}`;
@@ -20857,9 +20927,7 @@ ${parsedQs.map(q => q.question).join('\n')}`;
 
                 // 將補齊後的題目寫回 textarea
                 if (parsedQs.length > initialCount) {
-                    questionsTextarea.value = parsedQs.map(q =>
-                        `${q.question},${q.correctAnswer},${q.options[0]},${q.options[1]},${q.options[2]},${q.options[3]},${q.level}`
-                    ).join('\n');
+                    questionsTextarea.value = parsedQs.map(serializeReadingQuestion).join('\n');
                 }
             }
 
