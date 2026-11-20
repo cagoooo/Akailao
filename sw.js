@@ -43,6 +43,10 @@ self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+  // 🆕 [V4.6.6] 網頁問「你是哪一版」：網頁和自己同一版就不跳更新通知
+  if (event.data?.type === 'GET_VERSION') {
+    event.ports?.[0]?.postMessage({ version: BUILD_VERSION });
+  }
 });
 
 self.addEventListener('fetch', event => {

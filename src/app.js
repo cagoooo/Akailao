@@ -15229,16 +15229,39 @@ function _showSwUpdateToast(waitingWorker) {
     toast.querySelector('.sw-dismiss-btn').addEventListener('click', () => toast.remove());
 }
 
+// 🆕 [V4.6.6] 修正「每次打開都跳教材已更新」：網頁本身每次都向伺服器拿最新版（network-first），
+//     剛打開的頁面一定是最新的；之前只要背景的 SW 換新就跳通知（第一次造訪、部署後第一、二次打開都會跳）。
+//     改成比對版本：CI 把同一個 BUILD_VERSION 注入 sw.js 與這一頁，只有「這一頁比 SW 舊」才通知。
+const PAGE_BUILD_VERSION = '__PAGE_BUILD_VERSION__';
+const _pageBuildKnown = !PAGE_BUILD_VERSION.startsWith('__'); // 本機開發沒有注入版本 → 不跳通知
+
+function _askWorkerVersion(worker) {
+    return new Promise(resolve => {
+        try {
+            const ch = new MessageChannel();
+            const t = setTimeout(() => resolve(null), 3000);
+            ch.port1.onmessage = e => { clearTimeout(t); resolve(e.data?.version || null); };
+            worker.postMessage({ type: 'GET_VERSION' }, [ch.port2]);
+        } catch (_) { resolve(null); }
+    });
+}
+
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then(reg => {
             // 線 A：SW lifecycle 事件（updatefound + statechange）
             const _watchWorker = (worker) => {
-                worker.addEventListener('statechange', () => {
+                worker.addEventListener('statechange', async () => {
                     // 確認「是更新非首裝」：必須有舊 controller（陷阱#12 / #3）
-                    if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-                        _requestSwUpdateToast(worker);
+                    if (worker.state !== 'installed' || !navigator.serviceWorker.controller || !_pageBuildKnown) return;
+                    const v = await _askWorkerVersion(worker);
+                    if (!v) return;
+                    if (v === PAGE_BUILD_VERSION) {
+                        // 這一頁已經是新版，只是背景 SW 慢一步：直接換上，不打擾使用者
+                        worker.postMessage({ type: 'SKIP_WAITING' });
+                        return;
                     }
+                    _requestSwUpdateToast(worker);
                 });
             };
             if (reg.installing) _watchWorker(reg.installing);
@@ -15246,10 +15269,20 @@ if ('serviceWorker' in navigator) {
                 if (reg.installing) _watchWorker(reg.installing);
             });
 
-            // 線 B：SW activate 後廣播 SW_ACTIVATED（備胎，GitHub CDN polling 延遲 10 分鐘問題）
+            // 線 B：SW activate 後廣播 SW_ACTIVATED（別的分頁換上新版時，讓開著的舊頁面知道）
             navigator.serviceWorker.addEventListener('message', e => {
-                if (e.data?.type === 'SW_ACTIVATED' && navigator.serviceWorker.controller) {
+                if (e.data?.type === 'SW_ACTIVATED' && navigator.serviceWorker.controller
+                    && _pageBuildKnown && e.data.version && e.data.version !== PAGE_BUILD_VERSION) {
                     _requestSwUpdateToast(null); // SW 已接管，直接 reload 即可（學生作答中先延後）
+                }
+            });
+
+            // 🆕 [V4.6.6] 老師整堂課開著同一頁：切回分頁時（最多 30 分鐘一次）檢查有沒有新版
+            let _lastSwCheck = Date.now();
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && Date.now() - _lastSwCheck > 30 * 60 * 1000) {
+                    _lastSwCheck = Date.now();
+                    reg.update().catch(() => {});
                 }
             });
         })

@@ -86,6 +86,9 @@ jobs:
           BUILD_VERSION="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M)"
           sed -i "s/__BUILD_VERSION__/${BUILD_VERSION}/g" dist/sw.js
           echo "✓ sw.js BUILD_VERSION 已注入：${BUILD_VERSION}"
+          # 🆕 [V4.6.6] 同一個版本也注入網頁：網頁和 SW 同版就不跳「教材已更新」
+          sed -i "s/__PAGE_BUILD_VERSION__/${BUILD_VERSION}/g" dist/index.html
+          echo "✓ index.html PAGE_BUILD_VERSION 已注入：${BUILD_VERSION}"
 
       # 🆕 [V3.9.3] 把 set.html 裡的 __APP_VERSION__ sentinel 替換成 package.json 版本
       - name: 🏷️ 注入版本號到 set.html
@@ -123,6 +126,14 @@ jobs:
             FAIL=1
           else
             echo "✓ dist/sw.js：BUILD_VERSION sentinel 已正確注入"
+          fi
+          # ④ dist/index.html：__PAGE_BUILD_VERSION__ 是否仍存在
+          PBV_LEFT=$(grep -o '__PAGE_BUILD_VERSION__' dist/index.html 2>/dev/null || true)
+          if [ -n "$PBV_LEFT" ]; then
+            echo "::error::❌ dist/index.html 仍有 __PAGE_BUILD_VERSION__ sentinel，sed 注入失敗"
+            FAIL=1
+          else
+            echo "✓ dist/index.html：PAGE_BUILD_VERSION sentinel 已正確注入"
           fi
           exit $FAIL
 
