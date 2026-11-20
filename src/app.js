@@ -5,6 +5,7 @@ import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, g
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
 import { createClassroomClaims, maskName, formatInviteCode, normalizeInviteCode } from "./classroom-claims.js";
+import { canCaptureTab, captureTabImage } from "./tab-capture.js";
 
 // --- Global Variables ---
 // Max dimension (px) for user uploaded images to prevent excessively large files.
@@ -13654,6 +13655,29 @@ function setupEventListeners() {
         // 備援提示：請使用者直接按 Ctrl+V
         showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
     });
+    // 🆕 [V4.7.0] (2.5) 擷取 Chrome 分頁／視窗畫面＋框選（同擴充套件的截圖出題，網站也能用）
+    const captureTabBtn = document.getElementById('ai-reading-capture-tab-btn');
+    if (captureTabBtn && canCaptureTab()) {
+        captureTabBtn.classList.remove('hidden');
+        captureTabBtn.addEventListener('click', async () => {
+            if (readingAiUploadedImages.length >= 8) {
+                showMessage('❌ 最多只能上傳 8 張圖片，請先移除幾張', 'warning');
+                return;
+            }
+            captureTabBtn.disabled = true;
+            try {
+                const shot = await captureTabImage();
+                if (!shot) return; // 老師按了取消
+                addReadingAiImage(shot.blob, shot.name);
+                showMessage('✅ 已加入分頁擷取的畫面；文章很長可以捲動後再擷取一次', 'success', 4000);
+            } catch (err) {
+                console.warn('[AI Reading] 擷取分頁失敗:', err);
+                showMessage('⚠️ 這次沒有擷取成功，可以改用截圖後按 Ctrl+V 貼上', 'warning', 5000);
+            } finally {
+                captureTabBtn.disabled = false;
+            }
+        });
+    }
     // (3) 清除所有圖片
     document.getElementById('ai-reading-clear-images-btn')?.addEventListener('click', () => {
         if (readingAiUploadedImages.length === 0) return;
