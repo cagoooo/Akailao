@@ -15243,10 +15243,11 @@ function _showSwUpdateToast(waitingWorker) {
             // 用 sessionStorage flag 防 controllerchange 無限 reload（陷阱#3）
             let _reloaded = false;
             navigator.serviceWorker.addEventListener('controllerchange', () => {
-                if (!_reloaded) { _reloaded = true; window.location.reload(); }
+                if (!_reloaded) { _reloaded = true; _allowUnloadOnce = true; window.location.reload(); }
             });
             waitingWorker.postMessage({ type: 'SKIP_WAITING' });
         } else {
+            _allowUnloadOnce = true; // 🆕 [V4.7.1] 老師自己按的重整，不再跳「要重新載入網站嗎？」
             window.location.reload();
         }
     });
@@ -16041,19 +16042,29 @@ async function initialize() {
     // 移除此處舊的重複 window error/unhandledrejection 監聽器，避免雙重註冊與 chunk error 洗版 Chat。
 }
 
-// Add beforeunload handler to warn user about closing window
-let hasEndedClass = false;
+// 🆕 [V4.7.1] 關閉／重新整理前的提醒，只在「老師正在教室裡上課」時出現。
+//     舊版只要沒按過下課就一律跳「要重新載入網站嗎？」：首頁、學生端、按「教材已更新 → 立即重整」都會跳；
+//     V4.6.1 起下課後直接選下一班，舊旗標也不會再歸零。改成看目前畫面判斷。
+let _allowUnloadOnce = false; // 程式自己要重新整理（例如更新通知的「立即重整」）時不提醒
 
-// Track when user clicks the end class button
 function markClassEnded() {
-    hasEndedClass = true;
+    // 下課後畫面會回到選教室，提醒自然不再出現；保留函式供下課流程呼叫
 }
 
-// Set up window close warning
-window.onbeforeunload = function () {
-    if (!hasEndedClass) {
-        return '請先按下紅色下課鍵，再關閉視窗，本提示請先按取消';
+function _teacherInClass() {
+    try {
+        return currentRole === 'teacher' && !!classroomCode &&
+            ['teacherMenu', 'teacherMonitor'].some(v => views[v] && !views[v].classList.contains('hidden'));
+    } catch (_) {
+        return false;
     }
+}
+
+window.onbeforeunload = function (e) {
+    if (_allowUnloadOnce || !_teacherInClass()) return undefined;
+    const msg = '請先按下紅色下課鍵，再關閉視窗，本提示請先按取消';
+    if (e) { e.preventDefault(); e.returnValue = msg; }
+    return msg;
 };
 
 // --- Quick Answer Functions ---
