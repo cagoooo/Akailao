@@ -1,3 +1,6 @@
+// ⚠️ 這份規則是 Firebase 專案 class-4719f 唯一的正本，剛好學（H:\Akailao）與班級小管家（H:\Class）共用同一個資料庫。
+// 正本放在 H:\Akailao\firestore.rules，由那裡部署：firebase deploy --only firestore:rules --project class-4719f --account cagooo@gmail.com
+// H:\Class\firestore.rules 只是複本：要改規則請改正本、部署後再複製過去，兩邊內容必須完全相同。
 rules_version = '2';
 
 service cloud.firestore {
@@ -162,6 +165,36 @@ service cloud.firestore {
     }
     match /artifacts/{appId}/public/data/{coll}/{document=**} {
       allow read, write: if signedIn() && coll != 'classrooms' && coll != 'classroomClaims';
+    }
+
+    // 🆕 [2026-11-21] 從班級小管家併入（班級小管家 v3.x 寵物分享）。
+    // 班級寵物分享快照：學生拿到連結即可免登入讀取單一文件（不可列舉），
+    // 只有以 Google 登入的老師本人能建立／更新／刪除自己的分享。
+    match /petShares/{shareId} {
+      function isTeacher() {
+        return request.auth != null
+               && request.auth.token.firebase.sign_in_provider == 'google.com';
+      }
+      function validShare() {
+        let data = request.resource.data;
+        return shareId.matches('^[A-Za-z0-9_-]{20,64}$')
+               && data.keys().hasOnly(['ownerUid', 'classId', 'className', 'nameMode',
+                                       'showCoins', 'schema', 'payload', 'updatedAt'])
+               && data.ownerUid == request.auth.uid
+               && data.classId is string && data.classId.size() <= 80
+               && data.className is string && data.className.size() <= 80
+               && data.nameMode in ['masked', 'full', 'seat']
+               && data.showCoins is bool
+               && data.schema == 1
+               && data.payload is string && data.payload.size() <= 200000
+               && data.updatedAt == request.time;
+      }
+
+      allow get: if true;
+      allow list: if isTeacher() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isTeacher() && validShare();
+      allow update: if isTeacher() && resource.data.ownerUid == request.auth.uid && validShare();
+      allow delete: if isTeacher() && resource.data.ownerUid == request.auth.uid;
     }
 
     // 🆕 [V4.7.2] 共用 AI 每日次數（後端 callGemini 寫入）：Google 登入的老師只能讀自己今天那一筆，不能寫
