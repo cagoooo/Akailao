@@ -164,6 +164,13 @@ service cloud.firestore {
       allow read, write: if signedIn() && coll != 'classrooms' && coll != 'classroomClaims';
     }
 
+    // 🆕 [V4.7.2] 共用 AI 每日次數（後端 callGemini 寫入）：Google 登入的老師只能讀自己今天那一筆，不能寫
+    match /rateLimits/{docId} {
+      allow read: if isGoogle()
+                  && docId.matches('user_' + request.auth.uid + '_[0-9]{4}-[0-9]{2}-[0-9]{2}');
+      allow write: if false;
+    }
+
     // 禁止所有其他路徑
     match /{document=**} {
       allow read, write: if false;

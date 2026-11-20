@@ -5041,3 +5041,10 @@ body {
 .tabcap-btn-main:hover { background: #6d28d9; }
 .tabcap-btn:disabled { opacity: .45; cursor: not-allowed; }
 @media (max-width: 640px) { .tabcap-actions .tabcap-btn { flex: 1 1 45%; } }
+
+/* 🆕 [V4.7.2] 共用 AI 每天 3 次提示（各 AI 按鈕下方、AI 設定視窗） */
+.shared-ai-quota-note { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: #f5f3ff; border: 1px solid #ddd6fe; color: #4c1d95; font-size: .8rem; line-height: 1.5; text-align: left; }
+.shared-ai-quota-note strong { color: #6d28d9; }
+.shared-ai-quota-note a { color: #6d28d9; font-weight: 700; text-decoration: underline; }
+.shared-ai-quota-note.is-empty { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.shared-ai-quota-note.is-empty strong, .shared-ai-quota-note.is-empty a { color: #b91c1c; }

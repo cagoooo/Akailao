@@ -515,16 +515,104 @@ function reserveSharedAiCall(featureLabel = 'AI 出題') {
 
     const usedToday = readSharedAiUsedToday();
     if (usedToday >= AI_SHARED_RATE_LIMIT.maxCalls) {
-        showMessage(`${AI_DAILY_QUOTA_MSG}。（共用 AI 每人每天 ${AI_SHARED_RATE_LIMIT.maxCalls} 次；正式備課可在「AI 設定」改用自己的 Gemini API Key）`, 'warning', 9000);
+        showMessage(`${AI_DAILY_QUOTA_MSG}。（共用 AI 每個帳號每天 ${AI_SHARED_RATE_LIMIT.maxCalls} 次；想繼續出題可在「AI 設定」貼上自己的免費 Gemini 金鑰，或改用剛好學 Chrome 擴充套件）`, 'warning', 10000);
+        renderSharedAiQuotaNotes();
         return false;
     }
 
     writeSharedAiUsedToday(usedToday + 1);
+    renderSharedAiQuotaNotes();
 
     const remaining = AI_SHARED_RATE_LIMIT.maxCalls - (usedToday + 1);
     const noticeType = remaining <= 1 ? 'warning' : 'info';
     showMessage(`共用 AI 每人每天 ${AI_SHARED_RATE_LIMIT.maxCalls} 次（台北時間午夜重置）：${featureLabel}送出後今天還可使用 ${remaining} 次。`, noticeType, 6000);
     return true;
+}
+
+// ===== 🆕 [V4.7.2] 共用 AI 每天 3 次：固定顯示在「AI 設定」與各 AI 按鈕下方 =====
+// 以前只有按下 AI 按鈕時跳一下會消失的提示，老師不知道有每天 3 次的限制。
+// 剩餘次數讀後端記帳文件 rateLimits/user_<uid>_<台北日期>（規則只准讀自己的），讀不到才用本機紀錄。
+const SHARED_AI_EXTENSION_URL = 'https://cagoooo.github.io/Akailao/extension.html';
+const SHARED_AI_NOTE_ANCHORS = [
+    { id: 'ai-generate-reading-btn', where: 'self' },
+    { id: 'ai-generate-mc-btn', where: 'self' },
+    { id: 'ai-generate-seq-btn', where: 'self' },
+    { id: 'ai-generate-match-btn', where: 'self' },
+    { id: 'tf-recognize-image-btn', where: 'parent' },
+    { id: 'mc-recognize-image-btn', where: 'parent' },
+    { id: 'api-key-guide-ext-note', where: 'self', guide: true },
+];
+
+function sharedAiQuotaNoteHtml(forGuide) {
+    const max = AI_SHARED_RATE_LIMIT.maxCalls;
+    if (!isUsingSharedGeminiKey()) {
+        return forGuide ? `✅ 目前使用<strong>你自己的金鑰</strong>，不受每天 ${max} 次的限制。` : '';
+    }
+    const ext = `<a href="${SHARED_AI_EXTENSION_URL}" target="_blank" rel="noopener noreferrer">剛好學 Chrome 擴充套件</a>`;
+    if (!isGoogleTeacherSignedIn()) {
+        return `🔋 共用 AI 額度：老師用 Google 帳號登入後，<strong>每個帳號每天 ${max} 次</strong>（台北時間午夜重置）。`;
+    }
+    const left = Math.max(0, max - readSharedAiUsedToday());
+    if (left <= 0) {
+        return `⛔ 今天的 ${max} 次共用額度已用完，明天（台北時間午夜後）再來。想繼續出題：在「AI 設定」貼上自己的免費 Gemini 金鑰，或改用${ext}。`;
+    }
+    const tail = forGuide
+        ? `想不受次數限制，可以在下方貼上自己的免費金鑰，或改用${ext}。`
+        : '';
+    return `🔋 共用 AI 額度：<strong>每個帳號每天 ${max} 次</strong>（台北時間午夜重置），今天還可以用 <strong>${left}</strong> 次。${tail}`;
+}
+
+function renderSharedAiQuotaNotes() {
+    try {
+        SHARED_AI_NOTE_ANCHORS.forEach(({ id, where, guide }) => {
+            const anchor = document.getElementById(id);
+            if (!anchor) return;
+            const ref = where === 'parent' ? anchor.parentElement : anchor;
+            if (!ref || !ref.parentNode) return;
+            let note = document.querySelector(`.shared-ai-quota-note[data-for="${id}"]`);
+            if (!note) {
+                note = document.createElement('p');
+                note.className = 'shared-ai-quota-note';
+                note.dataset.for = id;
+                note.setAttribute('aria-live', 'polite');
+                ref.insertAdjacentElement('afterend', note);
+            }
+            const html = IN_EXTENSION_PANEL ? '' : sharedAiQuotaNoteHtml(!!guide);
+            note.innerHTML = html;
+            note.classList.toggle('hidden', !html);
+            const used = isUsingSharedGeminiKey() && isGoogleTeacherSignedIn()
+                && readSharedAiUsedToday() >= AI_SHARED_RATE_LIMIT.maxCalls;
+            note.classList.toggle('is-empty', used);
+        });
+    } catch (e) { console.warn('[SharedAI] 額度提示顯示失敗', e); }
+}
+
+let _sharedAiQuotaSeq = 0;
+async function refreshSharedAiQuota() {
+    const seq = ++_sharedAiQuotaSeq;
+    renderSharedAiQuotaNotes();
+    if (!isUsingSharedGeminiKey() || !isGoogleTeacherSignedIn()) return;
+    try {
+        const ref = doc(db, 'rateLimits', `user_${auth.currentUser.uid}_${sharedAiTodayKey()}`);
+        const snap = await getDoc(ref);
+        if (seq !== _sharedAiQuotaSeq) return;
+        const used = snap.exists() ? Math.max(0, Number(snap.data()?.count) || 0) : 0;
+        writeSharedAiUsedToday(Math.min(used, AI_SHARED_RATE_LIMIT.maxCalls));
+    } catch (e) {
+        console.info('[SharedAI] 讀不到伺服器的今日次數，改用這台電腦的紀錄', e?.code || e?.message);
+    }
+    renderSharedAiQuotaNotes();
+}
+
+function initSharedAiQuotaNotes() {
+    renderSharedAiQuotaNotes();
+    onAuthStateChanged(auth, () => { refreshSharedAiQuota(); });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refreshSharedAiQuota(); // 跨過午夜也會更新
+    });
+    window.addEventListener('storage', (e) => {
+        if (e.key === AI_SHARED_RATE_LIMIT.storageKey || e.key === 'aiSettings') renderSharedAiQuotaNotes();
+    });
 }
 
 async function callGeminiContent(payload, options = {}) {
@@ -559,6 +647,8 @@ async function callGeminiContent(payload, options = {}) {
                 throw quotaErr;
             }
             throw err;
+        } finally {
+            refreshSharedAiQuota(); // 🆕 [V4.7.2] 成功、失敗退回、被擋都以伺服器記帳為準更新提示
         }
     }
 
@@ -9155,6 +9245,7 @@ function saveAISettings() {
     aiSettings.aiSource = aiSourceSelect.value;
     aiSettings.geminiApiKey = geminiApiKeyInput.value.trim();
     localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
+    renderSharedAiQuotaNotes();
     showMessage('AI 設定已儲存！', 'success');
     hideAISettingsModal();
 }
@@ -9210,8 +9301,9 @@ function showApiKeyGuide(retryCallback) {
         input.value = currentKey;
     }
     input.type = 'password'; // 🔒 絕對防護：強制鎖定為 password 模式
+    refreshSharedAiQuota(); // 🆕 [V4.7.2] 視窗上方顯示共用額度每天 3 次與今日剩餘
 
-    testResult.className = 'hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
+    testResult.className ='hidden mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg';
     testResult.innerHTML = '';
 
     const handleInput = () => {
@@ -9267,6 +9359,7 @@ function showApiKeyGuide(retryCallback) {
         if (geminiApiKeyInput) geminiApiKeyInput.value = key;
         window.__akailaoExtBridge?.onKeyChanged();
         hide();
+        renderSharedAiQuotaNotes();
         showMessage('✅ API Key 已儲存！', 'success');
         if (typeof retryCallback === 'function') {
             setTimeout(retryCallback, 300);
@@ -9319,6 +9412,7 @@ function showApiKeyGuide(retryCallback) {
                 localStorage.setItem('aiSettings', JSON.stringify(aiSettings));
                 if (geminiApiKeyInput) geminiApiKeyInput.value = key;
                 window.__akailaoExtBridge?.onKeyChanged();
+                renderSharedAiQuotaNotes();
                 saveBtn.textContent = '✅ 已驗證，儲存並繼續';
                 saveBtn.classList.add('from-green-500', 'to-green-600');
                 saveBtn.classList.remove('from-blue-600', 'to-purple-600');
@@ -13655,6 +13749,9 @@ function setupEventListeners() {
         // 備援提示：請使用者直接按 Ctrl+V
         showMessage('💡 請直接在此頁面按 Ctrl+V 貼上剪貼簿的截圖', 'info', 3500);
     });
+    // 🆕 [V4.7.2] 各 AI 按鈕下方固定顯示「共用 AI 每天 3 次、今天還剩 N 次」
+    initSharedAiQuotaNotes();
+
     // 🆕 [V4.7.0] (2.5) 擷取 Chrome 分頁／視窗畫面＋框選（同擴充套件的截圖出題，網站也能用）
     const captureTabBtn = document.getElementById('ai-reading-capture-tab-btn');
     if (captureTabBtn && canCaptureTab()) {
