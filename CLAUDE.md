@@ -96,6 +96,7 @@ python -m http.server 8080 --bind 127.0.0.1
   ```
 - **驗證**：https://console.firebase.google.com/project/class-4719f/firestore/rules
 - **注意**：GitHub Actions 不會自動部署 Firestore Rules，需手動執行
+- ⚠️ **規則正本在這裡**：`H:\Class`（班級小管家）的 `firebase.json` 也指向同一個資料庫的 `firestore.rules`，但那份是舊版（沒有教室代碼主人 `classroomClaims`、`rateLimits` 等規則）。**不要在 H:\Class 跑 `firebase deploy --only firestore` 或不加 `--only` 的 deploy**，會把剛好學的規則蓋回舊版（2026-11-20 發現，尚未發生）。
 
 ### 2.5 Cloud Functions 部署（⚠️ 與班級小管家共用專案）
 - `class-4719f` 同時放剛好學與班級小管家（`H:\Class`）的 Cloud Functions，兩邊 `functions/` 都用 codebase `default`。
