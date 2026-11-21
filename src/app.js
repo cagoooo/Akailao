@@ -1,6 +1,6 @@
 // Import Firebase SDK functions.
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "firebase/auth";
+import { initializeApp, getApps } from "firebase/app";
+import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, updateCurrentUser } from "firebase/auth";
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
@@ -29,8 +29,35 @@ const firebaseConfig = {
     appId: "1:528903484088:web:340a2300f9a110c02a3a4d"
 };
 
-const app = initializeApp(firebaseConfig);
+// 🆕 [V4.7.4] 剛好學用自己的 Firebase app 名稱：登入狀態與離線快取和班級小管家分開。
+//     兩個網站都在 cagoooo.github.io、用同一組設定；以前都用預設名稱 [DEFAULT]，同一台電腦的瀏覽器裡
+//     共用同一份登入（一邊登出另一邊也登出，學生按「我是學生」會把班級小管家的老師登出）。
+const AKAILAO_APP_NAME = 'akailao';
+const app = initializeApp(firebaseConfig, AKAILAO_APP_NAME);
 const auth = getAuth(app);
+
+// 一次性搬家：第一次開新版時，把舊的共用登入（[DEFAULT]）複製一份到剛好學自己的登入，
+// 老師不用重新登入、上課中的學生維持原本身分。只複製、不登出舊的那份（不影響班級小管家）。
+const AUTH_MIGRATED_KEY = 'akailao_auth_own_app_v1';
+async function migrateLegacySharedAuth() {
+    try {
+        if (localStorage.getItem(AUTH_MIGRATED_KEY)) return;
+        await auth.authStateReady();
+        if (!auth.currentUser) {
+            const legacyApp = getApps().find(a => a.name === '[DEFAULT]') || initializeApp(firebaseConfig);
+            const legacyAuth = getAuth(legacyApp);
+            await legacyAuth.authStateReady();
+            if (legacyAuth.currentUser) {
+                await updateCurrentUser(auth, legacyAuth.currentUser);
+                console.log('[Auth] 已沿用原本的登入身分（一次性搬家）', legacyAuth.currentUser.isAnonymous ? '匿名' : 'Google');
+            }
+        }
+        localStorage.setItem(AUTH_MIGRATED_KEY, String(Date.now()));
+    } catch (e) {
+        console.warn('[Auth] 沿用原本登入失敗，改為重新登入', e?.code || e?.message);
+        try { localStorage.setItem(AUTH_MIGRATED_KEY, 'failed'); } catch (_) { /* 無痕模式 */ }
+    }
+}
 // 🆕 [V4.5.9] PERF-4 離線快取改成「多分頁共用」：舊的 enableIndexedDbPersistence 只允許一個分頁持有快取，
 //     學生在 iPad 開了第二個分頁、或切到別的 App 再回來時，會出現
 //     「Failed to obtain exclusive access to the persistence layer」，搶不到快取的分頁可能寫不進作答。
@@ -16100,6 +16127,7 @@ async function initialize() {
     //   以前重新整理時 signInAnonymously 會把老師換成新的匿名身分，靠舊的寬鬆規則才能繼續操作；
     //   V4.6.0 起教室只給主人／協同老師操作，匿名身分會被擋。
     const signInOnce = async () => {
+        await migrateLegacySharedAuth(); // 🆕 [V4.7.4] 先搬家，舊的老師身分才不會被匿名登入蓋掉
         await auth.authStateReady();
         if (auth.currentUser) return auth.currentUser;
         return (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
