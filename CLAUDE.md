@@ -98,6 +98,7 @@ python -m http.server 8080 --bind 127.0.0.1
 - **注意**：GitHub Actions 不會自動部署 Firestore Rules，需手動執行
 - ⚠️ **規則正本在這裡**：`H:\Class`（班級小管家）的 `firebase.json` 也指向同一個資料庫，兩個網站共用同一份規則（含班級小管家的 `petShares` 寵物分享）。
   - 改規則一律改 `H:\Akailao\firestore.rules`、從這裡部署，再 `cp` 到 `H:\Class\firestore.rules`，兩份必須 `cmp` 完全相同。
+  - 班級小管家那邊的對應說明：`H:\Class\CLAUDE.md`（共用的規則、函式、登入設定、瀏覽器名稱前綴）。
   - 2026-11-21 同步時發現：剛好學 V4.6.0 起部署的規則沒有 `petShares`，班級小管家寵物分享連結被擋（403）；已併入並部署，恢復為 404（找不到）＝放行。
   - 部署前跑模擬資料庫測試（教室代碼 42 項、次數 8 項、寵物分享 11 項，腳本做法見 skill `firestore-shared-code-ownership`）。
 
