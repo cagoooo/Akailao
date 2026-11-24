@@ -3,6 +3,7 @@ import { initializeApp, getApps } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, updateCurrentUser } from "firebase/auth";
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check"; // 🆕 [V4.7.6] App Check
 import { initUsageNotify, UsageNotify } from "./usage-notify.js";
 import { createClassroomClaims, maskName, formatInviteCode, normalizeInviteCode } from "./classroom-claims.js";
 import { canCaptureTab, captureTabImage } from "./tab-capture.js";
@@ -34,6 +35,18 @@ const firebaseConfig = {
 //     共用同一份登入（一邊登出另一邊也登出，學生按「我是學生」會把班級小管家的老師登出）。
 const AKAILAO_APP_NAME = 'akailao';
 const app = initializeApp(firebaseConfig, AKAILAO_APP_NAME);
+// 🆕 [V4.7.6] App Check：連到資料庫、登入、雲端函式時附上「確實從這個網站來」的驗證票證。
+//     reCAPTCHA 企業版金鑰只登記 cagoooo.github.io（網站金鑰本來就公開），和班級小管家共用同一個網頁應用。
+//     本機不啟用（金鑰沒登記 localhost，會一直報錯）。目前只送出票證、不擋人；後台確認幾乎全部通過才開強制檢查。
+//     要在 getAuth／Firestore 之前啟用，第一批連線才會帶上票證。
+const APP_CHECK_SITE_KEY = '6Ld13zAuAAAAAJsfm00p6Ehh06EU1GUy1MRvbLJn';
+if (typeof location !== 'undefined' && location.hostname === 'cagoooo.github.io') {
+    try {
+        initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(APP_CHECK_SITE_KEY), isTokenAutoRefreshEnabled: true });
+    } catch (e) {
+        console.warn('[AppCheck] 啟用失敗（不影響使用）:', e?.message || e);
+    }
+}
 const auth = getAuth(app);
 
 // 一次性搬家：第一次開新版時，把舊的共用登入（[DEFAULT]）複製一份到剛好學自己的登入，
