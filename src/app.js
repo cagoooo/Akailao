@@ -58,6 +58,24 @@ async function migrateLegacySharedAuth() {
         try { localStorage.setItem(AUTH_MIGRATED_KEY, 'failed'); } catch (_) { /* 無痕模式 */ }
     }
 }
+
+// 🆕 [V4.7.5] 確保已登入（沒有就匿名登入）。啟動流程與「學生按加入」共用同一個進行中的登入，
+//     避免同時建立兩個匿名身分。起因：掃 QR code（?classroom=）進來的學生代碼已自動填好、姓名也記得，
+//     登入還沒完成（Safari 約 4～5 秒）就按「加入」，讀教室時沒有身分 → Missing or insufficient permissions。
+let _signInInFlight = null;
+function ensureSignedIn() {
+    if (auth.currentUser) return Promise.resolve(auth.currentUser);
+    if (!_signInInFlight) {
+        _signInInFlight = (async () => {
+            await migrateLegacySharedAuth();
+            await auth.authStateReady();
+            if (auth.currentUser) return auth.currentUser;
+            const cred = await signInAnonymously(auth);
+            return cred.user;
+        })().finally(() => { _signInInFlight = null; });
+    }
+    return _signInInFlight;
+}
 // 🆕 [V4.5.9] PERF-4 離線快取改成「多分頁共用」：舊的 enableIndexedDbPersistence 只允許一個分頁持有快取，
 //     學生在 iPad 開了第二個分頁、或切到別的 App 再回來時，會出現
 //     「Failed to obtain exclusive access to the persistence layer」，搶不到快取的分頁可能寫不進作答。
@@ -10120,7 +10138,7 @@ async function endClassSession() {
             await signInWithCustomToken(auth, __initial_auth_token);
             console.log("Signed in with custom token.");
         } else {
-            await signInAnonymously(auth);
+            await ensureSignedIn(); // 🆕 [V4.7.5] 共用登入流程
         }
         console.log("Re-authenticated after ending session.");
 
@@ -11565,7 +11583,7 @@ function setupEventListeners() {
                 currentTeacherGoogleUser = null;
                 document.getElementById('teacher-google-profile')?.classList.add('hidden');
                 await signOut(auth);
-                await signInAnonymously(auth);
+                await ensureSignedIn(); // 🆕 [V4.7.5] 共用登入流程
                 await new Promise(r => setTimeout(r, 300)); // 讓登入監聽先跑完
             } catch (e) {
                 console.warn('[Student] 切換為學生身分失敗:', e?.message);
@@ -11638,7 +11656,7 @@ function setupEventListeners() {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
-                    await signInAnonymously(auth);
+                    await ensureSignedIn(); // 🆕 [V4.7.5] 共用登入流程
                 }
             } catch (e) {
                 console.warn('[Teacher] 返回登出失敗:', e);
@@ -11834,6 +11852,12 @@ function setupEventListeners() {
         ])].filter(c => c && !/[\/\\#$\[\]\u0000-\u001f]/.test(c));
 
         try {
+            // 🆕 [V4.7.5] 先確定已登入再讀教室（QR code 進來的學生常在登入完成前就按加入）
+            if (!auth.currentUser) {
+                updateStudentJoinProgress(10, '🔐 連線中，請稍等一下...', '關卡 1/4');
+                await ensureSignedIn();
+                updateStudentJoinProgress(20, '🔍 正在查詢教室代碼...', '關卡 1/4');
+            }
             let docSnap = null;
             for (const candidate of codeCandidates) {
                 const snap = await getDoc(doc(db, 'artifacts', baseAppId, 'public', 'data', 'classrooms', candidate, 'settings', 'control'));
@@ -16127,12 +16151,13 @@ async function initialize() {
     //   以前重新整理時 signInAnonymously 會把老師換成新的匿名身分，靠舊的寬鬆規則才能繼續操作；
     //   V4.6.0 起教室只給主人／協同老師操作，匿名身分會被擋。
     const signInOnce = async () => {
-        await migrateLegacySharedAuth(); // 🆕 [V4.7.4] 先搬家，舊的老師身分才不會被匿名登入蓋掉
-        await auth.authStateReady();
-        if (auth.currentUser) return auth.currentUser;
-        return (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
-            ? signInWithCustomToken(auth, __initial_auth_token)
-            : signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await migrateLegacySharedAuth(); // 🆕 [V4.7.4] 先搬家，舊的老師身分才不會被匿名登入蓋掉
+            await auth.authStateReady();
+            if (auth.currentUser) return auth.currentUser;
+            return signInWithCustomToken(auth, __initial_auth_token);
+        }
+        return ensureSignedIn(); // 🆕 [V4.7.5] 與學生按「加入」共用同一個登入流程
     };
     const AUTH_RETRY_DELAYS_MS = [1500, 4000];
     let authAttempts = 0;
