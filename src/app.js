@@ -16198,7 +16198,26 @@ async function initialize() {
     } catch (error) {
         console.error("Firebase Authentication failed:", error);
         document.body.innerHTML = `<div class="text-center p-8 text-red-600"><h1 class="text-2xl font-bold">驗證失敗</h1><p>無法連接至互動服務，請檢查網路連線後重新整理。</p><p class="text-sm mt-2">${error.message}</p><button onclick="location.reload()" class="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white font-bold">重新整理</button></div>`;
-        UsageNotify.error(`${error.message}（已嘗試 ${authAttempts} 次，裝置${navigator.onLine ? '連線中' : '離線'}）`, 'firebase-auth-failed', classroomCode);
+        // 🆕 [V4.7.7] 不是一般瀏覽器造成的登入失敗不推 Chat（老師也無從處理）：
+        //   ① 爬蟲／自動化工具（Googlebot、Lighthouse、無頭瀏覽器）
+        //   ② requests-from-referer-<empty>：連線同時沒有 Origin 與 Referer，一般 Chrome 一定會帶 Origin，
+        //      只有爬蟲、會拿掉來源資訊的代理或外掛才會這樣（2026-11-25 06:52「未知裝置 / Chrome」）
+        //   ③ 不是從正式網址開（下載到電腦的 file:// 檔案）
+        const _ua = navigator.userAgent || '';
+        const _isBot = /bot|crawl|spider|slurp|lighthouse|headlesschrome|google-inspectiontool|pagespeed|prerender/i.test(_ua) || navigator.webdriver === true;
+        const _noOrigin = /requests-from-referer-(<empty>|null)-are-blocked/.test(String(error?.code || error?.message || ''));
+        const _notOfficialPage = location.protocol !== 'https:';
+        if (_noOrigin || _notOfficialPage) {
+            const hint = document.querySelector('body p.text-sm');
+            if (hint) hint.textContent = _notOfficialPage
+                ? '請直接開啟網址 https://cagoooo.github.io/Akailao/ 使用，不要開啟下載到電腦的檔案。'
+                : '瀏覽器沒有送出網站來源資訊（可能是隱私外掛或網路過濾造成），請改用一般 Chrome 視窗，或暫停該外掛後重新整理。';
+        }
+        if (!_isBot && !_noOrigin && !_notOfficialPage) {
+            UsageNotify.error(`${error.message}（已嘗試 ${authAttempts} 次，裝置${navigator.onLine ? '連線中' : '離線'}）`, 'firebase-auth-failed', classroomCode);
+        } else {
+            console.warn('[Auth] 非一般瀏覽器環境的登入失敗，不回報：', error?.code || error?.message);
+        }
     }
 
     // 🆕 [V4.2.6] OBS-1b：全域錯誤遙測已整併進 ErrorReporter（含 chunk error 過濾 + Firestore 紀錄 + Chat 通知）
