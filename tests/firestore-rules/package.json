@@ -1,0 +1,13 @@
+{
+  "name": "firestore-rules-test",
+  "private": true,
+  "description": "class-4719f 共用資料庫規則的模擬測試（剛好學＋班級小管家）。不連正式資料庫。",
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-rules-test --config firebase.json \"node test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.6.1"
+  }
+}

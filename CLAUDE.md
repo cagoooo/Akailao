@@ -100,7 +100,9 @@ python -m http.server 8080 --bind 127.0.0.1
   - 改規則一律改 `H:\Akailao\firestore.rules`、從這裡部署，再 `cp` 到 `H:\Class\firestore.rules`，兩份必須 `cmp` 完全相同。
   - 班級小管家那邊的對應說明：`H:\Class\CLAUDE.md`（共用的規則、函式、登入設定、瀏覽器名稱前綴）。
   - 2026-11-21 同步時發現：剛好學 V4.6.0 起部署的規則沒有 `petShares`，班級小管家寵物分享連結被擋（403）；已併入並部署，恢復為 404（找不到）＝放行。
-  - 部署前跑模擬資料庫測試（教室代碼 42 項、次數 8 項、寵物分享 11 項，腳本做法見 skill `firestore-shared-code-ownership`）。
+  - 部署前跑模擬資料庫測試：`cd tests/firestore-rules && npm install && npm test`（2026-11-24 起放進 repo，13 項，涵蓋兩個網站：教室與代碼、保留代碼、班級小管家的老師資料與寵物分享、後端專用資料；只連本機模擬資料庫）。
+  - 2026-11-24：教室（`classrooms`）與教室代碼（`classroomClaims`）改成只能用代碼查單一筆，不能列出全部；保留代碼要求 Google 驗證過的信箱。前端不要新增「列出全部教室」的查詢，會被規則擋下。
+  - 部署前先確認線上規則和 repo 上一版相同（沒有人另外部署過）；線上規則可用 Firebase Rules API 讀出來比對，回傳內容要存檔後用 UTF-8 讀，直接接到 Python 會被 Windows 的編碼讀錯而誤判成不同。
 
 ### 2.5 Cloud Functions 部署（⚠️ 與班級小管家共用專案）
 - `class-4719f` 同時放剛好學與班級小管家（`H:\Class`）的 Cloud Functions，兩邊 `functions/` 都用 codebase `default`。

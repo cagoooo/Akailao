@@ -55,7 +55,11 @@ service cloud.firestore {
     function myEmailHash() {
       return hashing.sha256(request.auth.token.get('email', '').lower().toUtf8()).toHexString().lower();
     }
-    function reservedOk(code) { return !isReserved(code) || myEmailHash() == reservedCodes()[code]; }
+    // 保留代碼只認「Google 驗證過的信箱」：只比對信箱文字的話，沒驗證過、信箱剛好一樣的帳號也會通過
+    function emailVerified() { return request.auth.token.get('email_verified', false) == true; }
+    function reservedOk(code) {
+      return !isReserved(code) || (emailVerified() && myEmailHash() == reservedCodes()[code]);
+    }
 
     function claimPath(appId, code) {
       return /databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code);
@@ -88,7 +92,8 @@ service cloud.firestore {
     }
 
     match /artifacts/{appId}/public/data/classroomClaims/{code} {
-      allow read: if signedIn();
+      // 只能「拿著代碼查這一間」，不能把全部代碼列出來（列得出來就等於拿到所有教室的名單）
+      allow get: if signedIn();
       // 第一位申請的老師成為主人
       allow create: if isGoogle() && reservedOk(code) && claimFieldsOk()
                     && request.resource.data.claimedAt == request.time;
@@ -132,7 +137,9 @@ service cloud.firestore {
     // 🆕 MODIFIED [V4.6.0] 教室公開資料（artifacts 路徑）
     // 讀取：任何登入用戶；寫入：學生（匿名）或這間教室的老師
     match /artifacts/{appId}/public/data/classrooms/{classroomCode} {
-      allow read: if signedIn();
+      // 教室本身只能用代碼一間一間查，不開放列出全部教室（2026-11-24）。
+      // 教室裡面的子集合（作答、出席、投票…）照舊可以整批讀，課堂功能需要。
+      allow get: if signedIn();
       allow write: if isRoomTeacher(appId, classroomCode);
 
       // 教室設定（control / peerReview）：只有這間教室的老師能寫
