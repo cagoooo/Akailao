@@ -15,7 +15,7 @@ import {
     doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, serverTimestamp, query, where, limit,
 } from 'firebase/firestore';
 
-const APP = 'akailao-test';
+const APP = 'default-classroom-app';   // 規則只開放剛好學實際用的這個 appId
 const RESERVED_EMAIL = 'reserved-owner@example.test';
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -174,11 +174,31 @@ await test('主人超過 30 天沒用，別的老師可以接手（保留代碼�
     await assertFails(setDoc(claim(google('t8'), '603'), claimFields('t8')));
 });
 
-await test('共享題庫等其他公開資料照舊可以讀寫與列出', async () => {
-    const banks = (db) => collection(db, 'artifacts', APP, 'public', 'data', 'sharedBanks');
-    await assertSucceeds(getDocs(banks(google('t2'))));
-    await assertSucceeds(setDoc(doc(google('t2'), 'artifacts', APP, 'public', 'data', 'sharedBanks', 'b2'), { name: '新題庫' }));
-    await assertSucceeds(getDocs(banks(anon('s1'))));
+await test('共享題庫：拿編號讀一份、照剛好學的格式新增；不能列出、不能改寫或刪除別人的分享', async () => {
+    const bank = (db, id) => doc(db, 'artifacts', APP, 'public', 'data', 'sharedBanks', id);
+    const fields = { type: 'mc', name: '五年級數學', content: '1+1=?|2|3|4', sharedAt: new Date().toISOString(), sharedBy: '王老師' };
+    await assertSucceeds(getDoc(bank(google('t2'), 'b1')));
+    await assertSucceeds(getDoc(bank(anon('s1'), 'b1')));
+    // 剛好學產生的編號：mc-／tf- 加上時間與亂數
+    await assertSucceeds(setDoc(bank(google('t2'), 'mc-mbx1y2z3abcde'), fields));
+    await assertSucceeds(setDoc(bank(google('t2'), 'tf-mbx1y2z3q'), { ...fields, type: 'tf', content: { questions: [] } }));
+    await assertFails(getDocs(collection(google('t2'), 'artifacts', APP, 'public', 'data', 'sharedBanks')));
+    await assertFails(setDoc(bank(google('t2'), 'b1'), fields));                    // 改寫別人的分享
+    await assertFails(deleteDoc(bank(google('t2'), 'b1')));
+    await assertFails(setDoc(bank(google('t2'), 'mc-abcdefgh'), { ...fields, extra: 'x' }));
+    await assertFails(setDoc(bank(google('t2'), 'mc-abcdefgh'), { ...fields, content: 'x'.repeat(300001) }));
+    await assertFails(setDoc(bank(google('t2'), 'mc-abcdefgh'), { ...fields, type: 'zz' }));
+    await assertFails(setDoc(bank(guest(), 'mc-abcdefgh'), fields));
+});
+
+await test('artifacts 只開放剛好學的 appId 與它用到的三個位置', async () => {
+    await assertFails(setDoc(doc(anon('s1'), 'artifacts', 'other-app', 'public', 'data', 'classrooms', 'A100', 'studentResponses', 'x'), { answer: 'A' }));
+    await assertFails(getDoc(doc(google('owner1'), 'artifacts', 'other-app', 'public', 'data', 'classrooms', 'A100')));
+    await assertFails(setDoc(doc(google('owner1'), 'artifacts', 'other-app', 'public', 'data', 'classroomClaims', 'Z1'), claimFields('owner1')));
+    await assertFails(setDoc(doc(google('owner1'), 'artifacts', 'other-app', 'public', 'data', 'sharedBanks', 'mc-abcdefgh'), { type: 'mc', name: 'x', content: 'x', sharedAt: 'x', sharedBy: 'x' }));
+    await assertFails(setDoc(doc(google('t2'), 'artifacts', APP, 'public', 'data', 'anything', 'x'), { a: 1 }));
+    await assertFails(setDoc(doc(anon('s1'), 'artifacts', APP, 'public', 'stuff', 'c', 'x'), { a: 1 }));
+    await assertFails(setDoc(doc(google('t2'), 'artifacts', APP, 'public', 'data', 'anything', 'y', 'deep', 'z'), { a: 1 }));
 });
 
 await test('沒有登入的人：教室、代碼、老師資料都讀不到', async () => {
@@ -197,6 +217,10 @@ await test('班級小管家：老師只能讀寫自己的資料，彼此讀不�
     await assertFails(getDoc(doc(google('stranger'), 'users', 'owner1', 'classes', 'c1')));
     await assertFails(setDoc(doc(google('stranger'), 'users', 'owner1', 'classes', 'c1'), { name: 'x' }));
     await assertFails(getDoc(doc(anon('s1'), 'users', 'owner1', 'classes', 'c1')));
+    // 匿名身分不能寫雲端（連自己的 uid 底下也不行）；讀自己的空位置照舊可以
+    await assertFails(setDoc(doc(anon('s1'), 'users', 's1', 'classes', 'c1'), { name: 'x' }));
+    await assertFails(setDoc(doc(anon('s1'), 'users', 's1', 'students', 'x'), { name: 'x' }));
+    await assertSucceeds(getDocs(collection(anon('s1'), 'users', 's1', 'students')));
 });
 
 await test('班級小管家：寵物分享連結免登入可讀單一份、不能列出、只有 Google 登入的本人能改', async () => {

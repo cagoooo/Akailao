@@ -6,12 +6,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 教師個人資料：只有本人可讀寫
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
-    }
-
     // 🆕 [V4.0] 老師帳號資料（Google 登入才能寫）
     match /teachers/{teacherId} {
       // 個人資料（教室代碼、名稱等）
@@ -39,6 +33,16 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isAnon() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous'; }
     function isGoogle() { return signedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous'; }
+
+    // 班級小管家的老師資料：只有本人可讀；寫入要 Google 登入（2026-11-25）。
+    // 開頁自動建立的匿名身分綁在單一瀏覽器，寫上來的資料沒人找得回，前端本來就不寫（canWriteCloud）。
+    match /users/{userId}/{document=**} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if isGoogle() && request.auth.uid == userId;
+    }
+
+    // 剛好學的資料只放在這個 appId 底下（src/app.js 的 baseAppId），別的名稱一律不開放（2026-11-25）
+    function knownApp(appId) { return appId == 'default-classroom-app'; }
 
     // 保留代碼：只有指定帳號能申請（存 Email 的 SHA-256，不放明文 Email）
     function reservedCodes() {
@@ -68,20 +72,22 @@ service cloud.firestore {
       return /databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/members/$(uid);
     }
     function isOwner(appId, code) {
-      return isGoogle() && exists(claimPath(appId, code))
+      return isGoogle() && knownApp(appId) && exists(claimPath(appId, code))
           && get(claimPath(appId, code)).data.ownerUid == request.auth.uid;
     }
     function isMember(appId, code) {
-      return isGoogle() && exists(claimPath(appId, code))
+      return isGoogle() && knownApp(appId) && exists(claimPath(appId, code))
           && exists(memberPath(appId, code, request.auth.uid))
           && get(memberPath(appId, code, request.auth.uid)).data.ownerUid
              == get(claimPath(appId, code)).data.ownerUid;
     }
     // 可以操作這間教室的老師：主人、協同老師；還沒有人申請的舊教室照舊開放（相容既有課堂）
     function isRoomTeacher(appId, code) {
-      return isGoogle() && (!exists(claimPath(appId, code)) || isOwner(appId, code) || isMember(appId, code));
+      return isGoogle() && knownApp(appId) && (!exists(claimPath(appId, code)) || isOwner(appId, code) || isMember(appId, code));
     }
-    function canWriteRoom(appId, code) { return isAnon() || isRoomTeacher(appId, code); }
+    function canWriteRoom(appId, code) { return (isAnon() && knownApp(appId)) || isRoomTeacher(appId, code); }
+    // 登入且在剛好學的 appId 底下
+    function inApp(appId) { return signedIn() && knownApp(appId); }
 
     function claimFieldsOk() {
       return request.resource.data.keys().hasOnly(['ownerUid', 'ownerName', 'claimedAt', 'lastUsedAt'])
@@ -93,12 +99,12 @@ service cloud.firestore {
 
     match /artifacts/{appId}/public/data/classroomClaims/{code} {
       // 只能「拿著代碼查這一間」，不能把全部代碼列出來（列得出來就等於拿到所有教室的名單）
-      allow get: if signedIn();
+      allow get: if inApp(appId);
       // 第一位申請的老師成為主人
-      allow create: if isGoogle() && reservedOk(code) && claimFieldsOk()
+      allow create: if isGoogle() && knownApp(appId) && reservedOk(code) && claimFieldsOk()
                     && request.resource.data.claimedAt == request.time;
       // 主人更新（最後使用時間、顯示名稱）；不能把代碼轉給別人
-      allow update: if isGoogle() && (
+      allow update: if isGoogle() && knownApp(appId) && (
           (resource.data.ownerUid == request.auth.uid && claimFieldsOk()
              && request.resource.data.claimedAt == resource.data.claimedAt)
           // 協同老師只能更新最後使用時間
@@ -110,16 +116,16 @@ service cloud.firestore {
              && !isReserved(code) && claimFieldsOk()
              && request.resource.data.claimedAt == request.time)
         );
-      allow delete: if isGoogle() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if isGoogle() && knownApp(appId) && resource.data.ownerUid == request.auth.uid;
 
       match /invite/{inviteId} {
         allow read, write: if isOwner(appId, code);
       }
 
       match /members/{memberUid} {
-        allow read: if isGoogle() && (request.auth.uid == memberUid || isOwner(appId, code));
+        allow read: if isGoogle() && knownApp(appId) && (request.auth.uid == memberUid || isOwner(appId, code));
         // 拿正確、7 天內的邀請碼才能加入
-        allow create: if isGoogle() && request.auth.uid == memberUid
+        allow create: if isGoogle() && knownApp(appId) && request.auth.uid == memberUid
           && exists(claimPath(appId, code))
           && request.resource.data.keys().hasOnly(['ownerUid', 'joinCode', 'name', 'joinedAt'])
           && request.resource.data.ownerUid == get(claimPath(appId, code)).data.ownerUid
@@ -130,7 +136,7 @@ service cloud.firestore {
              == request.resource.data.joinCode
           && get(/databases/$(database)/documents/artifacts/$(appId)/public/data/classroomClaims/$(code)/invite/current).data.createdAt
              > request.time - duration.value(7, 'd');
-        allow delete: if isGoogle() && (request.auth.uid == memberUid || isOwner(appId, code));
+        allow delete: if isGoogle() && knownApp(appId) && (request.auth.uid == memberUid || isOwner(appId, code));
       }
     }
 
@@ -139,40 +145,46 @@ service cloud.firestore {
     match /artifacts/{appId}/public/data/classrooms/{classroomCode} {
       // 教室本身只能用代碼一間一間查，不開放列出全部教室（2026-11-24）。
       // 教室裡面的子集合（作答、出席、投票…）照舊可以整批讀，課堂功能需要。
-      allow get: if signedIn();
+      allow get: if inApp(appId);
       allow write: if isRoomTeacher(appId, classroomCode);
 
       // 教室設定（control / peerReview）：只有這間教室的老師能寫
       match /settings/{settingId} {
-        allow read: if signedIn();
+        allow read: if inApp(appId);
         allow write: if isRoomTeacher(appId, classroomCode);
       }
 
       // 前端錯誤上報：任何登入用戶都能上報；清除由這間教室的老師或系統處理
       match /errors/{errorId} {
-        allow read, create: if signedIn();
+        allow read, create: if inApp(appId);
         allow delete: if canWriteRoom(appId, classroomCode);
       }
 
       // 其他子集合（studentResponses、presence、attendance、waitingGameScores、historicalQuizzes、
       // quickPoll、quickPollVotes、peerReviewVotes、teamScores、photoWall 等）
       match /{sub}/{rest=**} {
-        allow read: if signedIn();
+        allow read: if inApp(appId);
         allow write: if sub != 'settings' && sub != 'errors' && canWriteRoom(appId, classroomCode);
       }
     }
 
-    // 其他 artifacts 路徑（例如 sharedBanks）：通用規則（保持向後相容）
-    // 教室與教室代碼由上方規則把關，這裡排除，否則會被這條寬鬆規則放行
-    match /artifacts/{appId}/public/{seg}/{document=**} {
-      allow read, write: if signedIn() && seg != 'data';
+    // 共享題庫（剛好學「產生題庫分享連結」）：拿到連結的老師用編號讀一份；
+    // 只能新增、不能改寫或刪除別人的分享，也不能整批列出（2026-11-25 收緊：以前是寬鬆的通用規則）。
+    function validSharedBank(shareId) {
+      let d = request.resource.data;
+      return shareId.matches('^(tf|mc)-[a-z0-9]{6,24}$')
+          && d.keys().hasOnly(['type', 'name', 'content', 'sharedAt', 'sharedBy'])
+          && d.type in ['tf', 'mc']
+          && d.name is string && d.name.size() <= 200
+          && ((d.content is string && d.content.size() <= 300000) || d.content is map || d.content is list)
+          && d.sharedAt is string && d.sharedAt.size() <= 40
+          && d.sharedBy is string && d.sharedBy.size() <= 100;
     }
-    match /artifacts/{appId}/public/data {
-      allow read, write: if signedIn();
+    match /artifacts/{appId}/public/data/sharedBanks/{shareId} {
+      allow get: if inApp(appId);
+      allow create: if inApp(appId) && validSharedBank(shareId);
     }
-    match /artifacts/{appId}/public/data/{coll}/{document=**} {
-      allow read, write: if signedIn() && coll != 'classrooms' && coll != 'classroomClaims';
-    }
+    // artifacts 底下其他沒列出的位置一律不開放（由最下方的「禁止所有其他路徑」擋下）
 
     // 🆕 [2026-11-21] 從班級小管家併入（班級小管家 v3.x 寵物分享）。
     // 班級寵物分享快照：學生拿到連結即可免登入讀取單一文件（不可列舉），
