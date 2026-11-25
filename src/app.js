@@ -15579,6 +15579,10 @@ const ErrorReporter = (() => {
         });
         window.addEventListener('unhandledrejection', (event) => {
             const reason = event?.reason;
+            // 🆕 [V4.7.8] Firebase App Check 定時換新票證時，會用 reject('cancelled') 取消上一輪還在等的工作，
+            //     套件自己沒接住，瀏覽器就當成未處理錯誤（班級小管家 2026-11-26 清晨推了兩張「錯誤: cancelled」）。
+            //     不影響使用；只排除「單純一串 cancelled 文字」，錯誤物件照常回報。
+            if (reason === 'cancelled') return;
             const msg = reason?.message || String(reason ?? '');
             report('promise', msg, { stack: reason?.stack });
         });
