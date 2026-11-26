@@ -15700,10 +15700,19 @@ const ErrorReporter = (() => {
         }
     }
 
+    // 🆕 [V4.7.11] 瀏覽器擴充功能（例如 MetaMask 錢包）自己放進網頁的程式出錯，跟剛好學無關、也修不到，不回報。
+    //     判斷：錯誤發生在擴充功能的檔案，或堆疊裡只有擴充功能位址、沒有任何網址（經過站方程式的照常回報）。
+    //     班級小管家 2026-11-26 10:17 推了一張「Failed to connect to MetaMask」（chrome-extension://…/inpage.js）。
+    const _EXT_URL = /(?:chrome|moz|safari|safari-web|ms-browser)-extension:\/\//i;
+    const _isExtensionOnly = (stack, source) =>
+        _EXT_URL.test(String(source || '')) ||
+        (_EXT_URL.test(String(stack || '')) && !/(?:https?|file|blob):\/\//i.test(String(stack || '')));
+
     function install() {
         window.addEventListener('error', (event) => {
             // 僅處理 JS 執行錯誤（資源載入錯誤 event.message 為空，跳過避免噪音）
             if (!event || !event.message) return;
+            if (_isExtensionOnly(event.error?.stack, event.filename)) return;
             report('error', event.message, {
                 stack: event.error?.stack,
                 source: event.filename,
@@ -15717,6 +15726,7 @@ const ErrorReporter = (() => {
             //     套件自己沒接住，瀏覽器就當成未處理錯誤（班級小管家 2026-11-26 清晨推了兩張「錯誤: cancelled」）。
             //     不影響使用；只排除「單純一串 cancelled 文字」，錯誤物件照常回報。
             if (reason === 'cancelled') return;
+            if (_isExtensionOnly(reason?.stack)) return;
             const msg = reason?.message || String(reason ?? '');
             report('promise', msg, { stack: reason?.stack });
         });
