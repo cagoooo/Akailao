@@ -2008,35 +2008,66 @@ const HighlightScoringEngine = (function () {
      * 算法 4: 答題關聯度評分
      * 標註內容包含正確答案證據: 每題 +2 分
      */
-    function calculateRelevance(highlights, questions, studentAnswers) {
+    // 🆕 MODIFIED [v4.7.10]: 改用「關鍵詞」比對。舊版把選項裡連續的中文整串（例如「因為可能影響投資人的信任與機密安全」）
+    //   拿去原文找，選項是改寫過的句子，幾乎永遠比不到：2026-11-26 606 班 23 位學生有 15 位這項 0 分、其餘最多 +2。
+    //   現在把選項拆成兩個字一組的詞（略過含「的、與、是」等虛字的組合），符合以下任一項就算有關聯：
+    //   1. 有連續三個字和畫的重點相同；2. 有兩個以上的詞出現在畫的重點裡；
+    //   3. 有一個詞出現在重點裡，而且這個詞在整篇文章最多出現 2 次（夠特別，例如「反彈」）。
+    const RELEVANCE_STOP_CHARS = /[的了是在和與及或也都就而並為之其這那個一有被把讓於到從對嗎呢吧啊因所以如何什麼哪些否會要]/;
+
+    function relevanceTerms(option) {
+        const lower = String(option || '').toLowerCase();
+        const bigrams = new Set();
+        const trigrams = new Set();
+        (lower.match(/[一-鿿]+/g) || []).forEach(run => {
+            for (let i = 0; i + 2 <= run.length; i++) {
+                const g = run.slice(i, i + 2);
+                if (!RELEVANCE_STOP_CHARS.test(g)) bigrams.add(g);
+            }
+            for (let i = 0; i + 3 <= run.length; i++) {
+                const g = run.slice(i, i + 3);
+                if (!RELEVANCE_STOP_CHARS.test(g[0]) && !RELEVANCE_STOP_CHARS.test(g[2])) trigrams.add(g);
+            }
+        });
+        (lower.match(/[a-z0-9]{2,}/g) || []).forEach(w => bigrams.add(w)); // 例如「AI晶片」裡的 ai
+        return { bigrams: [...bigrams], trigrams: [...trigrams] };
+    }
+
+    function countOccurrences(text, term) {
+        if (!text || !term) return 0;
+        let n = 0, i = text.indexOf(term);
+        while (i !== -1) { n++; i = text.indexOf(term, i + term.length); }
+        return n;
+    }
+
+    function isOptionRelevant(option, highlightedText, articleText) {
+        const { bigrams, trigrams } = relevanceTerms(option);
+        if (trigrams.some(g => highlightedText.includes(g))) return true;
+        const hits = bigrams.filter(g => highlightedText.includes(g));
+        if (hits.length >= 2) return true;
+        // 沒有原文時（舊資料）不套用「特別詞」規則，避免太寬鬆
+        if (hits.length === 1 && articleText) return countOccurrences(articleText, hits[0]) <= 2;
+        return false;
+    }
+
+    function calculateRelevance(highlights, questions, studentAnswers, articleText = '') {
         if (!highlights || !questions || !studentAnswers || highlights.length === 0) return 0;
 
         let relevanceScore = 0;
 
         // 將所有標註文字合併
-        const highlightedText = highlights.map(h => h.text.toLowerCase()).join(' ');
+        const highlightedText = highlights.map(h => String(h.text || '').toLowerCase()).join(' ');
+        const lowerArticle = String(articleText || '').toLowerCase();
 
-        // 檢查每個問題
+        // 檢查每個問題：畫到的重點和「學生選的答案」有關就 +2
         questions.forEach((q, index) => {
             const studentAnswer = studentAnswers[index];
-            if (!studentAnswer) return;
+            if (!studentAnswer || !Array.isArray(q.options)) return;
 
-            // 獲取學生選擇的選項文字
             const selectedOption = q.options[studentAnswer - 1];
             if (!selectedOption) return;
 
-            // 檢查標註中是否包含選項的關鍵詞（至少3個字的詞組）
-            const optionWords = selectedOption.toLowerCase().match(/[\u4e00-\u9fa5]{3,}/g) || [];
-
-            let hasRelevance = false;
-            for (const word of optionWords) {
-                if (highlightedText.includes(word)) {
-                    hasRelevance = true;
-                    break;
-                }
-            }
-
-            if (hasRelevance) {
+            if (isOptionRelevant(selectedOption, highlightedText, lowerArticle)) {
                 relevanceScore += 2;
             }
         });
@@ -2072,7 +2103,7 @@ const HighlightScoringEngine = (function () {
      * @returns {Object} 評分結果
      */
     function calculateScore(params) {
-        const { highlights, totalTextLength, questions, studentAnswers } = params;
+        const { highlights, totalTextLength, questions, studentAnswers, articleText } = params;
 
         if (!highlights || highlights.length === 0) {
             return {
@@ -2114,7 +2145,7 @@ const HighlightScoringEngine = (function () {
             colorDiversity = calculateColorDiversity(highlights);
             precision = calculatePrecision(highlights, totalTextLength);
             segmentation = calculateSegmentation(highlights);
-            relevance = calculateRelevance(highlights, questions, studentAnswers);
+            relevance = calculateRelevance(highlights, questions, studentAnswers, articleText);
             timeDistribution = calculateTimeDistribution(highlights);
 
             // 總分（各項加分累計，無上限）
@@ -7076,6 +7107,7 @@ function listenToStudentSubmissions(mode) {
         });
 
         allStudentResponses = responses;
+        refreshUnsubmittedStudentsModal(); // 🆕 [v4.7.10] 未作答名單即時更新
 
         // Special handling for quick answer mode
         if (mode === 'quick_answer') {
@@ -7357,6 +7389,7 @@ function listenToClassroomPresence(onInitialSnapshotCallback = null) {
         });
 
         activeStudentCountSpan.textContent = activeStudentNames.length;
+        refreshUnsubmittedStudentsModal(); // 🆕 [v4.7.10] 未作答名單即時更新
 
         // 🆕 [v3.8.26] 同步更新 QR Code 模態框內的學生名單 + 新加入提示
         if (typeof renderQRCodeStudentList === 'function') {
@@ -7522,6 +7555,7 @@ async function manualRefreshCounts() {
         const responsesData = [];
         responsesSnapshot.forEach(doc => responsesData.push(doc.data()));
         allStudentResponses = responsesData;
+        refreshUnsubmittedStudentsModal(); // 🆕 [v4.7.10] 未作答名單即時更新
 
         if (!statisticsModal.classList.contains('hidden')) {
             drawChart(allStudentResponses, currentInteractionMode);
@@ -7585,14 +7619,32 @@ function getUnsubmittedStudents(activeStudents, respondedStudents) {
     return activeStudents.filter(name => !respondedNames.has(name)).sort();
 }
 
-/**
- * Displays the modal with the list of unsubmitted students.
- */
-function showUnsubmittedStudentsModal() {
+// 🆕 MODIFIED [v4.7.10]: 名單開著時會跟著學生交卷即時更新（以前要關掉重開才看得到最新名單）
+let unsubmittedModalTimer = null;
+let lastUnsubmittedRenderKey = '';
+
+function renderUnsubmittedStudentsList() {
     const unsubmittedNames = getUnsubmittedStudents(activeStudentNames, allStudentResponses);
+    const renderKey = unsubmittedNames.join('\u0001') + '|' + activeStudentNames.length;
+    if (renderKey === lastUnsubmittedRenderKey) return; // 名單沒變就不重畫，避免閃爍
+    lastUnsubmittedRenderKey = renderKey;
+
+    const countEl = document.getElementById('unsubmitted-students-count');
+    if (countEl) {
+        countEl.textContent = unsubmittedNames.length > 0
+            ? `還有 ${unsubmittedNames.length} 位`
+            : (activeStudentNames.length > 0 ? '全部交齊' : '');
+        countEl.className = unsubmittedNames.length > 0
+            ? 'ml-2 align-middle text-sm font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700'
+            : 'ml-2 align-middle text-sm font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700';
+    }
+
     modalUnsubmittedStudentNamesDiv.innerHTML = '';
     if (unsubmittedNames.length === 0) {
-        modalUnsubmittedStudentNamesDiv.innerHTML = '<p class="text-gray-500 text-sm col-span-full">所有學生皆已作答或無學生在線</p>';
+        const msg = document.createElement('p');
+        msg.className = 'text-gray-500 text-sm col-span-full';
+        msg.textContent = activeStudentNames.length > 0 ? '🎉 所有學生都已作答！' : '所有學生皆已作答或無學生在線';
+        modalUnsubmittedStudentNamesDiv.appendChild(msg);
     } else {
         unsubmittedNames.forEach(name => {
             const p = document.createElement('p');
@@ -7601,7 +7653,24 @@ function showUnsubmittedStudentsModal() {
             modalUnsubmittedStudentNamesDiv.appendChild(p);
         });
     }
+}
+
+// 學生名單或作答資料一有變動就呼叫；視窗沒開時什麼都不做
+function refreshUnsubmittedStudentsModal() {
+    if (!unsubmittedStudentsModal || unsubmittedStudentsModal.classList.contains('hidden')) return;
+    renderUnsubmittedStudentsList();
+}
+
+/**
+ * Displays the modal with the list of unsubmitted students.
+ */
+function showUnsubmittedStudentsModal() {
+    lastUnsubmittedRenderKey = '';
+    renderUnsubmittedStudentsList();
     unsubmittedStudentsModal.classList.remove('hidden');
+    // 保險：有些模式的資料更新路徑沒有呼叫 refresh，開著時每秒再對一次（只讀記憶體，不查資料庫）
+    clearInterval(unsubmittedModalTimer);
+    unsubmittedModalTimer = setInterval(refreshUnsubmittedStudentsModal, 1000);
 }
 
 /**
@@ -7609,6 +7678,7 @@ function showUnsubmittedStudentsModal() {
  */
 function hideUnsubmittedStudentsModal() {
     unsubmittedStudentsModal.classList.add('hidden');
+    clearInterval(unsubmittedModalTimer); // 🆕 [v4.7.10]
 }
 
 
@@ -19819,7 +19889,8 @@ async function submitReadingAnswer() {
                         highlights: highlights,
                         totalTextLength: totalTextLength,
                         questions: readingComprehensionData.questions,
-                        studentAnswers: answers
+                        studentAnswers: answers,
+                        articleText: readingComprehensionData.text || '' // 🆕 [v4.7.10] 答題關聯判斷「特別詞」用
                     });
 
                     console.log('[submitReadingAnswer] ✅ Highlight score result:', JSON.stringify(scoreResult, null, 2));
