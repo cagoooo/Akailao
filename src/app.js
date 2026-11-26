@@ -479,6 +479,71 @@ function getGeminiApiUrl(apiKey, model = GEMINI_DEFAULT_MODEL) {
     return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 }
 
+// 🆕 NEW [v4.7.9]: 依 Google 回傳的原因（ErrorInfo.reason 與訊息）判斷自備金鑰失敗的真正原因。
+//   以前所有 403 都顯示「金鑰可能已被封鎖或洩漏」，老師用學校信箱申請、或金鑰剛建立還沒生效時也看到同一句，無從判斷。
+//   回傳的 googleMsg 已遮掉金鑰，顯示時一律用 textContent，不要放進 innerHTML。
+function diagnoseGeminiKeyError(status, body, apiKey = '') {
+    const err = (body && body.error) || {};
+    const rawMsg = String(err.message || '');
+    const reasons = (Array.isArray(err.details) ? err.details : []).map(d => d && d.reason).filter(Boolean);
+    const has = (r) => reasons.includes(r);
+    const m = rawMsg.toLowerCase();
+
+    let googleMsg = rawMsg.replace(/AIza[0-9A-Za-z_\-]{10,}/g, 'AIza…');
+    if (apiKey) googleMsg = googleMsg.split(apiKey).join('（您的金鑰）');
+    googleMsg = googleMsg.slice(0, 300);
+
+    const PERSONAL = '請用個人 Gmail 登入 Google AI Studio 重新建立金鑰（學校信箱申請的金鑰常被學校管理設定擋下，也沒有免費額度）';
+    let title, advice;
+    if (m.includes('leaked')) {
+        title = 'Google 把這把金鑰標記為「已外洩」並停用了';
+        advice = '到 Google AI Studio 刪除這把，再建立一把新的；金鑰不要貼到公開的地方';
+    } else if (has('SERVICE_DISABLED') || m.includes('has not been used in project') || m.includes('it is disabled')) {
+        title = '這個專案的 Gemini 服務還沒開通';
+        advice = '剛建立的金鑰通常要等 2～5 分鐘才生效，請稍後再按一次「測試」；超過 10 分鐘仍失敗，' + PERSONAL;
+    } else if (has('API_KEY_HTTP_REFERRER_BLOCKED') || m.includes('referer')) {
+        title = '這把金鑰設定了「網站限制」，剛好學被擋在外面';
+        advice = '到 Google Cloud 主控台的金鑰設定，把「應用程式限制」改成「無」；或直接用 AI Studio 新建一把';
+    } else if (has('API_KEY_SERVICE_BLOCKED') || (m.includes('requests to this api') && m.includes('blocked'))) {
+        title = '這把金鑰設定了「API 限制」，不允許使用 Gemini';
+        advice = '到 Google Cloud 主控台的金鑰設定，在「API 限制」加入 Generative Language API；或直接用 AI Studio 新建一把';
+    } else if (has('API_KEY_IP_ADDRESS_BLOCKED') || has('API_KEY_ANDROID_APP_BLOCKED') || has('API_KEY_IOS_APP_BLOCKED')) {
+        title = '這把金鑰設定了 IP 或 App 限制';
+        advice = '把金鑰的「應用程式限制」改成「無」；或直接用 AI Studio 新建一把';
+    } else if (has('CONSUMER_SUSPENDED') || m.includes('suspended')) {
+        title = '這把金鑰所屬的專案被 Google 停權了';
+        advice = PERSONAL;
+    } else if (has('API_KEY_EXPIRED') || m.includes('expired')) {
+        title = '這把金鑰已過期';
+        advice = '到 Google AI Studio 重新建立一把';
+    } else if (has('API_KEY_INVALID') || m.includes('api key not valid')) {
+        title = '金鑰不正確';
+        advice = '請確認有完整複製（前後不要多空白），或回 AI Studio 再按一次複製';
+    } else if (m.includes('location is not supported')) {
+        title = '目前所在的網路位置不支援 Gemini';
+        advice = '若有開 VPN 請先關閉再試';
+    } else if (status === 429) {
+        if (m.includes('limit: 0')) {
+            title = '這個專案沒有免費額度';
+            advice = 'AI Studio 金鑰列表顯示「Free tier unavailable」的專案不能免費使用，' + PERSONAL;
+        } else {
+            title = '免費額度暫時用完了';
+            advice = '每分鐘額度等 1 分鐘再試；每日額度在台灣時間下午 3～4 點重置';
+        }
+    } else if (status === 403 || status === 401) {
+        title = 'Google 拒絕這把金鑰的使用權限';
+        advice = '最常見的原因是用學校信箱申請，' + PERSONAL;
+    } else if (status === 400) {
+        title = '金鑰或請求格式有問題';
+        advice = '請確認金鑰有完整複製，或回 AI Studio 再按一次複製';
+    } else {
+        title = `Google 暫時無法回應（錯誤碼 ${status}）`;
+        advice = '請稍後再試';
+    }
+    const code = [status, reasons[0] || err.status].filter(Boolean).join(' ');
+    return { title, advice, googleMsg, code };
+}
+
 // 🆕 [V4.4.1] Google 金鑰格式已多樣化，不一定是 AIza 開頭：只擋掉明顯不是金鑰的輸入（空白、太短、含空格），
 //   真正能不能用交給「測試 API Key」實際呼叫 Google 判斷
 function looksLikeApiKey(key) {
@@ -9476,18 +9541,24 @@ function showApiKeyGuide(retryCallback) {
                 saveBtn.classList.remove('from-blue-600', 'to-purple-600');
             } else {
                 const body = await res.json().catch(() => ({}));
-                const msg = body?.error?.message || `HTTP ${res.status}`;
 
-                // 🚀 MODIFIED v3.5.5: 針對 403 錯誤提供專項診斷
-                let diagMsg = msg;
-                if (res.status === 403) {
-                    diagMsg = `❌ 403 Forbidden: 金鑰可能已被封鎖或洩漏。建議：前往 Google AI Studio 重新生成 Key 並更新專案中的 .env 檔案。`;
-                } else if (res.status === 401 || res.status === 400) {
-                    diagMsg = `❌ 金鑰格式錯誤或無效，請檢查輸入內容是否完整。`;
-                }
-
-                testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
-                testResult.innerHTML = `<i class="fas fa-times-circle"></i> ${diagMsg}`;
+                // 🆕 MODIFIED [v4.7.9]: 依 Google 回傳的真正原因診斷（以前所有 403 都說「可能已洩漏」）
+                const d = diagnoseGeminiKeyError(res.status, body, key);
+                testResult.className = 'mt-2 flex items-start gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-times-circle mt-0.5';
+                const box = document.createElement('div');
+                box.className = 'flex flex-col gap-1 text-left';
+                const line = (text, cls) => {
+                    const el = document.createElement('div');
+                    el.className = cls;
+                    el.textContent = text;
+                    box.appendChild(el);
+                };
+                line(`❌ ${d.title}`, 'font-bold');
+                line(`建議：${d.advice}`, '');
+                if (d.googleMsg) line(`Google 原文（${d.code}）：${d.googleMsg}`, 'text-red-500 font-normal break-all');
+                testResult.replaceChildren(icon, box);
             }
         } catch (err) {
             testResult.className = 'mt-2 flex items-center gap-2 text-xs font-medium px-3 py-2 rounded-lg bg-red-50 text-red-700 border border-red-200';
@@ -13440,13 +13511,10 @@ function setupEventListeners() {
                             errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
                         }
                     } else if (response.status === 401 || response.status === 403) {
-                        // 認證失敗或權限不足
-                        errorMessage = '🔒 API 認證失敗！\n\n' +
-                            '請檢查：\n' +
-                            '1️⃣ API Key 是否過期\n' +
-                            '2️⃣ API Key 是否有正確的權限\n' +
-                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
-                            '   https://aistudio.google.com/apikey';
+                        // 🆕 MODIFIED [v4.7.9]: 依 Google 回傳的真正原因說明（學校信箱、剛建立未生效、金鑰限制等）
+                        const keyDiag = diagnoseGeminiKeyError(response.status, errorJson, getActiveGeminiApiKey());
+                        errorMessage = `🔒 ${keyDiag.title}\n\n建議：${keyDiag.advice}` +
+                            (keyDiag.googleMsg ? `\n\nGoogle 原文（${keyDiag.code}）：${keyDiag.googleMsg}` : '');
                     } else if (response.status === 503) {
                         // 服務暫時不可用
                         errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
@@ -13572,12 +13640,10 @@ function setupEventListeners() {
                             errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
                         }
                     } else if (response.status === 401 || response.status === 403) {
-                        errorMessage = '🔒 API 認證失敗！\n\n' +
-                            '請檢查：\n' +
-                            '1️⃣ API Key 是否過期\n' +
-                            '2️⃣ API Key 是否有正確的權限\n' +
-                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
-                            '   https://aistudio.google.com/apikey';
+                        // 🆕 MODIFIED [v4.7.9]: 依 Google 回傳的真正原因說明（學校信箱、剛建立未生效、金鑰限制等）
+                        const keyDiag = diagnoseGeminiKeyError(response.status, errorJson, getActiveGeminiApiKey());
+                        errorMessage = `🔒 ${keyDiag.title}\n\n建議：${keyDiag.advice}` +
+                            (keyDiag.googleMsg ? `\n\nGoogle 原文（${keyDiag.code}）：${keyDiag.googleMsg}` : '');
                     } else if (response.status === 503) {
                         errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
                             '建議：請稍後再試（通常幾分鐘內會恢復）';
@@ -13700,12 +13766,10 @@ function setupEventListeners() {
                             errorMessage = '❌ 請求格式錯誤！\n\n' + apiErrorMsg;
                         }
                     } else if (response.status === 401 || response.status === 403) {
-                        errorMessage = '🔒 API 認證失敗！\n\n' +
-                            '請檢查：\n' +
-                            '1️⃣ API Key 是否過期\n' +
-                            '2️⃣ API Key 是否有正確的權限\n' +
-                            '3️⃣ 前往 Google AI Studio 重新生成：\n' +
-                            '   https://aistudio.google.com/apikey';
+                        // 🆕 MODIFIED [v4.7.9]: 依 Google 回傳的真正原因說明（學校信箱、剛建立未生效、金鑰限制等）
+                        const keyDiag = diagnoseGeminiKeyError(response.status, errorJson, getActiveGeminiApiKey());
+                        errorMessage = `🔒 ${keyDiag.title}\n\n建議：${keyDiag.advice}` +
+                            (keyDiag.googleMsg ? `\n\nGoogle 原文（${keyDiag.code}）：${keyDiag.googleMsg}` : '');
                     } else if (response.status === 503) {
                         errorMessage = '⚠️ Google AI 服務暫時無法使用！\n\n' +
                             '建議：請稍後再試（通常幾分鐘內會恢復）';
