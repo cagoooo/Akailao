@@ -1151,6 +1151,16 @@ const HighlighterManager = (function () {
         return prefix + (classroomCode || 'default');
     }
 
+    // 🆕 [v4.7.12] 老師按下開始的時間：同一篇文章、不同堂課（或下一班用同一台電腦）時，舊重點不會被帶過來
+    function getSessionStartMs() {
+        const s = readingComprehensionData && readingComprehensionData.startedAt;
+        if (!s) return 0;
+        if (typeof s.toMillis === 'function') return s.toMillis();
+        if (typeof s.seconds === 'number') return s.seconds * 1000;
+        const n = typeof s === 'number' ? s : Date.parse(s);
+        return isNaN(n) ? 0 : n;
+    }
+
     /**
      * 計算文章內容哈希（用於驗證標註是否匹配當前文章）
      */
@@ -1270,6 +1280,69 @@ const HighlighterManager = (function () {
         return null;
     }
 
+    // 🆕 [v4.7.12] 每個模式只保留一組選字監聽
+    const selectionHandlers = {};
+    const floatingButtons = {};
+
+    /**
+     * 🆕 [v4.7.12] 觸控裝置（平板、手機）選字後跳出的「🖍️ 畫重點」按鈕
+     */
+    function setupFloatingHighlightButton(mode, colorStateRef, textDisplayId, eraserModeRef) {
+        if (floatingButtons[mode]) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'hl-float-btn hidden';
+        btn.setAttribute('aria-label', '把選取的文字畫上重點');
+        document.body.appendChild(btn);
+        floatingButtons[mode] = btn;
+
+        const hide = () => btn.classList.add('hidden');
+        const apply = (e) => {
+            e.preventDefault(); // 不讓按鈕搶走選取範圍
+            handleTextSelection(mode, colorStateRef, textDisplayId, eraserModeRef);
+            hide();
+        };
+        btn.addEventListener('pointerdown', apply);
+        btn.addEventListener('touchstart', (e) => { if (!window.PointerEvent) apply(e); }, { passive: false });
+
+        let timer = 0;
+        document.addEventListener('selectionchange', () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => { // 拖曳選取範圍時等手停下來再顯示
+                const textDisplay = document.getElementById(textDisplayId);
+                const sel = window.getSelection();
+                if (!textDisplay || !sel || sel.isCollapsed || !sel.rangeCount || !sel.toString().trim()) return hide();
+                const range = sel.getRangeAt(0);
+                if (!textDisplay.contains(range.commonAncestorContainer) || textDisplay.offsetParent === null) return hide();
+                const rects = range.getClientRects();
+                const last = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+                const color = eraserModeRef.value ? null : colorStateRef.value;
+                btn.textContent = eraserModeRef.value ? '🧼 擦掉這段' : '🖍️ 畫重點';
+                btn.dataset.color = color || 'eraser';
+                btn.classList.remove('hidden');
+                const bw = btn.offsetWidth || 110;
+                const left = Math.min(Math.max(8, last.right - bw / 2), window.innerWidth - bw - 8);
+                let top = last.bottom + 12; // 放在選取範圍下方（上方是系統的複製選單）
+                if (top + 48 > window.innerHeight) top = Math.max(8, last.top - 56);
+                btn.style.left = `${left}px`;
+                btn.style.top = `${top}px`;
+            }, 80);
+        });
+        // 捲動文章時位置會跑掉，先收起來，選取範圍變動時會再出現
+        const textDisplay = document.getElementById(textDisplayId);
+        if (textDisplay) textDisplay.addEventListener('scroll', hide, { passive: true });
+    }
+
+    /**
+     * 🆕 [v4.7.12] 交卷前把畫面上的重點存一次並讀回來（不只靠先前存的資料）
+     */
+    function syncStudentHighlights() {
+        const textDisplay = document.getElementById('reading-text-display');
+        if (textDisplay && textDisplay.querySelector('mark.highlight')) {
+            saveHighlights('student', 'reading-text-display');
+        }
+    }
+
     /**
      * 通用初始化螢光筆功能
      * @param {string} mode - 'student' 或 'teacher'
@@ -1353,13 +1426,17 @@ const HighlighterManager = (function () {
         }
 
         // 設置文字選擇事件
+        // 🆕 MODIFIED [v4.7.12]: 以前每次初始化都多綁一次（移除時用的是新函式，移不掉）；
+        //   平板長按選字時手指一放開就立刻畫上去，只能畫到一個詞、拉不出整句。
+        //   現在：滑鼠放開就畫（和以前一樣）；觸控選字改成選好後按浮動的「🖍️ 畫重點」按鈕。
         const textDisplay = document.getElementById(textDisplayId);
         if (textDisplay) {
-            const handler = (e) => handleTextSelection(mode, colorStateRef, textDisplayId, eraserModeRef);
-            textDisplay.removeEventListener('mouseup', handler);
-            textDisplay.removeEventListener('touchend', handler);
+            const prev = selectionHandlers[mode];
+            if (prev && prev.el) prev.el.removeEventListener('mouseup', prev.fn);
+            const handler = () => handleTextSelection(mode, colorStateRef, textDisplayId, eraserModeRef);
             textDisplay.addEventListener('mouseup', handler);
-            textDisplay.addEventListener('touchend', handler);
+            selectionHandlers[mode] = { el: textDisplay, fn: handler };
+            setupFloatingHighlightButton(mode, colorStateRef, textDisplayId, eraserModeRef);
         }
 
         // 設置清除按鈕事件
@@ -1700,6 +1777,10 @@ const HighlighterManager = (function () {
             highlights: highlights,
             timestamp: new Date().getTime()
         };
+        if (mode === 'student') {
+            saveData.startedAtMs = getSessionStartMs(); // 🆕 [v4.7.12]
+            saveData.owner = studentName || ''; // 🆕 [v4.7.12] 同一台電腦換人用時不沿用別人的重點
+        }
 
         try {
             const storageKey = getStorageKey(mode);
@@ -1749,6 +1830,17 @@ const HighlighterManager = (function () {
                 localStorage.removeItem(getStorageKey(mode));
                 return;
             }
+            // 🆕 [v4.7.12] 同一篇文章但是另一堂課（老師重新開始的時間不同）、或換了學生：舊重點不沿用
+            if (mode === 'student') {
+                const nowStart = getSessionStartMs();
+                const otherSession = saveData.startedAtMs && nowStart && saveData.startedAtMs !== nowStart;
+                const otherStudent = saveData.owner && studentName && saveData.owner !== studentName;
+                if (otherSession || otherStudent) {
+                    console.log(`[Highlighter:${mode}] Highlights belong to another session/student, clearing`);
+                    localStorage.removeItem(getStorageKey(mode));
+                    return;
+                }
+            }
 
             const highlights = saveData.highlights || saveData;
             if (!Array.isArray(highlights) || highlights.length === 0) {
@@ -1760,6 +1852,8 @@ const HighlighterManager = (function () {
 
             const textDisplay = document.getElementById(textDisplayId);
             if (!textDisplay) return;
+            // 🆕 [v4.7.12] 畫面上已經有重點（重複呼叫）就不再疊一次
+            if (textDisplay.querySelector('mark.highlight')) return;
 
             // 🚀 FIXED: 根據版本使用不同的恢復邏輯
             if (saveData.version === 2) {
@@ -1926,6 +2020,7 @@ const HighlighterManager = (function () {
         reset: () => reset('student'),
         restoreHighlights: () => restoreHighlights('student', 'reading-text-display'),
         clearAllHighlights: () => clearAllHighlights('student', 'reading-text-display'),
+        syncStudentHighlights, // 🆕 [v4.7.12]
 
         // 教師端方法
         initTeacher,
@@ -19239,8 +19334,8 @@ async function displayReadingComprehensionForStudent(readingData) {
         for (let i = 0; i < readingData.questions.length; i++) {
             const oldQ = readingComprehensionData.questions[i];
             const newQ = readingData.questions[i];
+            // 🆕 MODIFIED [v4.7.12]: 不再比對 correctAnswer（學生端 1 秒後就刪掉，第二次比對一定不同 → 被當成新測驗）
             if (oldQ.question !== newQ.question ||
-                oldQ.correctAnswer !== newQ.correctAnswer ||
                 JSON.stringify(oldQ.options) !== JSON.stringify(newQ.options)) {
                 isNewSession = true;
                 break;
@@ -19293,15 +19388,12 @@ async function displayReadingComprehensionForStudent(readingData) {
         console.log('[displayReadingComprehensionForStudent] Initializing highlighter');
         HighlighterManager.init();
 
-        // 如果是新會話，清除舊的標註
-        if (isNewSession) {
-            HighlighterManager.reset();
-        } else {
-            // 恢復之前的標註
-            setTimeout(() => {
-                HighlighterManager.restoreHighlights();
-            }, 100); // 延遲100ms確保DOM已完全更新
-        }
+        // 🆕 MODIFIED [v4.7.12]: 一律嘗試還原。以前「新測驗」就清空，但重新整理後記憶體是空的，
+        //   一定被判定成新測驗 → 學生畫的重點全部消失，交卷時筆記加分變 0。
+        //   還原時會自己檢查：文章不同、老師重新開始、換了學生，才清掉舊重點。
+        setTimeout(() => {
+            HighlighterManager.restoreHighlights();
+        }, 100); // 延遲100ms確保DOM已完全更新
     }
 
     // Determine which answers to restore and check submission status
@@ -19871,6 +19963,7 @@ async function submitReadingAnswer() {
 
         // 🚀 NEW: 計算筆記評分並附帶到提交數據
         try {
+            HighlighterManager.syncStudentHighlights(); // 🆕 [v4.7.12] 以畫面上的重點為準
             const storageKey = `reading_highlights_${classroomCode || 'default'}`;
             console.log('[submitReadingAnswer] 🔍 DEBUG: classroomCode =', classroomCode, ', storageKey =', storageKey);
 
@@ -19980,6 +20073,8 @@ async function submitReadingAnswer() {
             });
 
             showMessage(feedbackMessage, 'card', 0, true, true); // HTML模式 + 需要手動關閉
+        } else if (!extraFields.highlightAnalysis || !extraFields.highlightAnalysis.stats || !extraFields.highlightAnalysis.stats.highlightCount) {
+            showMessage('答案已提交！下次記得用螢光筆畫重點，可以額外加分喔 🖍️', 'success'); // 🆕 [v4.7.12]
         } else {
             showMessage('答案已提交！', 'success');
         }
