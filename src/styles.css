@@ -5070,3 +5070,7 @@ body {
 .hl-float-btn[data-color="blue"] { background: #2563eb; }
 .hl-float-btn[data-color="orange"] { background: #ea580c; }
 .hl-float-btn[data-color="eraser"] { background: #b45309; }
+/* 🆕 [v4.7.13] 加分卡上的「答題＋筆記＝總分」 */
+.hb-score-line { margin: 10px 14px 0; padding: 8px 12px; border-radius: 10px; background: #fff7d6; color: #5b4300;
+  font-weight: 700; text-align: center; line-height: 1.6; }
+.hb-score-line strong { font-size: 1.35em; color: #b45309; }

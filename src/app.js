@@ -6113,6 +6113,7 @@ function buildHighlightBonusCardHtml(analysis, opts = {}) {
                 <div class="hb-total"><span>加分</span><strong>+${score}</strong></div>
             </div>
             ${opts.badge ? `<div class="hb-badge">${escapeHtmlText(opts.badge)}</div>` : ''}
+            ${opts.scoreSummary ? `<div class="hb-score-line">📊 答題 <b>${Number(opts.scoreSummary.baseScore) || 0}</b> 分 ＋ 筆記 <b>+${score}</b> 分 ＝ 總分 <strong>${Number(opts.scoreSummary.totalScore) || 0}</strong> 分</div>` : ''}
             ${overDrawn}
             <ul class="hb-list">${rows}</ul>
             <div class="hb-stats">
@@ -20070,6 +20071,7 @@ async function submitReadingAnswer() {
                 badge: '✅ 答案已成功提交！',
                 title: '你的筆記加分',
                 tip: '筆記品質越好，加分越多！',
+                scoreSummary: { baseScore, totalScore }, // 🆕 [v4.7.13] 直接看到加分後的總分
             });
 
             showMessage(feedbackMessage, 'card', 0, true, true); // HTML模式 + 需要手動關閉
@@ -20153,9 +20155,20 @@ async function submitReadingAnswer() {
             }
 
             // 彈出名次提示
-            const perfectHint = baseScore === 100 ? ' 🏆 滿分！太厲害了！' : ` 📊 得分：${baseScore}%`;
+            // 🆕 MODIFIED [v4.7.13]: 以前這裡用「📊 得分：X%」（只有答題分）蓋掉筆記加分卡，學生看不到加分後的總分。
+            //   有筆記加分：名次放進加分卡，卡上寫「答題＋筆記＝總分」；沒有加分：照舊顯示名次與分數。
+            const perfectHint = baseScore === 100 ? ' 🏆 滿分！太厲害了！' : ` 📊 得分：${baseScore} 分`;
             setTimeout(() => {
-                showMessage(`✅ 答案已提交！${rankMsg}${perfectHint}`, 'success', 5000);
+                if (highlightBonus > 0 && extraFields.highlightAnalysis) {
+                    showMessage(buildHighlightBonusCardHtml(extraFields.highlightAnalysis, {
+                        badge: `✅ 答案已提交！${rankMsg}${baseScore === 100 ? ' 🏆 滿分！' : ''}`,
+                        title: '你的筆記加分',
+                        tip: '筆記品質越好，加分越多！',
+                        scoreSummary: { baseScore, totalScore },
+                    }), 'card', 0, true, true);
+                } else {
+                    showMessage(`✅ 答案已提交！${rankMsg}${perfectHint}`, 'success', 5000);
+                }
             }, 400);
             console.log(`[confetti] 已顯示慶祝，名次: ${myRank}`);
         } catch (rankErr) {
