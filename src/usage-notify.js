@@ -106,6 +106,39 @@ async function flush() {
     }
 }
 
+// 🆕 [v4.7.14] 瀏覽器自己把網站的資料庫（IndexedDB）關掉或清掉時的錯誤（Firestore 離線快取的原文）。
+//     不是剛好學程式壞掉，推到 Chat 老師也處理不了；重新整理網頁就會恢復。
+//     只認下面這幾種說法（範圍要窄），其他 IndexedDB 錯誤（例如空間不足 QuotaExceededError）照常回報。
+//     2026-11-26 14:51 Mac Safari 學生（繪圖題）推了一張「refusing to open IndexedDB database due to potential corruption…」。
+const BROWSER_STORAGE_LOST = [
+    /refusing to open IndexedDB database due to potential corruption/i,
+    /Connection to Indexed Database server lost/i,
+    /Database deleted by request of the user/i,
+    /The database connection is closing/i,
+    /IndexedDB transaction '[^']+' failed: AbortError/i,
+    /IndexedDB transaction '[^']+' failed: NotFoundError: .*object stores? (?:was|were) not found/i,
+    /Object store cannot be found in the database/i,
+    /Internal error opening backing store for indexedDB\.open/i,
+];
+let storageLostNoticed = false;
+
+/**
+ * 是「瀏覽器清掉暫存資料庫」的錯誤就回傳 true（第一次會通知畫面跳出重新整理提示）。
+ * @param {unknown} message 錯誤訊息
+ */
+export function noteBrowserStorageLost(message) {
+    const m = String(message == null ? '' : message);
+    if (!BROWSER_STORAGE_LOST.some((re) => re.test(m))) return false;
+    if (!storageLostNoticed) {
+        storageLostNoticed = true;
+        console.warn('[UsageNotify] 瀏覽器清掉了網站的暫存資料庫（不推播，重新整理網頁即可恢復）：', m.slice(0, 200));
+        try {
+            window.dispatchEvent(new CustomEvent('akailao:storage-lost', { detail: { message: m.slice(0, 300) } }));
+        } catch (e) {}
+    }
+    return true;
+}
+
 function hash(s) {
     let h = 0;
     for (let i = 0; i < s.length; i++) {
@@ -140,6 +173,7 @@ export const UsageNotify = {
     },
     
     error(message, context, classroom) {
+        if (noteBrowserStorageLost(message)) return; // 🆕 [v4.7.14] 瀏覽器清掉暫存資料庫，不推 Chat
         message = String(message == null ? '' : message).slice(0, 300);
         if (!message) return;
         if (errCount >= MAX_ERRORS_PER_SESSION) return;

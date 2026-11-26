@@ -4,7 +4,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, signInWithPopup, Goo
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc, getDocs, updateDoc, writeBatch, deleteField, query, where, serverTimestamp, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check"; // 🆕 [V4.7.6] App Check
-import { initUsageNotify, UsageNotify } from "./usage-notify.js";
+import { initUsageNotify, UsageNotify, noteBrowserStorageLost } from "./usage-notify.js";
 import { createClassroomClaims, maskName, formatInviteCode, normalizeInviteCode } from "./classroom-claims.js";
 import { canCaptureTab, captureTabImage } from "./tab-capture.js";
 
@@ -15744,6 +15744,8 @@ const ErrorReporter = (() => {
         try {
             if (!message) return;
             if (_isIgnorable(message)) return;
+            // 🆕 [v4.7.14] 瀏覽器清掉了網站的暫存資料庫：不推 Chat（也寫不進 Firestore），改請使用者重新整理
+            if (noteBrowserStorageLost(message)) return;
             if (_reportCount >= MAX_REPORTS_PER_SESSION) return;
 
             const key = (kind + '|' + message + '|' + (extra.source || '') + ':' + (extra.lineno || '')).slice(0, 300);
@@ -15831,6 +15833,24 @@ const ErrorReporter = (() => {
     return { install, report };
 })();
 ErrorReporter.install();
+
+// 🆕 [v4.7.14] 瀏覽器（常見是 Safari）把網站的暫存資料庫清掉後，Firestore 要重新整理網頁才會恢復
+//     （套件的錯誤原文也這樣建議），在這之前作答可能送不出去。
+//     跳出提示請使用者自己按重新整理；不自動重新整理，避免畫到一半的圖不見。
+window.addEventListener('akailao:storage-lost', () => {
+    if (document.getElementById('storage-lost-notice')) return;
+    const box = document.createElement('div');
+    box.id = 'storage-lost-notice';
+    box.className = 'storage-lost-notice';
+    box.setAttribute('role', 'alert');
+    box.innerHTML = '<div class="sln-text"><strong>⚠️ 瀏覽器清掉了這個網站的暫存資料</strong>'
+        + '<span>答案可能送不出去，請按「重新整理」再繼續（已經送出的答案都還在）</span></div>'
+        + '<button type="button" class="sln-reload">🔄 重新整理</button>'
+        + '<button type="button" class="sln-close" aria-label="關閉提示">✕</button>';
+    box.querySelector('.sln-reload').addEventListener('click', () => location.reload());
+    box.querySelector('.sln-close').addEventListener('click', () => box.remove());
+    document.body.appendChild(box);
+});
 
 // ===== 🆕 [V4.2.4] OBS-1：教師端「系統健康」檢視 =====
 async function openSystemHealthModal() {
