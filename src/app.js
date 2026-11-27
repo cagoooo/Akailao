@@ -1708,6 +1708,11 @@ const HighlighterManager = (function () {
                 // 🚀 FIXED: 使用更安全的方式處理跨節點選擇
                 // 提取選擇的內容並用 mark 包裝
                 const fragment = range.extractContents();
+                // 🆕 [v4.7.15] 選到的範圍裡原本就有重點（例如換顏色重畫）：先拆掉舊的，不要變成「重點包重點」
+                fragment.querySelectorAll('mark.highlight').forEach(old => {
+                    while (old.firstChild) old.parentNode.insertBefore(old.firstChild, old);
+                    old.parentNode.removeChild(old);
+                });
                 const mark = document.createElement('mark');
                 mark.className = `highlight highlight-${colorStateRef.value}`;
                 mark.setAttribute('data-color', colorStateRef.value);
@@ -1717,6 +1722,31 @@ const HighlighterManager = (function () {
 
                 // 插入標註元素
                 range.insertNode(mark);
+
+                // 🆕 [v4.7.15] 在一段舊重點的中間再畫：把舊重點切成前後兩段，新重點獨立出來
+                let outer = mark.parentElement && mark.parentElement.closest('mark.highlight');
+                while (outer && outer !== mark && textDisplay.contains(outer)) {
+                    const parent = outer.parentNode;
+                    const before = document.createRange();
+                    before.setStart(outer, 0);
+                    before.setEndBefore(mark);
+                    const head = outer.cloneNode(false);
+                    head.appendChild(before.extractContents());
+                    const after = document.createRange();
+                    after.setStartAfter(mark);
+                    after.setEnd(outer, outer.childNodes.length);
+                    const tail = outer.cloneNode(false);
+                    tail.appendChild(after.extractContents());
+                    if (head.textContent) parent.insertBefore(head, outer);
+                    while (outer.firstChild) parent.insertBefore(outer.firstChild, outer);
+                    if (tail.textContent) parent.insertBefore(tail, outer);
+                    parent.removeChild(outer);
+                    outer = mark.parentElement && mark.parentElement.closest('mark.highlight');
+                }
+                // 🆕 [v4.7.15] 選取邊界剛好在舊重點邊緣時，會留下沒有字的空重點，順手清掉（不然會被算成一個標註、一種顏色）
+                textDisplay.querySelectorAll('mark.highlight').forEach(m => {
+                    if (!m.textContent) m.parentNode.removeChild(m);
+                });
 
                 // 保存標註（包含文章內容哈希用於驗證）
                 saveHighlights(mode, textDisplayId);
@@ -2062,10 +2092,33 @@ const HighlightScoringEngine = (function () {
      * 覆蓋率 30-50%: +1 分
      * 覆蓋率 > 50%: 0 分
      */
+    // 🆕 [v4.7.15] 重疊的重點只算一次。換顏色重畫、在重點裡再畫一次時，畫面上會變成「重點包重點」，
+    //     以前每一層都各算一次長度，覆蓋率被灌高，超過 60% 就整份不加分（2026-11-27 605 班學生回報）。
+    function coveredLength(highlights) {
+        const sum = highlights.reduce((total, h) => total + (Number(h.length) || 0), 0);
+        if (!highlights.every(h => Number.isFinite(h.startOffset))) return sum; // 舊資料沒有位置，照舊相加
+        const spans = highlights
+            .map(h => [h.startOffset, h.startOffset + (Number(h.length) || 0)])
+            .filter(([start, end]) => end > start)
+            .sort((a, b) => a[0] - b[0]);
+        let total = 0, curStart = 0, curEnd = -1;
+        spans.forEach(([start, end]) => {
+            if (start > curEnd) {
+                if (curEnd > curStart) total += curEnd - curStart;
+                curStart = start;
+                curEnd = end;
+            } else if (end > curEnd) {
+                curEnd = end;
+            }
+        });
+        if (curEnd > curStart) total += curEnd - curStart;
+        return total;
+    }
+
     function calculatePrecision(highlights, totalTextLength) {
         if (!highlights || highlights.length === 0 || !totalTextLength) return 0;
 
-        const totalHighlightedLength = highlights.reduce((sum, h) => sum + h.length, 0);
+        const totalHighlightedLength = coveredLength(highlights); // 🆕 [v4.7.15]
         const coverageRate = (totalHighlightedLength / totalTextLength) * 100;
 
         if (coverageRate < 15) return 5;
@@ -2221,7 +2274,7 @@ const HighlightScoringEngine = (function () {
 
         // 統計資訊（先算覆蓋率，用於決定是否加分）
         const uniqueColors = new Set(highlights.map(h => h.color));
-        const totalHighlightedLength = highlights.reduce((sum, h) => sum + h.length, 0);
+        const totalHighlightedLength = coveredLength(highlights); // 🆕 [v4.7.15] 重疊只算一次
         const coverageRate = totalTextLength ? (totalHighlightedLength / totalTextLength) * 100 : 0;
 
         // 🚀 防止亂畫加分：如果覆蓋率 > 60%（全選或大部分），不加分
@@ -2287,7 +2340,8 @@ const HighlightScoringEngine = (function () {
     }
 
     return {
-        calculateScore
+        calculateScore,
+        coveredLength
     };
 })();
 
@@ -6022,6 +6076,15 @@ function updateReadingLeaderboardDisplay(studentsData, shouldScrollToTop = false
                 bonusDisplay = `
                     <div class="mt-1 text-xs sm:text-sm font-bold text-purple-600 cursor-pointer hover:underline hover:text-purple-800 transition-colors inline-block px-2 py-0.5 rounded-full hover:bg-purple-50" onclick="window.showHighlightBonusDetails('${studentNameEscaped}', '${analysisJson}')" title="點擊查看加分細項">
                         📝 +${student.highlightBonus}分 <i class="fas fa-info-circle ml-0.5 text-[10px]"></i>
+                    </div>
+                `;
+            } else if (student.highlightAnalysis && Number(student.highlightAnalysis.stats && student.highlightAnalysis.stats.highlightCount) > 0) {
+                // 🆕 [v4.7.15] 有畫重點卻沒加分：以前什麼都不顯示，老師看不出原因；改成「+0」可點開看細項（例如畫超過 60%）
+                const analysisJson = JSON.stringify(student.highlightAnalysis).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+                const studentNameEscaped = student.name.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+                bonusDisplay = `
+                    <div class="mt-1 text-xs font-semibold text-gray-500 cursor-pointer hover:underline hover:text-purple-700 transition-colors inline-block px-2 py-0.5 rounded-full hover:bg-purple-50" onclick="window.showHighlightBonusDetails('${studentNameEscaped}', '${analysisJson}')" title="有畫重點但這次沒有加分，點擊查看原因">
+                        📝 +0分 <i class="fas fa-info-circle ml-0.5 text-[10px]"></i>
                     </div>
                 `;
             }
